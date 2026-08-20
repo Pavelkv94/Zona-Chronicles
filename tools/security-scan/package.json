@@ -1,0 +1,23 @@
+{
+  "name": "@zona/security-scan",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Скелет secret/dependency/license/static проверок и machine-readable policy (OPS-03).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  }
+}

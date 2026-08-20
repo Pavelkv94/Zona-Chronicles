@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zona-chronicles.internal/security/exceptions.schema.json",
+  "title": "Security check exceptions (ADR-008) — I00 skeleton",
+  "description": "Каждое исключение имеет точную область, owner, compensating control и expiry. Blanket allowlist (scope '*' или только wildcard-символы) запрещён; истёкшие exceptions не действуют. Валидируется tools/security-scan/src/exceptions.ts.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "check",
+      "scope",
+      "reason",
+      "compensating_control",
+      "owner",
+      "created_at",
+      "expiry"
+    ],
+    "properties": {
+      "id": { "type": "string", "minLength": 1 },
+      "check": {
+        "type": "string",
+        "enum": ["secrets", "dependencies", "licenses", "static", "no-llm"]
+      },
+      "scope": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Точный package/advisory/путь. Не '*' и не строка, состоящая только из wildcard-символов."
+      },
+      "reason": { "type": "string", "minLength": 1 },
+      "compensating_control": { "type": "string", "minLength": 1 },
+      "owner": { "type": "string", "minLength": 1 },
+      "created_at": { "type": "string", "format": "date" },
+      "expiry": { "type": "string", "format": "date" }
+    }
+  }
+}

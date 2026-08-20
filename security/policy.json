@@ -1,0 +1,145 @@
+{
+  "policy_version": "0.1.0-i00-skeleton",
+  "dependency_policy": {
+    "owner": "platform-security (lead, I00)",
+    "requirement": "OPS-03",
+    "severity_order": ["info", "low", "moderate", "high", "critical"],
+    "min_blocking_severity": "high",
+    "unknown_severity_behavior": "block"
+  },
+  "license_policy": {
+    "owner": "platform-security (lead, I00)",
+    "requirement": "OPS-03",
+    "allowed": [
+      "MIT",
+      "ISC",
+      "BSD-2-Clause",
+      "BSD-3-Clause",
+      "Apache-2.0",
+      "0BSD",
+      "CC0-1.0",
+      "Unlicense",
+      "Python-2.0",
+      "BlueOak-1.0.0"
+    ],
+    "denied": [
+      "GPL-1.0",
+      "GPL-1.0-only",
+      "GPL-1.0-or-later",
+      "GPL-2.0",
+      "GPL-2.0-only",
+      "GPL-2.0-or-later",
+      "GPL-3.0",
+      "GPL-3.0-only",
+      "GPL-3.0-or-later",
+      "AGPL-1.0",
+      "AGPL-3.0",
+      "AGPL-3.0-only",
+      "AGPL-3.0-or-later",
+      "LGPL-2.0",
+      "LGPL-2.1",
+      "LGPL-3.0",
+      "SSPL-1.0",
+      "CC-BY-SA-4.0",
+      "CC-BY-NC-4.0",
+      "EUPL-1.1",
+      "EUPL-1.2"
+    ],
+    "unknown_license_behavior": "review_required"
+  },
+  "secret_policy": {
+    "owner": "platform-security (lead, I00)",
+    "requirement": "OPS-03",
+    "patterns": [
+      {
+        "id": "pem-private-key",
+        "description": "PEM-блок приватного ключа",
+        "severity": "critical",
+        "regex": "-----BEGIN (RSA |EC |OPENSSH |DSA |ENCRYPTED )?PRIVATE KEY-----",
+        "flags": ""
+      },
+      {
+        "id": "aws-access-key-id",
+        "description": "AWS access key id (AKIA...)",
+        "severity": "critical",
+        "regex": "\\bAKIA[0-9A-Z]{16}\\b",
+        "flags": ""
+      },
+      {
+        "id": "generic-secret-assignment",
+        "description": "Присваивание api_key/secret/token длинному строковому значению",
+        "severity": "high",
+        "regex": "\\b(?:api[_-]?key|secret|token)\\b\\s*[:=]\\s*[\"'`][A-Za-z0-9_\\-/+]{16,}[\"'`]",
+        "flags": "i"
+      },
+      {
+        "id": "dotenv-style-assignment",
+        "description": ".env-подобная строка вида KEY=длинное_значение",
+        "severity": "moderate",
+        "regex": "^[A-Z][A-Z0-9_]{2,}=\\S{8,}$",
+        "flags": "m"
+      }
+    ],
+    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"]
+  },
+  "static_policy": {
+    "owner": "platform-security (lead, I00)",
+    "requirement": "OPS-03",
+    "forbidden_constructs": [
+      {
+        "id": "eval-call",
+        "description": "eval() исполняет произвольную строку как код",
+        "severity": "high",
+        "regex": "\\beval\\s*\\(",
+        "flags": ""
+      },
+      {
+        "id": "new-function",
+        "description": "new Function() эквивалентен eval() по риску",
+        "severity": "high",
+        "regex": "new\\s+Function\\s*\\(",
+        "flags": ""
+      },
+      {
+        "id": "child-process-template-interpolation",
+        "description": "child_process вызов со строковой интерполяцией — риск command injection",
+        "severity": "high",
+        "regex": "\\b(?:exec|execSync|spawn|spawnSync)\\s*\\(\\s*`[^`]*\\$\\{",
+        "flags": ""
+      },
+      {
+        "id": "hardcoded-network-url",
+        "description": "Хардкоженный сетевой адрес в исходниках (скелет, не домен-allowlist)",
+        "severity": "low",
+        "regex": "https?://[a-zA-Z0-9.-]+",
+        "flags": ""
+      }
+    ],
+    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"]
+  },
+  "llm_policy": {
+    "owner": "platform-security (lead, I00)",
+    "requirement": "NAR-02",
+    "denied_packages": [
+      "@anthropic-ai/sdk",
+      "@anthropic-ai/bedrock-sdk",
+      "@anthropic-ai/vertex-sdk",
+      "openai",
+      "@google/generative-ai",
+      "@google/genai",
+      "cohere-ai",
+      "@mistralai/mistralai",
+      "ollama",
+      "langchain",
+      "@langchain/core",
+      "llamaindex",
+      "@huggingface/inference",
+      "groq-sdk",
+      "replicate",
+      "@aws-sdk/client-bedrock-runtime"
+    ],
+    "denied_path_fragments": ["prompts/", "embeddings/"],
+    "denied_env_var_pattern": "_API_KEY$",
+    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"]
+  }
+}

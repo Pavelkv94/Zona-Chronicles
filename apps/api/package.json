@@ -16,6 +16,8 @@
     "dist"
   ],
   "scripts": {
+    "start": "node src/main.ts",
+    "dev": "node --watch src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist *.tsbuildinfo"

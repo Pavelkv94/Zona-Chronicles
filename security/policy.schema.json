@@ -1,0 +1,116 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://zona-chronicles.internal/security/policy.schema.json",
+  "title": "Security policy (OPS-03, NAR-02) — I00 skeleton",
+  "description": "Machine-readable policy consumed by tools/security-scan/src/policy.ts. Not a release gate: I00 skeleton, replaced/extended in I17.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "policy_version",
+    "dependency_policy",
+    "license_policy",
+    "secret_policy",
+    "static_policy",
+    "llm_policy"
+  ],
+  "properties": {
+    "policy_version": { "type": "string", "minLength": 1 },
+    "dependency_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "requirement", "min_blocking_severity", "unknown_severity_behavior"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "severity_order": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "min_blocking_severity": { "type": "string" },
+        "unknown_severity_behavior": { "type": "string", "enum": ["block", "allow"] }
+      }
+    },
+    "license_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "requirement", "allowed", "denied", "unknown_license_behavior"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "allowed": { "type": "array", "items": { "type": "string" } },
+        "denied": { "type": "array", "items": { "type": "string" } },
+        "unknown_license_behavior": { "type": "string", "enum": ["review_required", "allow"] }
+      }
+    },
+    "secret_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "requirement", "patterns", "allowlisted_paths"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "description", "severity", "regex", "flags"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "severity": { "type": "string", "enum": ["low", "moderate", "high", "critical"] },
+              "regex": { "type": "string", "minLength": 1 },
+              "flags": { "type": "string" }
+            }
+          }
+        },
+        "allowlisted_paths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "static_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["owner", "requirement", "forbidden_constructs", "allowlisted_paths"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "forbidden_constructs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "description", "severity", "regex", "flags"],
+            "properties": {
+              "id": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "severity": { "type": "string", "enum": ["low", "moderate", "high", "critical"] },
+              "regex": { "type": "string", "minLength": 1 },
+              "flags": { "type": "string" }
+            }
+          }
+        },
+        "allowlisted_paths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "llm_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "owner",
+        "requirement",
+        "denied_packages",
+        "denied_path_fragments",
+        "denied_env_var_pattern",
+        "allowlisted_paths"
+      ],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "requirement": { "type": "string", "minLength": 1 },
+        "denied_packages": { "type": "array", "items": { "type": "string" } },
+        "denied_path_fragments": { "type": "array", "items": { "type": "string" } },
+        "denied_env_var_pattern": { "type": "string", "minLength": 1 },
+        "allowlisted_paths": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

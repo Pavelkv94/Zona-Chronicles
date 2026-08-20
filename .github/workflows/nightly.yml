@@ -1,0 +1,35 @@
+# Nightly gate по §8 08_TDD_AND_AGENT_WORKFLOW.
+# Часть шагов появляется вместе с соответствующими итерациями и до тех пор пропускается явно,
+# а не молча: отсутствующая команда обязана падать, а не «проходить».
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  TZ: UTC
+  LANG: C.UTF-8
+
+jobs:
+  deep:
+    name: Nightly deep gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm verify:full
+
+      # simulate --seeds=100 --days=7, test:soak, test:e2e и mutation:test
+      # добавляются в I15B/I14A/I16 вместе с соответствующими командами.
+      - name: Not yet available deep checks
+        run: |
+          echo "soak/e2e/mutation gates появляются в I14A–I16 (10_ITERATION_MASTER_PLAN)."

@@ -11,5 +11,7 @@ export { decideBashCommand } from './decide-bash.ts';
 export type { BashDecision } from './decide-bash.ts';
 export { findDiffViolations, formatViolations } from './diff-violations.ts';
 export type { DiffViolation } from './diff-violations.ts';
+export { checkOwnership, formatOwnershipProblem } from './task-ownership.ts';
+export type { TaskDeclaration, OwnershipProblem, OwnershipReport } from './task-ownership.ts';
 export { loadWriteSet, parseWriteSet } from './writeset.ts';
 export type { WriteSet, WriteSetLoadResult } from './writeset.ts';

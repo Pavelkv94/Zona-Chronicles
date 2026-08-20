@@ -42,6 +42,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   ],
   '@zona/usage-continuity': [],
   '@zona/agent-harness': [],
+  '@zona/security-scan': [],
 };
 
 const WORKSPACE_ROOTS = ['apps', 'packages', 'tools'] as const;

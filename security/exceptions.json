@@ -1,0 +1,22 @@
+[
+  {
+    "id": "LIC-0001-lightningcss",
+    "check": "licenses",
+    "scope": "lightningcss@1.33.0",
+    "reason": "MPL-2.0 не входит ни в allowed, ни в denied списка license_policy: unknown_license_behavior=review_required корректно заблокировал проверку. Review проведён lead-ом I00: lightningcss приходит транзитивно из vite/vitest, является dev/test-инструментом и не попадает ни в один поставляемый артефакт. MPL-2.0 — file-level weak copyleft: обязательства возникают только при модификации и распространении самих MPL-файлов, чего проект не делает.",
+    "compensating_control": "Пакет остаётся только в devDependencies; появление lightningcss в production-зависимости или в собранном артефакте обязано заново пройти review. Долговременное решение — license policy, различающая dev и production зависимости, — запланировано к release-readiness gate I17. Scope зафиксирован вместе с версией: обновление пакета снимает исключение и требует нового review (fail-closed).",
+    "owner": "repository owner (Pavel Kazlou)",
+    "created_at": "2026-08-20",
+    "expiry": "2027-02-20"
+  },
+  {
+    "id": "LIC-0002-lightningcss-darwin-arm64",
+    "check": "licenses",
+    "scope": "lightningcss-darwin-arm64@1.33.0",
+    "reason": "Платформенный native binding того же dev-инструмента lightningcss; та же лицензия MPL-2.0 и то же основание review, что и LIC-0001-lightningcss.",
+    "compensating_control": "Действует то же ограничение: только devDependencies, повторный review при попадании в production-граф. Снимается вместе с LIC-0001-lightningcss. Scope зафиксирован вместе с версией: обновление пакета снимает исключение и требует нового review (fail-closed).",
+    "owner": "repository owner (Pavel Kazlou)",
+    "created_at": "2026-08-20",
+    "expiry": "2027-02-20"
+  }
+]

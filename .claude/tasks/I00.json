@@ -1,0 +1,56 @@
+{
+  "iteration_id": "I00",
+  "base_commit": "bcfb8cf",
+  "lead_paths": [
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "ops/**",
+    "tests/**",
+    "tools/agent-harness/**",
+    "scripts/boundaries/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    ".npmrc",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "vitest.config.ts",
+    "eslint.config.mjs",
+    ".dependency-cruiser.cjs",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".gitignore",
+    ".nvmrc",
+    ".tool-versions",
+    ".dockerignore",
+    "docker-compose.yml",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md"
+  ],
+  "tasks": [
+    {
+      "task_id": "I00-T02",
+      "owner_role": "tooling-implementer",
+      "write_paths": ["tools/usage-continuity/**"]
+    },
+    {
+      "task_id": "I00-T03",
+      "owner_role": "tooling-implementer",
+      "write_paths": ["apps/api/**", "apps/worker/**", "apps/cli/**"]
+    },
+    {
+      "task_id": "I00-T04",
+      "owner_role": "persistence-implementer",
+      "write_paths": ["packages/persistence/**"],
+      "allow_protected_paths": ["packages/persistence/src/migrations/**"]
+    },
+    {
+      "task_id": "I00-T05",
+      "owner_role": "tooling-implementer",
+      "write_paths": ["security/**", "scripts/security/**", "tools/security-scan/**"]
+    }
+  ]
+}

@@ -1,0 +1,65 @@
+# Локальная среда прототипа (ADR-002): api, worker, postgres.
+# `web` появляется в I03 вместе с Next.js observer UI.
+#
+# Разделение ролей БД (ADR-008, §11 03_TECHNICAL_DESIGN) выполняется миграциями
+# и грантами в I02A; здесь заведён только superuser для локальной разработки.
+services:
+  postgres:
+    image: postgis/postgis:17-3.5
+    container_name: zona-postgres
+    environment:
+      POSTGRES_USER: zona
+      POSTGRES_PASSWORD: zona_local_dev_only
+      POSTGRES_DB: zona
+      # Детерминизм (SIM-01): локаль и таймзона контейнера фиксированы.
+      TZ: UTC
+      PGTZ: UTC
+      LANG: C.UTF-8
+    command:
+      - postgres
+      - -c
+      - timezone=UTC
+      - -c
+      - lc_messages=C
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U zona -d zona']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile
+      target: api
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: '3001'
+      DATABASE_URL: postgres://zona:zona_local_dev_only@postgres:5432/zona
+    ports:
+      - '3001:3001'
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ['app']
+
+  worker:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile
+      target: worker
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://zona:zona_local_dev_only@postgres:5432/zona
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ['app']
+
+volumes:
+  postgres-data:

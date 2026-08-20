@@ -3,6 +3,11 @@ packages:
   - 'packages/*'
   - 'tools/*'
 
+# Детерминированная установка: agent-сессии и CI не меняют граф зависимостей молча.
+engineStrict: true
+saveExact: true
+resolutionMode: highest
+
 # Lifecycle scripts зависимостей — исполняемый код (ADR-008).
 # Решение по каждому пакету принимается явно; молчаливого «игнора» быть не должно.
 allowBuilds:

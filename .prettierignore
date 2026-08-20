@@ -5,3 +5,5 @@ coverage/
 pnpm-lock.yaml
 # Нормативная документация форматируется вручную: автоформат ломает таблицы и wiki links.
 docs/
+# Dockerfile не имеет parser-а у Prettier.
+ops/Dockerfile

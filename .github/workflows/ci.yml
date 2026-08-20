@@ -1,0 +1,63 @@
+# Provider-neutral CI: каждый шаг — это документированная команда репозитория.
+# Смена CI-провайдера не должна менять состав gate (ADR-008).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
+  TZ: UTC
+  LANG: C.UTF-8
+
+jobs:
+  gate:
+    name: PR gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+
+      # Порядок повторяет §8 08_TDD_AND_AGENT_WORKFLOW.
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm boundaries:check
+      - run: pnpm typecheck
+      - run: pnpm test:unit
+      - run: pnpm test:property
+      - run: pnpm test:contract
+      - run: pnpm test:integration
+      - run: pnpm test:replay
+      - run: pnpm security:secrets
+      - run: pnpm security:dependencies
+      - run: pnpm security:licenses
+      - run: pnpm security:static
+      - run: pnpm security:no-llm
+      - run: pnpm build
+
+      - name: Continuity harness dry-run (DEV-01)
+        run: pnpm continuity:dry-run
+
+      - name: Upload machine-readable reports
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: reports
+          path: reports/
+          if-no-files-found: ignore
