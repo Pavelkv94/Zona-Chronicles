@@ -13,16 +13,34 @@ export interface AppliedMigrationRecord {
 }
 
 /**
- * Checksum нормализованного тела миграции (sha256 через `node:crypto`).
+ * Checksum нормализованного SQL-текста миграции (sha256 через `node:crypto`).
  *
- * Контракт миграции — только `{ id, name, up }` (без отдельного текстового поля),
- * поэтому источником текста служит исходный код функции `up` (`Function.prototype.toString`),
- * нормализованный схлопыванием пробельных символов, чтобы форматирование не считалось
- * изменением содержимого.
+ * Источник текста — `migration.statements` (явный, стабильный SQL, который
+ * `up` исполняет по порядку), а НЕ `Function.prototype.toString()` кода `up`.
+ * Текст функции меняется при смене версии TypeScript/транспайлера/минификатора,
+ * поэтому checksum от кода дал бы ложный `MIGRATION_CHECKSUM_MISMATCH` на
+ * нетронутой миграции — ложную тревогу целостности на невосполнимом журнале.
+ *
+ * Правило нормализации одного statement (детерминированное, описано явно,
+ * чтобы форматирование текста миграции не считалось изменением содержимого):
+ *  1. `\r\n` -> `\n` (перевод строк не зависит от ОС/редактора);
+ *  2. с каждой строки убираются хвостовые пробелы/табы;
+ *  3. у результата убираются ведущие/хвостовые пустые строки (`trim`).
+ * Statements объединяются символом `\n` в порядке объявления в `statements`
+ * (порядок значим — это порядок фактического исполнения).
  */
-export function computeChecksum(migration: Pick<Migration, 'up'>): string {
-  const normalized = migration.up.toString().replace(/\s+/g, ' ').trim();
+export function computeChecksum(migration: Pick<Migration, 'statements'>): string {
+  const normalized = migration.statements.map(normalizeStatement).join('\n');
   return createHash('sha256').update(normalized, 'utf8').digest('hex');
+}
+
+function normalizeStatement(statement: string): string {
+  return statement
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+$/, ''))
+    .join('\n')
+    .trim();
 }
 
 /**

@@ -69,4 +69,29 @@ describe('findSecrets', () => {
     );
     expect(findings.some((f) => f.id === 'pem-private-key')).toBe(true);
   });
+
+  it('drops findings below secret_policy.min_blocking_severity (m7: severity was previously ignored)', () => {
+    const highThresholdPolicy: SecurityPolicy = {
+      ...policy,
+      secret_policy: { ...policy.secret_policy, min_blocking_severity: 'critical' },
+    };
+    // dotenv-style-assignment is severity "moderate" — below a "critical" threshold.
+    const findings = findSecrets(
+      [{ path: '.env.local', content: DOTENV_STYLE_SAMPLE }],
+      highThresholdPolicy,
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('still flags a critical-severity pattern (PEM key) even with a raised threshold (positive: severity, not the whole check, is what changes)', () => {
+    const highThresholdPolicy: SecurityPolicy = {
+      ...policy,
+      secret_policy: { ...policy.secret_policy, min_blocking_severity: 'critical' },
+    };
+    const findings = findSecrets(
+      [{ path: 'app.ts', content: PEM_PRIVATE_KEY_SAMPLE }],
+      highThresholdPolicy,
+    );
+    expect(findings.some((f) => f.id === 'pem-private-key')).toBe(true);
+  });
 });

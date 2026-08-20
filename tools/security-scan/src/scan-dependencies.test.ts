@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { applyDependencyPolicy, parseAuditJson } from './scan-dependencies.ts';
+import {
+  applyDependencyPolicy,
+  evaluateLivenessProbe,
+  parseAuditJson,
+} from './scan-dependencies.ts';
 import { parsePolicy } from './policy.ts';
 import type { SecurityPolicy } from './policy.ts';
 
@@ -82,5 +86,29 @@ describe('applyDependencyPolicy', () => {
       policy,
     );
     expect(findings).toHaveLength(1);
+  });
+});
+
+describe('evaluateLivenessProbe (B1)', () => {
+  it('treats a fixture probe with known advisories as confirmed-live (positive)', () => {
+    const outcome = evaluateLivenessProbe({
+      kind: 'ok',
+      advisories: [
+        { id: '1', package: 'minimatch', severity: 'high', title: 'ReDoS', url: 'u' },
+        { id: '2', package: 'minimatch', severity: 'high', title: 'ReDoS 2', url: 'u' },
+      ],
+    });
+    expect(outcome).toEqual({ kind: 'live', fixtureAdvisoryCount: 2 });
+  });
+
+  it('treats an empty fixture probe result as unconfirmed — this is exactly the B1 fail-open shape (negative)', () => {
+    const outcome = evaluateLivenessProbe({ kind: 'ok', advisories: [] });
+    expect(outcome.kind).toBe('unconfirmed');
+  });
+
+  it('treats an invalid/malformed fixture probe response as unconfirmed (negative)', () => {
+    const outcome = evaluateLivenessProbe({ kind: 'invalid', reason: 'boom' });
+    expect(outcome.kind).toBe('unconfirmed');
+    if (outcome.kind === 'unconfirmed') expect(outcome.reason).toMatch(/boom/);
   });
 });

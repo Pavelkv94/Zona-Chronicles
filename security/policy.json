@@ -10,18 +10,6 @@
   "license_policy": {
     "owner": "platform-security (lead, I00)",
     "requirement": "OPS-03",
-    "allowed": [
-      "MIT",
-      "ISC",
-      "BSD-2-Clause",
-      "BSD-3-Clause",
-      "Apache-2.0",
-      "0BSD",
-      "CC0-1.0",
-      "Unlicense",
-      "Python-2.0",
-      "BlueOak-1.0.0"
-    ],
     "denied": [
       "GPL-1.0",
       "GPL-1.0-only",
@@ -45,7 +33,26 @@
       "EUPL-1.1",
       "EUPL-1.2"
     ],
-    "unknown_license_behavior": "review_required"
+    "production": {
+      "allowed": [
+        "MIT",
+        "ISC",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "Apache-2.0",
+        "0BSD",
+        "CC0-1.0",
+        "Unlicense",
+        "Python-2.0",
+        "BlueOak-1.0.0"
+      ]
+    },
+    "development": {
+      "allowed": ["MPL-2.0", "EPL-2.0"],
+      "rationale": "MPL-2.0/EPL-2.0 — file-level weak copyleft: обязательства (раскрытие исходников изменённых файлов) возникают только при модификации и распространении самих MPL/EPL-файлов. Build-time-only dev/test tooling (например lightningcss, приходящий транзитивно из vite/vitest) не распространяется как часть production-артефакта, поэтому граница дистрибуции (production vs development граф `pnpm licenses list --json --prod`) — правильное место для этого допущения, а не platform-specific package exception."
+    },
+    "unknown_license_behavior": "review_required",
+    "min_blocking_severity": "low"
   },
   "secret_policy": {
     "owner": "platform-security (lead, I00)",
@@ -80,7 +87,8 @@
         "flags": "m"
       }
     ],
-    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"]
+    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"],
+    "min_blocking_severity": "low"
   },
   "static_policy": {
     "owner": "platform-security (lead, I00)",
@@ -115,7 +123,8 @@
         "flags": ""
       }
     ],
-    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"]
+    "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"],
+    "min_blocking_severity": "low"
   },
   "llm_policy": {
     "owner": "platform-security (lead, I00)",

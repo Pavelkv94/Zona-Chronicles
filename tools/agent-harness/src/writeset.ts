@@ -3,8 +3,12 @@ import { readFileSync } from 'node:fs';
 /**
  * Declared write set текущей задачи (`08_TDD_AND_AGENT_WORKFLOW` §12).
  *
- * Наличие файла означает, что сессия исполняет ограниченную задачу subagent-а.
- * Отсутствие файла означает orchestrator/lead-сессию, которой доступны protected paths.
+ * B2 review finding: наличие/отсутствие этого файла — НЕ доказательство роли сессии.
+ * Файл удаляем самой task-сессией (`rm -f .claude/writeset.json`), поэтому `kind: 'lead'`
+ * здесь означает буквально «файл отсутствует или пуст», а не «это lead». Единственный
+ * неподделываемый признак роли — hook payload (`agent_id`/`agent_type`), см.
+ * `classifySession` в `session-role.ts`. Вызывающий код обязан комбинировать оба сигнала:
+ * task-сессия с `kind: 'lead'` здесь обязана получить deny (fail-closed), а не allow.
  */
 export type WriteSet = {
   readonly task_id: string;
@@ -63,7 +67,10 @@ export const parseWriteSet = (raw: string): WriteSetLoadResult => {
   return { kind: 'task', writeSet };
 };
 
-/** Читает write set с диска. Отсутствие файла = lead-сессия. */
+/**
+ * Читает write set с диска. Отсутствие файла даёт `kind: 'lead'` — это факт о файле,
+ * не о сессии (см. предупреждение у `WriteSetLoadResult`).
+ */
 export const loadWriteSet = (path: string): WriteSetLoadResult => {
   let raw: string;
   try {

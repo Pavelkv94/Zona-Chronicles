@@ -22,7 +22,7 @@ Claude Code agents могут безопасно работать в репоз�
 | ------ | -------------------------------------------------------------------------------------------------------------- |
 | DEV-01 | persisted checkpoint + injected telemetry + wake/resume dry-run `2% → 1% → reset`                              |
 | DEV-02 | permissions/sandbox/hooks/lint/CI исполняют запреты вне model instructions                                     |
-| OPS-03 | скелет least-privilege ролей, secret/dependency/license/static scan и machine-readable policy/exception формат |
+| OPS-03 | secret/dependency/license/static scan skeleton и machine-readable policy/exception формат с owner/expiry |
 | SIM-01 | подготовка: `no-restricted-*` запрет `Date.now`/`Math.random`/`process.env` в `domain`/`simulation`            |
 
 I00 не объявляет production readiness (ADR-008): release-gate evidence принадлежит I17.
@@ -38,6 +38,14 @@ I00 не объявляет production readiness (ADR-008): release-gate evidenc
 - Fastify health route, migration runner, пустой worker и CLI;
 - Docker Compose (`api`, `worker`, `postgres`) и provider-neutral CI commands;
 - frozen install, secret/dependency/license/static scan skeleton, machine-readable policy и exception формат с owner/expiry;
+
+**Поправка после review (M9).** Первая редакция §3 относила к I00 «скелет least-privilege
+ролей БД». Это over-claim самого PLAN: scope I00 в `10_ITERATION_MASTER_PLAN` ролей БД не
+содержит, а разделение migration owner / canonical worker / projection builder / read-only
+query API имеет смысл только вместе с первыми каноническими таблицами. Роли и гранты
+переносятся в I02A, где появляются `world_events` и current state; release-evidence остаётся
+за I17. Это уточнение формулировки требования, а не ослабление gate: ни один критерий
+ACCEPTANCE не менялся.
 - usage-window monitor **port**, persisted checkpoint, external wake/resume harness без hard-coded provider UI parsing.
 
 ## 5. Out of scope
@@ -75,6 +83,15 @@ Protected paths для всех implementer-задач: `pnpm-lock.yaml`, root c
 ## 8. Отклонения от нормативного процесса
 
 - **Worktree isolation.** Implementer subagents работают в основном worktree с непересекающимися write paths вместо отдельных git worktrees: свежий worktree не имеет `node_modules`, а установка зависимостей запрещена feature-агентам. Компенсирующие controls: непересекающиеся write sets, запрет git-операций для subagents, write-set hook и lead-only интеграция. Зафиксировать в `REPORT.md`; пересмотреть, когда появится общий store/`node_modules` bootstrap без установки агентом.
+
+### Reviewer isolation (поправка после review)
+
+- **Наблюдение.** Test reviewer и architecture reviewer были запущены параллельно в одном
+  рабочем дереве. Test reviewer по своей роли временно мутирует production-код для проверки
+  силы тестов, поэтому architecture reviewer частично снимал evidence с изменяющегося дерева.
+- **Правило на будущее.** Reviewer работает по замороженному SHA либо в отдельном worktree;
+  два reviewer-а не запускаются одновременно в общем дереве, если один из них мутирует код.
+  Это ошибка оркестрации lead-а, зафиксирована в `REVIEW.md`.
 
 ## 9. Stop conditions
 

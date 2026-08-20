@@ -32,9 +32,16 @@ export interface ActionRunnerPort {
   run(actionId: string): 'ok' | 'failed';
 }
 
-/** Фактическое состояние репозитория для сверки перед resume. */
+/**
+ * Фактическое состояние репозитория для сверки перед resume (§9: "branch/worktree, base/HEAD,
+ * git diff, живые процессы и ownership"). `changedFiles()` — эквивалент `git diff --name-only`,
+ * сверяется с `checkpoint.dirty_files`. `livingProcesses()` — эквивалент "живые процессы",
+ * сверяется с `checkpoint.unfinished_processes`.
+ */
 export interface RepoStatePort {
   branch(): string;
   headSha(): string;
   changedFiles(): string[];
+  worktree(): string;
+  livingProcesses(): string[];
 }

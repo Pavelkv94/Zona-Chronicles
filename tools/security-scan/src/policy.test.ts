@@ -9,8 +9,11 @@ describe('parsePolicy', () => {
     expect(result.kind).toBe('ok');
     if (result.kind === 'ok') {
       expect(result.policy.dependency_policy.min_blocking_severity).toBe('high');
-      expect(result.policy.license_policy.allowed).toContain('MIT');
+      expect(result.policy.license_policy.production.allowed).toContain('MIT');
+      expect(result.policy.license_policy.development.allowed).toContain('MPL-2.0');
       expect(result.policy.secret_policy.patterns.length).toBeGreaterThan(0);
+      expect(result.policy.secret_policy.min_blocking_severity).toBe('low');
+      expect(result.policy.static_policy.min_blocking_severity).toBe('low');
     }
   });
 

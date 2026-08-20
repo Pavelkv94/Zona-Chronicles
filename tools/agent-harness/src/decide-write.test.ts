@@ -13,8 +13,11 @@ const taskWriteSet: WriteSetLoadResult = {
   },
 };
 
-const decide = (targetPath: string, writeSet: WriteSetLoadResult = taskWriteSet) =>
-  decideWrite({ targetPath, projectRoot: ROOT, writeSet });
+const decide = (
+  targetPath: string,
+  writeSet: WriteSetLoadResult = taskWriteSet,
+  sessionRole: 'lead' | 'task' = 'task',
+) => decideWrite({ targetPath, projectRoot: ROOT, writeSet, sessionRole });
 
 describe('toRepoRelative', () => {
   it('приводит абсолютный путь к относительному', () => {
@@ -28,7 +31,7 @@ describe('toRepoRelative', () => {
 });
 
 describe('decideWrite — разрешённые операции', () => {
-  it('разрешает запись внутри declared write set', () => {
+  it('разрешает запись внутри declared write set (task-сессия)', () => {
     const result = decide('/repo/tools/usage-continuity/src/runner.ts');
     expect(result.decision).toBe('allow');
   });
@@ -37,8 +40,14 @@ describe('decideWrite — разрешённые операции', () => {
     expect(decide('tools/usage-continuity/src/a.ts').decision).toBe('allow');
   });
 
-  it('разрешает lead-сессии запись в protected path', () => {
-    const result = decide('/repo/pnpm-lock.yaml', { kind: 'lead' });
+  it('разрешает lead-сессии запись в protected path, даже без writeset.json', () => {
+    const result = decide('/repo/pnpm-lock.yaml', { kind: 'lead' }, 'lead');
+    expect(result.decision).toBe('allow');
+  });
+
+  it('разрешает lead-сессии запись, даже если на диске случайно лежит writeset.json', () => {
+    // Роль решает payload, а не файл: lead остаётся lead-ом независимо от содержимого файла.
+    const result = decide('/repo/pnpm-lock.yaml', taskWriteSet, 'lead');
     expect(result.decision).toBe('allow');
   });
 
@@ -82,11 +91,11 @@ describe('decideWrite — запрещённые операции', () => {
   });
 
   it('запрещает секреты даже lead-сессии', () => {
-    expect(decide('/repo/.env', { kind: 'lead' }).decision).toBe('deny');
-    expect(decide('/repo/keys/server.pem', { kind: 'lead' }).decision).toBe('deny');
+    expect(decide('/repo/.env', { kind: 'lead' }, 'lead').decision).toBe('deny');
+    expect(decide('/repo/keys/server.pem', { kind: 'lead' }, 'lead').decision).toBe('deny');
   });
 
-  it('fail-closed при повреждённом writeset.json', () => {
+  it('fail-closed при повреждённом writeset.json (task-сессия)', () => {
     const result = decide('/repo/tools/usage-continuity/src/a.ts', {
       kind: 'invalid',
       reason: 'сломанный JSON',
@@ -97,6 +106,32 @@ describe('decideWrite — запрещённые операции', () => {
 
   it('не позволяет обойти write set через ../', () => {
     expect(decide('/repo/tools/usage-continuity/../../pnpm-lock.yaml').decision).toBe('deny');
+  });
+
+  describe('B2: task-сессия без declared write set — fail-closed', () => {
+    it('deny, если writeset.json никогда не был объявлен (kind: lead)', () => {
+      const result = decide('/repo/tools/usage-continuity/src/a.ts', { kind: 'lead' }, 'task');
+      expect(result.decision).toBe('deny');
+      expect(result.reason).toContain('без объявленного write set');
+      expect(result.reason).toContain('lead обязан объявить');
+    });
+
+    it('deny даже на путь, который выглядел бы безобидным при lead-роли', () => {
+      // Регрессия ревью: task-сессия удаляет .claude/writeset.json (rm -f) — loadWriteSet
+      // после этого тоже вернёт kind: 'lead'. Здесь мы напрямую подаём этот результат и
+      // проверяем, что при sessionRole: 'task' это не превращается в allow.
+      const result = decide('/repo/README.md', { kind: 'lead' }, 'task');
+      expect(result.decision).toBe('deny');
+    });
+
+    it('deny на любой путь, включая собственный write path задачи, без объявленного write set', () => {
+      const result = decide(
+        '/repo/tools/usage-continuity/src/anything.ts',
+        { kind: 'lead' },
+        'task',
+      );
+      expect(result.decision).toBe('deny');
+    });
   });
 });
 

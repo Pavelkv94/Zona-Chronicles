@@ -73,4 +73,28 @@ describe('findStaticFindings', () => {
     );
     expect(findings).toEqual([]);
   });
+
+  it('drops low-severity findings (hardcoded-network-url) below a raised static_policy.min_blocking_severity (m7: severity was previously ignored)', () => {
+    const highThresholdPolicy: SecurityPolicy = {
+      ...policy,
+      static_policy: { ...policy.static_policy, min_blocking_severity: 'high' },
+    };
+    const findings = findStaticFindings(
+      [{ path: 'apps/api/src/z.ts', content: HARDCODED_URL_SAMPLE }],
+      highThresholdPolicy,
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('still flags a high-severity construct (eval-call) even with a raised threshold (positive: severity, not the whole check, is what changes)', () => {
+    const highThresholdPolicy: SecurityPolicy = {
+      ...policy,
+      static_policy: { ...policy.static_policy, min_blocking_severity: 'high' },
+    };
+    const findings = findStaticFindings(
+      [{ path: 'packages/domain/src/x.ts', content: EVAL_CALL_SAMPLE }],
+      highThresholdPolicy,
+    );
+    expect(findings.some((f) => f.id === 'eval-call')).toBe(true);
+  });
 });

@@ -1,7 +1,7 @@
 import { applyExceptions, forcedFailuresFor, loadExceptions } from './exceptions.ts';
 import { matchesAnyGlob } from './glob.ts';
 import { listGitTrackedFiles, readTrackedFiles } from './git.ts';
-import { compilePattern, loadPolicy } from './policy.ts';
+import { compilePattern, loadPolicy, meetsMinSeverity } from './policy.ts';
 import type { SecurityPolicy } from './policy.ts';
 import type { Finding, ScanOutcome } from './report.ts';
 import { buildReport } from './report.ts';
@@ -10,6 +10,9 @@ import { buildReport } from './report.ts';
  * Secret scan (OPS-03): паттерны из `secret_policy.patterns`, применённые к
  * содержимому файлов, отслеживаемых git. Чистая функция `findSecrets` не
  * трогает файловую систему/процесс — io изолирован в `runSecretsScan`.
+ *
+ * m7 (review finding): `secret_policy.min_blocking_severity` теперь реально
+ * применяется — раньше любая активная находка валила gate независимо от severity.
  */
 
 export type ScannedFile = { readonly path: string; readonly content: string };
@@ -19,13 +22,18 @@ const truncate = (value: string, max: number): string =>
 
 /** Чистая функция: находит совпадения secret-паттернов в переданных файлах. */
 export const findSecrets = (files: readonly ScannedFile[], policy: SecurityPolicy): Finding[] => {
-  const { patterns, allowlisted_paths: allowlistedPaths } = policy.secret_policy;
+  const {
+    patterns,
+    allowlisted_paths: allowlistedPaths,
+    min_blocking_severity: minBlockingSeverity,
+  } = policy.secret_policy;
   const findings: Finding[] = [];
 
   for (const file of files) {
     if (matchesAnyGlob(file.path, allowlistedPaths)) continue;
 
     for (const pattern of patterns) {
+      if (!meetsMinSeverity(pattern.severity, minBlockingSeverity)) continue;
       const regex = compilePattern({
         ...pattern,
         flags: pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,

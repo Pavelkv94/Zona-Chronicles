@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 /**
  * PreToolUse hook для Bash: запрещает task-сессии операции orchestrator/lead (DEV-02).
- * Для lead-сессии (нет `.claude/writeset.json`) hook ничего не делает.
+ *
+ * Роль решается payload-ом (`agent_id`/`agent_type` — `classifySession`), а не наличием
+ * `.claude/writeset.json` (B2 review finding): для lead-сессии hook ничего не делает; для
+ * task-сессии без валидного write set команда fail-closed деноситься, даже если файл удалён
+ * самой сессией.
  */
-import { decideBashCommand } from '../decide-bash.ts';
+import { decideBashForSession } from '../decide-bash.ts';
+import { classifySession } from '../session-role.ts';
 import { loadWriteSet } from '../writeset.ts';
 import { readHookInput } from './read-stdin.ts';
 
@@ -18,15 +23,13 @@ const main = async (): Promise<void> => {
       : undefined;
   if (typeof command !== 'string') return;
 
+  const sessionRole = classifySession(input);
+  if (sessionRole === 'lead') return;
+
   const projectRoot =
     typeof input['cwd'] === 'string' && input['cwd'].length > 0 ? input['cwd'] : process.cwd();
-  const loaded = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
-  if (loaded.kind === 'lead') return;
-
-  const decision =
-    loaded.kind === 'invalid'
-      ? { decision: 'deny' as const, reason: `Fail-closed: ${loaded.reason}` }
-      : decideBashCommand(command);
+  const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
+  const decision = decideBashForSession({ command, sessionRole, writeSet });
 
   if (decision.decision === 'deny') {
     process.stdout.write(

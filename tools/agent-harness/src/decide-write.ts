@@ -1,6 +1,7 @@
 import { isAbsolute, relative } from 'node:path';
 import { matchesAnyGlob, normalizePath } from './glob.ts';
 import { HUMAN_ONLY_PATHS, PROTECTED_PATHS } from './protected-paths.ts';
+import type { SessionRole } from './session-role.ts';
 import type { WriteSetLoadResult } from './writeset.ts';
 
 export type WriteDecision = {
@@ -14,6 +15,11 @@ export type WriteRequest = {
   /** Корень проекта (cwd hook-а). */
   readonly projectRoot: string;
   readonly writeSet: WriteSetLoadResult;
+  /**
+   * Роль сессии по `classifySession` (payload `agent_id`/`agent_type`), не по наличию файла
+   * write set (B2 review finding: файл — подделываемый сигнал, payload — нет).
+   */
+  readonly sessionRole: SessionRole;
 };
 
 const allow = (reason: string): WriteDecision => ({ decision: 'allow', reason });
@@ -31,22 +37,41 @@ export const toRepoRelative = (targetPath: string, projectRoot: string): string 
  * Чистое решение о допустимости записи.
  *
  * Порядок проверок фиксирован и важен:
- * 1. секреты запрещены всем;
- * 2. путь вне репозитория запрещён задаче subagent-а;
- * 3. lead-сессия (нет writeset.json) работает без ограничения по write set;
+ * 1. секреты запрещены всем, включая lead;
+ * 2. роль сессии определяется payload-ом (`sessionRole`), а не наличием `writeset.json`
+ *    (B2 review finding): lead-сессия работает без ограничения по write set;
+ * 3. task-сессия без валидного declared write set получает deny — fail-closed, а не allow,
+ *    даже если файла нет вовсе (значит `writeSet.kind === 'lead'`, т.е. «файл отсутствует»);
  * 4. невалидный writeset.json — fail-closed;
- * 5. protected path запрещён, если он не выдан задаче явно;
- * 6. запись обязана попадать в declared write paths.
+ * 5. путь вне репозитория запрещён задаче subagent-а;
+ * 6. protected path запрещён, если он не выдан задаче явно;
+ * 7. запись обязана попадать в declared write paths.
  */
-export const decideWrite = ({ targetPath, projectRoot, writeSet }: WriteRequest): WriteDecision => {
+export const decideWrite = ({
+  targetPath,
+  projectRoot,
+  writeSet,
+  sessionRole,
+}: WriteRequest): WriteDecision => {
   const repoPath = toRepoRelative(targetPath, projectRoot);
 
   if (repoPath !== null && matchesAnyGlob(repoPath, HUMAN_ONLY_PATHS)) {
     return deny(`Запись в ${repoPath} запрещена: секреты и ключи редактирует только человек.`);
   }
 
+  if (sessionRole === 'lead') {
+    return allow(
+      'Lead-сессия (hook payload без agent_id/agent_type): declared write set не требуется.',
+    );
+  }
+
+  // Дальше — task-сессия. Без валидного write set она не имеет права ни на одну запись,
+  // независимо от того, чем вызвано отсутствие файла: он никогда не был объявлен или был удалён.
   if (writeSet.kind === 'lead') {
-    return allow('Lead-сессия: declared write set отсутствует.');
+    return deny(
+      'Task-сессия без объявленного write set: lead обязан объявить .claude/writeset.json ' +
+        'до запуска задачи. Отсутствие файла — fail-closed, а не разрешение.',
+    );
   }
 
   if (writeSet.kind === 'invalid') {

@@ -1,6 +1,6 @@
 import { applyExceptions, forcedFailuresFor, loadExceptions } from './exceptions.ts';
 import { matchesAnyGlob } from './glob.ts';
-import { compilePattern, loadPolicy } from './policy.ts';
+import { compilePattern, loadPolicy, meetsMinSeverity } from './policy.ts';
 import { collectSourceFiles } from './source-files.ts';
 import type { SecurityPolicy } from './policy.ts';
 import type { Finding, ScanOutcome } from './report.ts';
@@ -13,6 +13,10 @@ import { buildReport } from './report.ts';
  * `apps/**`, `packages/**`, `tools/**`. Он не строит AST, не понимает область
  * видимости и не отслеживает поток данных — не заменяет полноценный SAST
  * (см. §12 `03_TECHNICAL_DESIGN.md`), который приходит в I17.
+ *
+ * m7 (review finding): `static_policy.min_blocking_severity` теперь реально
+ * применяется — раньше `low` (например `hardcoded-network-url`) блокировал gate
+ * так же жёстко, как `critical`.
  */
 
 export type ScannedFile = { readonly path: string; readonly content: string };
@@ -25,14 +29,18 @@ export const findStaticFindings = (
   files: readonly ScannedFile[],
   policy: SecurityPolicy,
 ): Finding[] => {
-  const { forbidden_constructs: constructs, allowlisted_paths: allowlistedPaths } =
-    policy.static_policy;
+  const {
+    forbidden_constructs: constructs,
+    allowlisted_paths: allowlistedPaths,
+    min_blocking_severity: minBlockingSeverity,
+  } = policy.static_policy;
   const findings: Finding[] = [];
 
   for (const file of files) {
     if (matchesAnyGlob(file.path, allowlistedPaths)) continue;
 
     for (const construct of constructs) {
+      if (!meetsMinSeverity(construct.severity, minBlockingSeverity)) continue;
       const regex = compilePattern({
         ...construct,
         flags: construct.flags.includes('g') ? construct.flags : `${construct.flags}g`,

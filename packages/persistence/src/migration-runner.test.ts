@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import type { Migration } from './migrations/types.ts';
+import type { Migration, MigrationPhase } from './migrations/types.ts';
 import { computeChecksum, type AppliedMigrationRecord } from './migration-ledger.ts';
 import {
   applyMigrations,
   MigrationChecksumMismatchError,
   MigrationNameMismatchError,
+  MigrationPhaseConflictError,
   type Logger,
   type MigrationExecutor,
 } from './migration-runner.ts';
@@ -16,10 +17,12 @@ const silentLogger: Logger = {
 };
 
 /** Фейковая миграция: `up` никогда реально не вызывается фейковым executor-ом (см. ниже). */
-function fakeMigration(id: string, name: string): Migration {
+function fakeMigration(id: string, name: string, phase: MigrationPhase = 'expand'): Migration {
   return {
     id,
     name,
+    phase,
+    statements: [`-- ${id} ${name}`],
     up: async () => {
       /* no-op: фейковый executor не вызывает up() напрямую */
     },
@@ -155,5 +158,59 @@ describe('applyMigrations — advisory lock', () => {
     expect(calls).toEqual(['lock', 'unlock']);
     // 0001 успела примениться до падения 0002 — каждая миграция в своей транзакции.
     expect(appliedInOrder).toEqual(['0001', '0002']);
+  });
+});
+
+describe('applyMigrations — фаза expand/backfill/contract', () => {
+  it('падает с MIGRATION_PHASE_CONFLICT, если в одном прогоне есть и expand, и contract', async () => {
+    const migrations = [
+      fakeMigration('0001', 'add-column', 'expand'),
+      fakeMigration('0002', 'drop-old-column', 'contract'),
+    ];
+    const { executor, appliedInOrder } = createFakeExecutor();
+
+    await expect(applyMigrations(executor, migrations, silentLogger)).rejects.toThrow(
+      MigrationPhaseConflictError,
+    );
+    // Fail fast — ни expand, ни contract не должны были даже начать применяться.
+    expect(appliedInOrder).toEqual([]);
+  });
+
+  it('не конфликтует, если contract-миграция единственная в прогоне (expand уже применён ранее)', async () => {
+    const expandMigration = fakeMigration('0001', 'add-column', 'expand');
+    const contractMigration = fakeMigration('0002', 'drop-old-column', 'contract');
+    const { executor, appliedInOrder } = createFakeExecutor({
+      initiallyApplied: [
+        {
+          id: '0001',
+          name: 'add-column',
+          checksum: computeChecksum(expandMigration),
+          appliedAt: new Date(0),
+          durationMs: 1,
+        },
+      ],
+    });
+
+    const report = await applyMigrations(
+      executor,
+      [expandMigration, contractMigration],
+      silentLogger,
+    );
+
+    expect(appliedInOrder).toEqual(['0002']);
+    expect(report.applied.map((entry) => entry.id)).toEqual(['0002']);
+  });
+
+  it('не конфликтует, если в прогоне только backfill и contract', async () => {
+    const migrations = [
+      fakeMigration('0001', 'backfill-data', 'backfill'),
+      fakeMigration('0002', 'drop-old-column', 'contract'),
+    ];
+    const { executor, appliedInOrder } = createFakeExecutor();
+
+    const report = await applyMigrations(executor, migrations, silentLogger);
+
+    expect(appliedInOrder).toEqual(['0001', '0002']);
+    expect(report.applied.map((entry) => entry.id)).toEqual(['0001', '0002']);
   });
 });

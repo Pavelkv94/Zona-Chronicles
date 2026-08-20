@@ -68,6 +68,14 @@ export function renderCheckpoint(checkpoint: Checkpoint): string {
   if (checkpoint.capability_status !== undefined) {
     lines.push(`capability_status: ${JSON.stringify(checkpoint.capability_status)}`);
   }
+  if (checkpoint.resume_attempted_at !== undefined) {
+    lines.push(`resume_attempted_at: ${JSON.stringify(checkpoint.resume_attempted_at)}`);
+  }
+  if (checkpoint.last_resume_validation_error !== undefined) {
+    lines.push(
+      `last_resume_validation_error: ${JSON.stringify(checkpoint.last_resume_validation_error)}`,
+    );
+  }
   lines.push(FRONTMATTER_DELIMITER, '');
   return lines.join('\n');
 }
@@ -211,12 +219,38 @@ export function parseCheckpoint(text: string): Checkpoint | CheckpointParseError
     checkpointed_at: getString('checkpointed_at'),
   };
 
-  const capabilityStatus = fields.get('capability_status');
-  if (capabilityStatus === undefined) {
-    return checkpoint;
+  return applyOptionalStringFields(checkpoint, fields, [
+    'capability_status',
+    'resume_attempted_at',
+    'last_resume_validation_error',
+  ]);
+}
+
+/** Ключи опциональных строковых полей Checkpoint — единственные, применяемые ниже. */
+type OptionalCheckpointStringKey =
+  'capability_status' | 'resume_attempted_at' | 'last_resume_validation_error';
+
+/**
+ * Присваивает опциональные строковые поля (capability_status, resume_attempted_at,
+ * last_resume_validation_error), только если они присутствуют во frontmatter. С
+ * `exactOptionalPropertyTypes: true` ключ не может присутствовать со значением `undefined`,
+ * поэтому используется conditional spread, а не прямое присваивание.
+ */
+function applyOptionalStringFields(
+  checkpoint: Checkpoint,
+  fields: Map<string, unknown>,
+  keys: readonly OptionalCheckpointStringKey[],
+): Checkpoint | CheckpointParseError {
+  let result = checkpoint;
+  for (const key of keys) {
+    const value = fields.get(key);
+    if (value === undefined) {
+      continue;
+    }
+    if (typeof value !== 'string') {
+      return { error: `поле "${key}" присутствует, но не строка` };
+    }
+    result = { ...result, [key]: value };
   }
-  if (typeof capabilityStatus !== 'string') {
-    return { error: 'поле "capability_status" присутствует, но не строка' };
-  }
-  return { ...checkpoint, capability_status: capabilityStatus };
+  return result;
 }

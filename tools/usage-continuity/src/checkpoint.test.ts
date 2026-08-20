@@ -70,6 +70,34 @@ describe('renderCheckpoint / parseCheckpoint round trip', () => {
     expect(parsed).toEqual(withCapability);
   });
 
+  it('resume_attempted_at опционален и round-trip сохраняет его при наличии (B3 п.3)', () => {
+    const withAttempt: Checkpoint = {
+      ...sampleCheckpoint,
+      resume_attempted_at: '2026-08-20T12:05:00.000Z',
+    };
+    const parsed = parseCheckpoint(renderCheckpoint(withAttempt));
+    expect(parsed).toEqual(withAttempt);
+  });
+
+  it('last_resume_validation_error опционален и round-trip сохраняет его при наличии (m4)', () => {
+    const withError: Checkpoint = {
+      ...sampleCheckpoint,
+      last_resume_validation_error: 'head_sha: checkpoint="abc" actual="def"',
+    };
+    const parsed = parseCheckpoint(renderCheckpoint(withError));
+    expect(parsed).toEqual(withError);
+  });
+
+  it('resume_attempted_at и last_resume_validation_error могут сосуществовать', () => {
+    const withBoth: Checkpoint = {
+      ...sampleCheckpoint,
+      resume_attempted_at: '2026-08-20T12:05:00.000Z',
+      last_resume_validation_error: 'branch: checkpoint="main" actual="other"',
+    };
+    const parsed = parseCheckpoint(renderCheckpoint(withBoth));
+    expect(parsed).toEqual(withBoth);
+  });
+
   it('парсинг мусора возвращает { error }, а не бросает исключение', () => {
     const result = parseCheckpoint('это не checkpoint');
     expect(result).toHaveProperty('error');

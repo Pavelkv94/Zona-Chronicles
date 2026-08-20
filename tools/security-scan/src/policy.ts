@@ -9,6 +9,26 @@ import { readFileSync } from 'node:fs';
 
 export type Severity = 'low' | 'moderate' | 'high' | 'critical';
 
+/**
+ * Единая шкала severity для secret/static/license проверок (dependency_policy
+ * держит собственную `severity_order`, потому что npm audit добавляет `info`
+ * и отдельно управляет поведением при неизвестной severity).
+ */
+export const SEVERITY_SCALE: readonly Severity[] = ['low', 'moderate', 'high', 'critical'];
+
+/**
+ * Чистая функция: единообразное применение `min_blocking_severity` (m7).
+ * Неизвестная finding-severity или неизвестный порог не пропускаются молча —
+ * fail-closed (`true`, блокирует), а не fail-open.
+ */
+export const meetsMinSeverity = (severity: string, minBlockingSeverity: string): boolean => {
+  const scale = SEVERITY_SCALE as readonly string[];
+  const index = scale.indexOf(severity.toLowerCase());
+  const minIndex = scale.indexOf(minBlockingSeverity.toLowerCase());
+  if (index === -1 || minIndex === -1) return true;
+  return index >= minIndex;
+};
+
 export type NamedPattern = {
   readonly id: string;
   readonly description: string;
@@ -25,12 +45,25 @@ export type DependencyPolicy = {
   readonly unknown_severity_behavior: 'block' | 'allow';
 };
 
+/**
+ * Production/development split (M2/M3): один allowlist на весь граф судил
+ * build-time-only инструмент так же строго, как поставляемый код, и требовал
+ * платформозависимых per-package исключений (`lightningcss-<platform>`).
+ * `production.allowed` — строгий allowlist для production-графа
+ * (`pnpm licenses list --json --prod`). `development.allowed` — ДОПОЛНИТЕЛЬНЫЕ
+ * лицензии, разрешённые только вне production-графа (file-level weak copyleft
+ * вроде MPL-2.0/EPL-2.0); эффективный allowlist для dev-only пакетов —
+ * объединение `production.allowed` и `development.allowed`. `denied` общий и
+ * строгий для обоих графов.
+ */
 export type LicensePolicy = {
   readonly owner: string;
   readonly requirement: string;
-  readonly allowed: readonly string[];
   readonly denied: readonly string[];
+  readonly production: { readonly allowed: readonly string[] };
+  readonly development: { readonly allowed: readonly string[]; readonly rationale: string };
   readonly unknown_license_behavior: 'review_required' | 'allow';
+  readonly min_blocking_severity: Severity;
 };
 
 export type SecretPolicy = {
@@ -38,6 +71,7 @@ export type SecretPolicy = {
   readonly requirement: string;
   readonly patterns: readonly NamedPattern[];
   readonly allowlisted_paths: readonly string[];
+  readonly min_blocking_severity: Severity;
 };
 
 export type StaticPolicy = {
@@ -45,6 +79,7 @@ export type StaticPolicy = {
   readonly requirement: string;
   readonly forbidden_constructs: readonly NamedPattern[];
   readonly allowlisted_paths: readonly string[];
+  readonly min_blocking_severity: Severity;
 };
 
 export type LlmPolicy = {
@@ -92,6 +127,9 @@ const isNamedPattern = (value: unknown): value is NamedPattern => {
 const isNamedPatternArray = (value: unknown): value is readonly NamedPattern[] =>
   Array.isArray(value) && value.every((item) => isNamedPattern(item));
 
+const isSeverity = (value: unknown): value is Severity =>
+  typeof value === 'string' && (SEVERITY_SCALE as readonly string[]).includes(value);
+
 /** Разбирает и структурно валидирует `security/policy.json`. Чистая функция. */
 export const parsePolicy = (raw: string): PolicyParseResult => {
   let parsed: unknown;
@@ -130,16 +168,29 @@ export const parsePolicy = (raw: string): PolicyParseResult => {
     return invalid('policy.json: обязательный раздел license_policy');
   }
   const lic = licensePolicy as Record<string, unknown>;
+  const licProduction = lic['production'];
+  const licDevelopment = lic['development'];
+  const licProductionOk =
+    typeof licProduction === 'object' &&
+    licProduction !== null &&
+    isStringArray((licProduction as Record<string, unknown>)['allowed']);
+  const licDevelopmentOk =
+    typeof licDevelopment === 'object' &&
+    licDevelopment !== null &&
+    isStringArray((licDevelopment as Record<string, unknown>)['allowed']) &&
+    isNonEmptyString((licDevelopment as Record<string, unknown>)['rationale']);
   if (
     !isNonEmptyString(lic['owner']) ||
     !isNonEmptyString(lic['requirement']) ||
-    !isStringArray(lic['allowed']) ||
     !isStringArray(lic['denied']) ||
+    !licProductionOk ||
+    !licDevelopmentOk ||
     (lic['unknown_license_behavior'] !== 'review_required' &&
-      lic['unknown_license_behavior'] !== 'allow')
+      lic['unknown_license_behavior'] !== 'allow') ||
+    !isSeverity(lic['min_blocking_severity'])
   ) {
     return invalid(
-      'policy.json: license_policy требует owner/requirement/allowed/denied/unknown_license_behavior',
+      'policy.json: license_policy требует owner/requirement/denied/production.allowed/development.allowed+rationale/unknown_license_behavior/min_blocking_severity',
     );
   }
 
@@ -152,10 +203,11 @@ export const parsePolicy = (raw: string): PolicyParseResult => {
     !isNonEmptyString(secret['owner']) ||
     !isNonEmptyString(secret['requirement']) ||
     !isNamedPatternArray(secret['patterns']) ||
-    !isStringArray(secret['allowlisted_paths'])
+    !isStringArray(secret['allowlisted_paths']) ||
+    !isSeverity(secret['min_blocking_severity'])
   ) {
     return invalid(
-      'policy.json: secret_policy требует owner/requirement/patterns/allowlisted_paths',
+      'policy.json: secret_policy требует owner/requirement/patterns/allowlisted_paths/min_blocking_severity',
     );
   }
 
@@ -168,10 +220,11 @@ export const parsePolicy = (raw: string): PolicyParseResult => {
     !isNonEmptyString(staticP['owner']) ||
     !isNonEmptyString(staticP['requirement']) ||
     !isNamedPatternArray(staticP['forbidden_constructs']) ||
-    !isStringArray(staticP['allowlisted_paths'])
+    !isStringArray(staticP['allowlisted_paths']) ||
+    !isSeverity(staticP['min_blocking_severity'])
   ) {
     return invalid(
-      'policy.json: static_policy требует owner/requirement/forbidden_constructs/allowlisted_paths',
+      'policy.json: static_policy требует owner/requirement/forbidden_constructs/allowlisted_paths/min_blocking_severity',
     );
   }
 

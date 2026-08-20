@@ -26,6 +26,8 @@ export type Report = {
   readonly suppressed: readonly Finding[];
   readonly policy_version: string;
   readonly generated_at: string;
+  /** Проверка-специфичные диагностические метаданные (например B1: registry endpoint/audit report format/liveness probe для `dependencies`). Необязательно — не все проверки его заполняют. */
+  readonly meta?: Readonly<Record<string, unknown>>;
 };
 
 export type BuildReportInput = {
@@ -34,6 +36,7 @@ export type BuildReportInput = {
   readonly suppressed: readonly Finding[];
   readonly policyVersion: string;
   readonly generatedAt: Date;
+  readonly meta?: Readonly<Record<string, unknown>>;
 };
 
 /** Чистая функция: собирает Report из активных/подавленных находок. */
@@ -44,6 +47,7 @@ export const buildReport = (input: BuildReportInput): Report => ({
   suppressed: input.suppressed,
   policy_version: input.policyVersion,
   generated_at: input.generatedAt.toISOString(),
+  ...(input.meta !== undefined ? { meta: input.meta } : {}),
 });
 
 export type ScanOutcome =

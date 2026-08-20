@@ -83,3 +83,19 @@ describe('nextState — выход из ожидания и resume', () => {
     );
   });
 });
+
+describe('nextState — невалидное время (m3)', () => {
+  it('бросает явную ошибку на невалидном reported_reset_at вместо молчаливого "ещё не наступило"', () => {
+    const s = sample(0.5, 'not-a-valid-timestamp');
+    expect(() => nextState('waiting_for_usage_reset', s, '2026-08-20T09:00:00.000Z')).toThrow(
+      /невалидное время|reported_reset_at/,
+    );
+  });
+
+  it('бросает явную ошибку на невалидном now', () => {
+    const s = sample(0.5, '2026-08-20T12:00:00.000Z');
+    expect(() => nextState('waiting_for_usage_reset', s, 'garbage')).toThrow(
+      /невалидное время|ClockPort/,
+    );
+  });
+});

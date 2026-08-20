@@ -5,6 +5,7 @@
  * Чистая функция без побочных эффектов: telemetry, время и remaining_percent приходят
  * инъектированными аргументами, а не через wall clock/process.env.
  */
+import { compareInstants, requireInstant } from './instant.ts';
 import type { ContinuityState, UsageWindowSample } from './types.ts';
 
 /** Именованные пороги переходов — не литералы внутри условий. */
@@ -26,9 +27,15 @@ function classifyByRemaining(remaining_percent: number): ContinuityState {
   return 'waiting_for_usage_reset';
 }
 
-/** Сравнение ISO-8601 меток времени. Обе стороны — инъектированные строки, не wall clock. */
+/**
+ * Сравнение ISO-8601 меток времени. Обе стороны — инъектированные строки, не wall clock.
+ * Невалидная метка — явная ошибка конфигурации (m3), а не молчаливое "ещё не наступило"
+ * через `NaN`-сравнение.
+ */
 function isAtOrAfter(now: string, reportedResetAt: string): boolean {
-  return Date.parse(now) >= Date.parse(reportedResetAt);
+  const nowInstant = requireInstant(now, 'ClockPort.now()');
+  const resetInstant = requireInstant(reportedResetAt, 'reported_reset_at');
+  return compareInstants(nowInstant, resetInstant) >= 0;
 }
 
 /**

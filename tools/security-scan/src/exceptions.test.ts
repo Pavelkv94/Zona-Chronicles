@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyExceptions, parseExceptions } from './exceptions.ts';
+import { applyExceptions, parseExceptions, type CheckName } from './exceptions.ts';
 
 const NOW = new Date('2026-08-20T00:00:00.000Z');
 
@@ -97,5 +97,109 @@ describe('applyExceptions', () => {
     const result = applyExceptions(findings, [valid], 'secrets');
     expect(result.active).toHaveLength(2);
     expect(result.suppressed).toHaveLength(0);
+  });
+});
+
+describe('applyExceptions — M1: rule/category id must not act as a blanket scope', () => {
+  /**
+   * `finding.id` is an exact per-instance identifier ONLY for `check === 'dependencies'`
+   * (npm advisory id). For every other check it names a RULE/CATEGORY shared by every
+   * matching instance in the repo. An exception whose `scope` equals that rule name must
+   * suppress NOTHING — only an exact `path`/`package` scope may suppress. One test per
+   * check (M1 review finding).
+   */
+  const exceptionFor = (check: CheckName, scope: string) => ({
+    ...valid,
+    id: `exc-${check}`,
+    check,
+    scope,
+  });
+
+  it('secrets: an exception scoped to the pattern id ("aws-access-key-id") does not suppress any finding at any path (negative: category collapse)', () => {
+    const secretFindings = [
+      { id: 'aws-access-key-id', severity: 'critical', path: 'apps/api/src/a.ts', message: 'x' },
+      { id: 'aws-access-key-id', severity: 'critical', path: 'apps/api/src/b.ts', message: 'x' },
+    ];
+    const result = applyExceptions(
+      secretFindings,
+      [exceptionFor('secrets', 'aws-access-key-id')],
+      'secrets',
+    );
+    expect(result.suppressed).toHaveLength(0);
+    expect(result.active).toHaveLength(2);
+  });
+
+  it('static: an exception scoped to the construct id ("eval-call") does not suppress any finding at any path (negative: category collapse)', () => {
+    const staticFindings = [
+      { id: 'eval-call', severity: 'high', path: 'packages/domain/src/a.ts', message: 'x' },
+      { id: 'eval-call', severity: 'high', path: 'packages/domain/src/b.ts', message: 'x' },
+    ];
+    const result = applyExceptions(staticFindings, [exceptionFor('static', 'eval-call')], 'static');
+    expect(result.suppressed).toHaveLength(0);
+    expect(result.active).toHaveLength(2);
+  });
+
+  it('no-llm: an exception scoped to the finding id ("llm-import") does not suppress every LLM import repo-wide (negative: category collapse — this is exactly the ADR-006 gate the review flagged)', () => {
+    const llmFindings = [
+      {
+        id: 'llm-import',
+        severity: 'critical',
+        path: 'apps/worker/src/a.ts',
+        package: 'openai',
+        message: 'x',
+      },
+      {
+        id: 'llm-import',
+        severity: 'critical',
+        path: 'apps/worker/src/b.ts',
+        package: '@anthropic-ai/sdk',
+        message: 'x',
+      },
+    ];
+    const result = applyExceptions(llmFindings, [exceptionFor('no-llm', 'llm-import')], 'no-llm');
+    expect(result.suppressed).toHaveLength(0);
+    expect(result.active).toHaveLength(2);
+  });
+
+  it('licenses: an exception scoped to the license string ("GPL-3.0") does not suppress every package under that license (negative: category collapse)', () => {
+    const licenseFindings = [
+      { id: 'GPL-3.0', severity: 'high', package: 'copyleft-a@1.0.0', message: 'x' },
+      { id: 'GPL-3.0', severity: 'high', package: 'copyleft-b@2.0.0', message: 'x' },
+    ];
+    const result = applyExceptions(
+      licenseFindings,
+      [exceptionFor('licenses', 'GPL-3.0')],
+      'licenses',
+    );
+    expect(result.suppressed).toHaveLength(0);
+    expect(result.active).toHaveLength(2);
+  });
+
+  it('licenses: a legitimate exception scoped to an exact package suppresses only that package (positive: exact scope still works)', () => {
+    const licenseFindings = [
+      { id: 'GPL-3.0', severity: 'high', package: 'copyleft-a@1.0.0', message: 'x' },
+      { id: 'GPL-3.0', severity: 'high', package: 'copyleft-b@2.0.0', message: 'x' },
+    ];
+    const result = applyExceptions(
+      licenseFindings,
+      [exceptionFor('licenses', 'copyleft-a@1.0.0')],
+      'licenses',
+    );
+    expect(result.suppressed.map((f) => f.package)).toEqual(['copyleft-a@1.0.0']);
+    expect(result.active.map((f) => f.package)).toEqual(['copyleft-b@2.0.0']);
+  });
+
+  it('dependencies: an exception scoped to the advisory id DOES suppress that instance (positive: id matching is only valid for dependencies)', () => {
+    const dependencyFindings = [
+      { id: '1001', severity: 'high', package: 'left-pad', message: 'x' },
+      { id: '1002', severity: 'high', package: 'left-pad', message: 'x' },
+    ];
+    const result = applyExceptions(
+      dependencyFindings,
+      [exceptionFor('dependencies', '1001')],
+      'dependencies',
+    );
+    expect(result.suppressed.map((f) => f.id)).toEqual(['1001']);
+    expect(result.active.map((f) => f.id)).toEqual(['1002']);
   });
 });

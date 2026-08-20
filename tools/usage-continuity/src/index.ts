@@ -7,8 +7,14 @@ export { FileCheckpointStore } from './file-checkpoint-store.ts';
 export type { FileCheckpointStoreOptions } from './file-checkpoint-store.ts';
 export { probeCapabilities, capabilityStatusFor } from './capability.ts';
 export type { CapabilityProbeInput, CapabilityProbeResult } from './capability.ts';
-export { runContinuityLoop } from './runner.ts';
-export type { RunContinuityLoopInput, RunContinuityLoopResult, StateTransition } from './runner.ts';
+export { runContinuityLoop, resumeFromCheckpoint, archiveResumedCheckpoint } from './runner.ts';
+export type {
+  RunContinuityLoopInput,
+  RunContinuityLoopResult,
+  ResumeFromCheckpointInput,
+  ResumeFromCheckpointResult,
+  StateTransition,
+} from './runner.ts';
 export type {
   ActionRunnerPort,
   CheckpointStorePort,
@@ -17,7 +23,15 @@ export type {
   UsageTelemetryPort,
   WakeSchedulerPort,
 } from './ports.ts';
-export type { Checkpoint, ContinuityState, UsageWindowSample } from './types.ts';
+export type { Checkpoint, ContinuityOutcome, ContinuityState, UsageWindowSample } from './types.ts';
 export { LIMIT_AUTOCONTINUE_UNAVAILABLE } from './types.ts';
+export {
+  parseInstant,
+  requireInstant,
+  isInstantError,
+  compareInstants,
+  addMinutes,
+} from './instant.ts';
+export type { Instant, InstantError } from './instant.ts';
 
 export const PACKAGE_NAME = '@zona/usage-continuity' as const;

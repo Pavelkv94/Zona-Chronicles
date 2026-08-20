@@ -216,6 +216,15 @@ export type ApplyExceptionsResult<T> = {
  *
  * Совпадение требует точного равенства `scope` с `finding.path` либо `finding.package`
  * (никаких glob/wildcard) — это же гарантирует `parseExceptions`, отклоняя blanket scope.
+ *
+ * `finding.id` матчится ТОЛЬКО для `check === 'dependencies'`: там это id конкретного
+ * advisory-экземпляра (npm audit), поэтому точечное исключение по id безопасно. Для
+ * остальных проверок `id` — имя ПРАВИЛА/КАТЕГОРИИ, общее для всех находок этого вида
+ * в репозитории (у `licenses` — строка лицензии; у `no-llm` — `llm-import` и т.п.; у
+ * `static` — `eval-call` и т.п.; у `secrets` — `aws-access-key-id` и т.п.). Матчинг по
+ * `id` там подавил бы весь класс находок одним исключением — ровно blanket allowlist,
+ * запрещённый ADR-008/A10 (M1 review finding). Исключение обязано именовать конкретный
+ * `path`/`package`.
  */
 export const applyExceptions = <T extends ExceptionableFinding>(
   findings: readonly T[],
@@ -231,11 +240,11 @@ export const applyExceptions = <T extends ExceptionableFinding>(
   const active: T[] = [];
   const suppressed: T[] = [];
   for (const finding of findings) {
-    const matches =
+    const matchesPathOrPackage =
       (finding.path !== undefined && scopesForCheck.has(finding.path)) ||
-      (finding.package !== undefined && scopesForCheck.has(finding.package)) ||
-      scopesForCheck.has(finding.id);
-    if (matches) {
+      (finding.package !== undefined && scopesForCheck.has(finding.package));
+    const matchesInstanceId = check === 'dependencies' && scopesForCheck.has(finding.id);
+    if (matchesPathOrPackage || matchesInstanceId) {
       suppressed.push(finding);
     } else {
       active.push(finding);

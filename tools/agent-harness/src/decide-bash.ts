@@ -1,3 +1,6 @@
+import type { SessionRole } from './session-role.ts';
+import type { WriteSetLoadResult } from './writeset.ts';
+
 /**
  * Ограничение опасных Bash-команд для task-сессий (DEV-02).
  *
@@ -51,7 +54,7 @@ const LEAD_ONLY_RULES: readonly Rule[] = [
   },
 ];
 
-/** Чистое решение по строке Bash-команды task-сессии. */
+/** Чистое решение по строке Bash-команды task-сессии, без учёта роли/write set. */
 export const decideBashCommand = (command: string): BashDecision => {
   const normalized = command.replace(/\s+/g, ' ').trim();
   for (const rule of LEAD_ONLY_RULES) {
@@ -60,4 +63,48 @@ export const decideBashCommand = (command: string): BashDecision => {
     }
   }
   return { decision: 'allow', reason: 'Команда не входит в список операций orchestrator/lead.' };
+};
+
+export type BashSessionRequest = {
+  readonly command: string;
+  /** Роль по `classifySession` (payload `agent_id`/`agent_type`), не по наличию writeset.json. */
+  readonly sessionRole: SessionRole;
+  readonly writeSet: WriteSetLoadResult;
+};
+
+/**
+ * Композиция роли сессии + declared write set + `decideBashCommand` (B2 review finding).
+ *
+ * До фикса hook для Bash пропускал task-сессию без ограничений, если `.claude/writeset.json`
+ * отсутствовал (тот же файл, который task-сессия может удалить сама). Здесь роль определяется
+ * payload-ом: lead работает без ограничений; task-сессия без валидного write set получает
+ * fail-closed deny ещё до применения списка запрещённых команд — lead обязан объявить write set
+ * до запуска задачи.
+ */
+export const decideBashForSession = ({
+  command,
+  sessionRole,
+  writeSet,
+}: BashSessionRequest): BashDecision => {
+  if (sessionRole === 'lead') {
+    return {
+      decision: 'allow',
+      reason: 'Lead-сессия: ограничений orchestrator/lead-операций нет.',
+    };
+  }
+
+  if (writeSet.kind === 'invalid') {
+    return { decision: 'deny', reason: `Fail-closed: ${writeSet.reason}` };
+  }
+
+  if (writeSet.kind === 'lead') {
+    return {
+      decision: 'deny',
+      reason:
+        'Task-сессия без объявленного write set: lead обязан объявить .claude/writeset.json ' +
+        'до запуска задачи. Отсутствие файла — fail-closed, а не разрешение.',
+    };
+  }
+
+  return decideBashCommand(command);
 };

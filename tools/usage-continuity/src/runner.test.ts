@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { runContinuityLoop } from './runner.ts';
+import { archiveResumedCheckpoint, resumeFromCheckpoint, runContinuityLoop } from './runner.ts';
 import type {
   ActionRunnerPort,
   CheckpointStorePort,
@@ -63,28 +63,42 @@ function sequenceTelemetry(samples: UsageWindowSample[]): UsageTelemetryPort {
   };
 }
 
-function collectingStore(): { store: CheckpointStorePort; writes: Checkpoint[] } {
+function collectingStore(seeded?: Checkpoint): {
+  store: CheckpointStorePort;
+  writes: Checkpoint[];
+  archived: string[];
+} {
   const writes: Checkpoint[] = [];
+  const archived: string[] = [];
+  let current: Checkpoint | null = seeded ?? null;
   return {
     writes,
+    archived,
     store: {
-      write: (c) => writes.push(c),
-      read: () => null,
-      archive: () => {
-        /* not used in these tests */
+      write: (c) => {
+        writes.push(c);
+        current = c;
+      },
+      read: (taskId) => (current !== null && current.task_id === taskId ? current : null),
+      archive: (taskId) => {
+        archived.push(taskId);
+        current = null;
       },
     },
   };
 }
 
-function collectingActions(): { actions: ActionRunnerPort; calls: string[] } {
+function collectingActions(result: 'ok' | 'failed' = 'ok'): {
+  actions: ActionRunnerPort;
+  calls: string[];
+} {
   const calls: string[] = [];
   return {
     calls,
     actions: {
       run: (id) => {
         calls.push(id);
-        return 'ok';
+        return result;
       },
     },
   };
@@ -99,17 +113,23 @@ function collectingScheduler(): {
 }
 
 const fixedClock: ClockPort = { now: () => '2026-08-20T09:30:00.000Z' };
+const clockAtReset: ClockPort = { now: () => '2026-08-20T12:00:00.000Z' };
 
-const matchingRepoState: RepoStatePort = {
-  branch: () => seed.branch,
-  headSha: () => seed.head_sha,
-  changedFiles: () => [],
-};
+function repoStateFor(checkpoint: Checkpoint): RepoStatePort {
+  return {
+    branch: () => checkpoint.branch,
+    headSha: () => checkpoint.head_sha,
+    changedFiles: () => [...checkpoint.dirty_files],
+    worktree: () => checkpoint.worktree,
+    livingProcesses: () => [...checkpoint.unfinished_processes],
+  };
+}
+
+const matchingRepoState: RepoStatePort = repoStateFor(seed);
 
 describe('runContinuityLoop — checkpoint_only', () => {
-  it('не запускает action, но пишет checkpoint, пока remaining держится в (1%, 2%]', () => {
+  it('не запускает action (действий у runContinuityLoop нет), но пишет checkpoint, пока remaining держится в (1%, 2%]', () => {
     const { store, writes } = collectingStore();
-    const { actions, calls } = collectingActions();
     const { scheduler } = collectingScheduler();
 
     expect(() =>
@@ -118,104 +138,63 @@ describe('runContinuityLoop — checkpoint_only', () => {
         store,
         scheduler,
         clock: fixedClock,
-        actions,
-        repoState: matchingRepoState,
         checkpointSeed: seed,
         maxIterations: 3,
       }),
     ).toThrow(/maxIterations/);
 
-    expect(calls).toEqual([]);
     expect(writes.length).toBeGreaterThan(0);
     expect(writes[0]?.usage_window_remaining_percent).toBe(2);
   });
 });
 
-describe('runContinuityLoop — waiting_for_usage_reset', () => {
-  it('не запускает ни один action и ставит wake на reported_reset_at + safety margin', () => {
-    const { store } = collectingStore();
-    const { actions, calls } = collectingActions();
+describe('runContinuityLoop — waiting_for_usage_reset (m1: без busy-wait, wake ровно один раз)', () => {
+  it('пишет checkpoint, ставит wake РОВНО ОДИН РАЗ и немедленно возвращает управление', () => {
+    const { store, writes } = collectingStore();
     const { scheduler, calls: wakeCalls } = collectingScheduler();
 
-    expect(() =>
-      runContinuityLoop({
-        telemetry: fixedTelemetry(sample(0.5, '2026-08-20T12:00:00.000Z')),
-        store,
-        scheduler,
-        clock: fixedClock,
-        actions,
-        repoState: matchingRepoState,
-        checkpointSeed: seed,
-        maxIterations: 3,
-      }),
-    ).toThrow(/maxIterations/);
-
-    expect(calls).toEqual([]);
-    expect(wakeCalls.length).toBeGreaterThan(0);
-    expect(wakeCalls[0]?.at).toBe('2026-08-20T12:05:00.000Z');
-    expect(wakeCalls[0]?.reason).toContain('I00-T02');
-  });
-});
-
-describe('runContinuityLoop — resume после reset', () => {
-  it('выполняет next_exact_action ровно один раз после полного цикла 2% -> 1% -> reset', () => {
-    const { store, writes } = collectingStore();
-    const { actions, calls } = collectingActions();
-    const { scheduler } = collectingScheduler();
-
     const result = runContinuityLoop({
-      telemetry: sequenceTelemetry([sample(2), sample(1), sample(100)]),
+      telemetry: fixedTelemetry(sample(0.5, '2026-08-20T12:00:00.000Z')),
       store,
       scheduler,
       clock: fixedClock,
-      actions,
-      repoState: matchingRepoState,
+      checkpointSeed: seed,
+      maxIterations: 50,
+    });
+
+    expect(result.outcome).toBe('waiting_for_reset');
+    expect(result.finalState).toBe('waiting_for_usage_reset');
+    expect(wakeCalls).toHaveLength(1);
+    expect(wakeCalls[0]?.at).toBe('2026-08-20T12:05:00.000Z');
+    expect(wakeCalls[0]?.reason).toContain('I00-T02');
+    expect(writes.length).toBeGreaterThan(0);
+  });
+
+  it('последовательность checkpoint_only -> waiting_for_usage_reset тоже ставит wake ровно один раз', () => {
+    const { store } = collectingStore();
+    const { scheduler, calls: wakeCalls } = collectingScheduler();
+
+    const result = runContinuityLoop({
+      telemetry: sequenceTelemetry([sample(2), sample(1)]),
+      store,
+      scheduler,
+      clock: fixedClock,
       checkpointSeed: seed,
       maxIterations: 10,
     });
 
-    expect(calls).toEqual(['pnpm test:unit']);
-    expect(result.finalState).toBe('in_progress');
+    expect(result.outcome).toBe('waiting_for_reset');
     expect(result.transitions.map((t) => `${t.from}->${t.to}`)).toEqual([
       'normal->checkpoint_only',
       'checkpoint_only->waiting_for_usage_reset',
-      'waiting_for_usage_reset->validating_resume',
-      'validating_resume->in_progress',
     ]);
-    expect(writes.length).toBeGreaterThan(0);
-  });
-
-  it('расхождение checkpoint с фактическим repo state даёт явную ошибку, а не тихое продолжение', () => {
-    const { store } = collectingStore();
-    const { actions, calls } = collectingActions();
-    const { scheduler } = collectingScheduler();
-    const divergedRepoState: RepoStatePort = {
-      branch: () => seed.branch,
-      headSha: () => 'deadbeef-not-matching',
-      changedFiles: () => [],
-    };
-
-    expect(() =>
-      runContinuityLoop({
-        telemetry: sequenceTelemetry([sample(2), sample(1), sample(100)]),
-        store,
-        scheduler,
-        clock: fixedClock,
-        actions,
-        repoState: divergedRepoState,
-        checkpointSeed: seed,
-        maxIterations: 10,
-      }),
-    ).toThrow(/diverged|head_sha|resume/i);
-
-    expect(calls).toEqual([]);
+    expect(wakeCalls).toHaveLength(1);
   });
 });
 
-describe('runContinuityLoop — telemetry недоступна (A9)', () => {
-  it('telemetry.read() === null: пишет capability_status=LIMIT_AUTOCONTINUE_UNAVAILABLE в checkpoint и не запускает action', () => {
+describe('runContinuityLoop — telemetry недоступна (A9, m2)', () => {
+  it('telemetry.read() === null: outcome=capability_unavailable, отличим от прогресса не по форме, а по дискриминатору', () => {
     const { store, writes } = collectingStore();
-    const { actions, calls } = collectingActions();
     const { scheduler } = collectingScheduler();
     const noTelemetry: UsageTelemetryPort = { read: () => null };
 
@@ -224,13 +203,11 @@ describe('runContinuityLoop — telemetry недоступна (A9)', () => {
       store,
       scheduler,
       clock: fixedClock,
-      actions,
-      repoState: matchingRepoState,
       checkpointSeed: seed,
       maxIterations: 5,
     });
 
-    expect(calls).toEqual([]);
+    expect(result.outcome).toBe('capability_unavailable');
     expect(result.checkpoint.capability_status).toBe('LIMIT_AUTOCONTINUE_UNAVAILABLE');
     expect(writes.length).toBe(1);
     expect(writes[0]?.capability_status).toBe('LIMIT_AUTOCONTINUE_UNAVAILABLE');
@@ -238,7 +215,7 @@ describe('runContinuityLoop — telemetry недоступна (A9)', () => {
 });
 
 describe('runContinuityLoop — конечность цикла', () => {
-  it('бросает ошибку с упоминанием maxIterations, если состояние никогда не разрешается', () => {
+  it('бросает ошибку с упоминанием maxIterations, если состояние никогда не приостанавливается', () => {
     let reads = 0;
     const telemetry: UsageTelemetryPort = {
       read: () => {
@@ -247,7 +224,6 @@ describe('runContinuityLoop — конечность цикла', () => {
       },
     };
     const { store } = collectingStore();
-    const { actions } = collectingActions();
     const { scheduler } = collectingScheduler();
 
     expect(() =>
@@ -256,12 +232,294 @@ describe('runContinuityLoop — конечность цикла', () => {
         store,
         scheduler,
         clock: fixedClock,
-        actions,
-        repoState: matchingRepoState,
         checkpointSeed: seed,
         maxIterations: 5,
       }),
     ).toThrow(/maxIterations/);
     expect(reads).toBe(5);
+  });
+});
+
+describe('runContinuityLoop — m3: невалидное время', () => {
+  it('невалидный reported_reset_at даёт явную ошибку конфигурации, а не бесконечное ожидание', () => {
+    const { store } = collectingStore();
+    const { scheduler } = collectingScheduler();
+
+    expect(() =>
+      runContinuityLoop({
+        telemetry: fixedTelemetry(sample(0.5, 'not-a-timestamp')),
+        store,
+        scheduler,
+        clock: fixedClock,
+        checkpointSeed: seed,
+        maxIterations: 5,
+      }),
+    ).toThrow(/невалидное время|reported_reset_at/);
+  });
+});
+
+describe('resumeFromCheckpoint — B3: межпроцессный resume', () => {
+  it('отсутствие checkpoint — явная ошибка, а не тихий старт с нуля', () => {
+    const { store } = collectingStore();
+    const { actions } = collectingActions();
+    const { scheduler } = collectingScheduler();
+
+    expect(() =>
+      resumeFromCheckpoint({
+        taskId: 'missing-task',
+        store,
+        telemetry: fixedTelemetry(sample(100)),
+        clock: clockAtReset,
+        actions,
+        repoState: matchingRepoState,
+        scheduler,
+      }),
+    ).toThrow(/checkpoint "missing-task" не найден/);
+  });
+
+  it('checkpoint.task_id не совпадает с запрошенным taskId — явная ошибка (ownership), даже если store вернул что-то по этому ключу', () => {
+    // Намеренно "неправильный" store, который не фильтрует по taskId (моделирует баг реализации
+    // порта) — resumeFromCheckpoint обязан сам защититься дополнительной проверкой ownership.
+    const mismatchedSeed: Checkpoint = { ...seed, task_id: 'other-task' };
+    const buggyStore: CheckpointStorePort = {
+      write: () => {
+        /* not used */
+      },
+      read: () => mismatchedSeed,
+      archive: () => {
+        /* not used */
+      },
+    };
+    const { actions } = collectingActions();
+    const { scheduler } = collectingScheduler();
+
+    expect(() =>
+      resumeFromCheckpoint({
+        taskId: 'I00-T02',
+        store: buggyStore,
+        telemetry: fixedTelemetry(sample(100)),
+        clock: clockAtReset,
+        actions,
+        repoState: matchingRepoState,
+        scheduler,
+      }),
+    ).toThrow(/task_id|ownership/);
+  });
+
+  it('телеметрия ещё не подтверждает reset: не выполняет action, переставляет wake один раз, outcome=waiting_for_reset', () => {
+    const { store } = collectingStore(seed);
+    const { actions, calls } = collectingActions();
+    const { scheduler, calls: wakeCalls } = collectingScheduler();
+
+    const result = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(0.5, '2026-08-20T12:00:00.000Z')),
+      clock: fixedClock, // 09:30, до reported_reset_at 12:00, remaining низкий (не recovered)
+      actions,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(result.outcome).toBe('waiting_for_reset');
+    expect(calls).toEqual([]);
+    expect(wakeCalls).toHaveLength(1);
+    expect(result.checkpoint.resume_attempted_at).toBeUndefined();
+  });
+
+  it('телеметрия недоступна во время resume: outcome=capability_unavailable, action не запускается', () => {
+    const { store, writes } = collectingStore(seed);
+    const { actions, calls } = collectingActions();
+    const { scheduler } = collectingScheduler();
+
+    const result = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: { read: () => null },
+      clock: clockAtReset,
+      actions,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(result.outcome).toBe('capability_unavailable');
+    expect(calls).toEqual([]);
+    expect(writes[writes.length - 1]?.capability_status).toBe('LIMIT_AUTOCONTINUE_UNAVAILABLE');
+  });
+
+  it('расхождение repo state: checkpoint с описанием расхождения пишется ДО throw (m4 — evidence не теряется)', () => {
+    const { store, writes } = collectingStore(seed);
+    const { actions, calls } = collectingActions();
+    const { scheduler } = collectingScheduler();
+    const divergedRepoState: RepoStatePort = {
+      ...matchingRepoState,
+      headSha: () => 'deadbeef-not-matching',
+    };
+
+    expect(() =>
+      resumeFromCheckpoint({
+        taskId: 'I00-T02',
+        store,
+        telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+        clock: clockAtReset,
+        actions,
+        repoState: divergedRepoState,
+        scheduler,
+      }),
+    ).toThrow(/diverged|head_sha/i);
+
+    expect(calls).toEqual([]);
+    expect(writes.length).toBeGreaterThan(0);
+    expect(writes[writes.length - 1]?.last_resume_validation_error).toMatch(/head_sha/);
+  });
+
+  it('сверяет worktree, dirty_files (git diff) и unfinished_processes, не только branch/head_sha (m4)', () => {
+    const richSeed: Checkpoint = {
+      ...seed,
+      dirty_files: ['src/a.ts'],
+      unfinished_processes: ['pid:123'],
+    };
+    const { store, writes } = collectingStore(richSeed);
+    const { actions, calls } = collectingActions();
+    const { scheduler } = collectingScheduler();
+    const staleRepoState: RepoStatePort = {
+      ...repoStateFor(richSeed),
+      changedFiles: () => [], // dirty_files разошлись
+      livingProcesses: () => [], // unfinished_processes разошлись
+      worktree: () => '/somewhere-else', // worktree разошёлся
+    };
+
+    expect(() =>
+      resumeFromCheckpoint({
+        taskId: 'I00-T02',
+        store,
+        telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+        clock: clockAtReset,
+        actions,
+        repoState: staleRepoState,
+        scheduler,
+      }),
+    ).toThrow(/dirty_files|unfinished_processes|worktree/);
+
+    expect(calls).toEqual([]);
+    const lastError = writes[writes.length - 1]?.last_resume_validation_error ?? '';
+    expect(lastError).toMatch(/worktree/);
+    expect(lastError).toMatch(/dirty_files/);
+    expect(lastError).toMatch(/unfinished_processes/);
+  });
+
+  it('repo state совпадает: пишет resume_attempted_at ДО запуска action и выполняет его ровно один раз', () => {
+    const { store, writes } = collectingStore(seed);
+    const { actions, calls } = collectingActions('ok');
+    const { scheduler } = collectingScheduler();
+
+    const result = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(result.outcome).toBe('progressed');
+    expect(result.finalState).toBe('in_progress');
+    expect(result.actionResult).toBe('ok');
+    expect(calls).toEqual(['pnpm test:unit']);
+    expect(result.checkpoint.resume_attempted_at).toBeDefined();
+
+    // resume_attempted_at был записан в store ДО выполнения action (idempotency marker).
+    const markedWriteIndex = writes.findIndex((c) => c.resume_attempted_at !== undefined);
+    expect(markedWriteIndex).toBeGreaterThanOrEqual(0);
+  });
+
+  it('повторный resumeFromCheckpoint после отмеченной попытки: outcome=resume_conflict, action НЕ выполняется повторно', () => {
+    const { store } = collectingStore(seed);
+    const { actions, calls } = collectingActions('ok');
+    const { scheduler } = collectingScheduler();
+
+    const first = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+    expect(first.outcome).toBe('progressed');
+    expect(calls).toHaveLength(1);
+
+    // Новый "процесс": та же store (тот же checkpoint на диске), свежие fakes.
+    const { actions: actions2, calls: calls2 } = collectingActions('ok');
+    const second = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions: actions2,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(second.outcome).toBe('resume_conflict');
+    expect(second.actionResult).toBeNull();
+    expect(calls2).toEqual([]);
+    // Действие суммарно выполнено ровно один раз между двумя "процессами".
+    expect(calls).toHaveLength(1);
+  });
+
+  it('resume, начатый до падения процесса (attempted_at уже стоит), не запускает action даже если repo state расходится', () => {
+    const alreadyAttempted: Checkpoint = {
+      ...seed,
+      resume_attempted_at: '2026-08-20T12:00:00.000Z',
+    };
+    const { store } = collectingStore(alreadyAttempted);
+    const { actions, calls } = collectingActions();
+    const { scheduler } = collectingScheduler();
+    const divergedRepoState: RepoStatePort = {
+      ...matchingRepoState,
+      headSha: () => 'anything-else',
+    };
+
+    const result = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions,
+      repoState: divergedRepoState,
+      scheduler,
+    });
+
+    expect(result.outcome).toBe('resume_conflict');
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('archiveResumedCheckpoint — только после подтверждённого внешнего green (B3 п.4)', () => {
+  it('не вызывается автоматически resumeFromCheckpoint после успешного action', () => {
+    const { store, archived } = collectingStore(seed);
+    const { actions } = collectingActions('ok');
+    const { scheduler } = collectingScheduler();
+
+    resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(archived).toEqual([]);
+  });
+
+  it('вызывающий явно архивирует checkpoint после подтверждённого green', () => {
+    const { store, archived } = collectingStore(seed);
+    archiveResumedCheckpoint('I00-T02', store);
+    expect(archived).toEqual(['I00-T02']);
   });
 });

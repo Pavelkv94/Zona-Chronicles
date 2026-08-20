@@ -3,7 +3,7 @@
  * Fastify instance, listens, and shuts down gracefully on SIGTERM/SIGINT.
  */
 import pino from 'pino';
-import { parseConfig } from './config.ts';
+import { loadConfig } from './config.ts';
 import { buildServer, type UptimePort } from './server.ts';
 
 /** Real uptime port: `process.uptime()` is already process-start-relative, no Date.now() needed. */
@@ -16,7 +16,7 @@ const SCHEMA_VERSION_PLACEHOLDER = 0;
 const RULES_VERSION_PLACEHOLDER = '0.0.0-unset';
 
 async function main(): Promise<void> {
-  const config = parseConfig(process.env);
+  const config = loadConfig();
   const logger = pino({ level: config.logLevel });
 
   const app = buildServer({

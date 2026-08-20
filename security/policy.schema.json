@@ -33,19 +33,53 @@
     "license_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["owner", "requirement", "allowed", "denied", "unknown_license_behavior"],
+      "required": [
+        "owner",
+        "requirement",
+        "denied",
+        "production",
+        "development",
+        "unknown_license_behavior",
+        "min_blocking_severity"
+      ],
       "properties": {
         "owner": { "type": "string", "minLength": 1 },
         "requirement": { "type": "string", "minLength": 1 },
-        "allowed": { "type": "array", "items": { "type": "string" } },
         "denied": { "type": "array", "items": { "type": "string" } },
-        "unknown_license_behavior": { "type": "string", "enum": ["review_required", "allow"] }
+        "production": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed"],
+          "properties": {
+            "allowed": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "development": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowed", "rationale"],
+          "properties": {
+            "allowed": { "type": "array", "items": { "type": "string" } },
+            "rationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "unknown_license_behavior": { "type": "string", "enum": ["review_required", "allow"] },
+        "min_blocking_severity": {
+          "type": "string",
+          "enum": ["low", "moderate", "high", "critical"]
+        }
       }
     },
     "secret_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["owner", "requirement", "patterns", "allowlisted_paths"],
+      "required": [
+        "owner",
+        "requirement",
+        "patterns",
+        "allowlisted_paths",
+        "min_blocking_severity"
+      ],
       "properties": {
         "owner": { "type": "string", "minLength": 1 },
         "requirement": { "type": "string", "minLength": 1 },
@@ -64,13 +98,23 @@
             }
           }
         },
-        "allowlisted_paths": { "type": "array", "items": { "type": "string" } }
+        "allowlisted_paths": { "type": "array", "items": { "type": "string" } },
+        "min_blocking_severity": {
+          "type": "string",
+          "enum": ["low", "moderate", "high", "critical"]
+        }
       }
     },
     "static_policy": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["owner", "requirement", "forbidden_constructs", "allowlisted_paths"],
+      "required": [
+        "owner",
+        "requirement",
+        "forbidden_constructs",
+        "allowlisted_paths",
+        "min_blocking_severity"
+      ],
       "properties": {
         "owner": { "type": "string", "minLength": 1 },
         "requirement": { "type": "string", "minLength": 1 },
@@ -89,7 +133,11 @@
             }
           }
         },
-        "allowlisted_paths": { "type": "array", "items": { "type": "string" } }
+        "allowlisted_paths": { "type": "array", "items": { "type": "string" } },
+        "min_blocking_severity": {
+          "type": "string",
+          "enum": ["low", "moderate", "high", "critical"]
+        }
       }
     },
     "llm_policy": {

@@ -6,6 +6,7 @@
  * Hook не парсит свободный текст команды: он смотрит только на целевой путь инструмента записи.
  */
 import { decideWrite, extractTargetPath } from '../decide-write.ts';
+import { classifySession } from '../session-role.ts';
 import { loadWriteSet } from '../writeset.ts';
 import { readHookInput } from './read-stdin.ts';
 
@@ -22,8 +23,11 @@ const main = async (): Promise<void> => {
   const projectRoot =
     typeof input['cwd'] === 'string' && input['cwd'].length > 0 ? input['cwd'] : process.cwd();
 
+  // Роль решается payload-ом (agent_id/agent_type), не наличием writeset.json (B2 review finding):
+  // тот же файл, который задаёт ограничение, лежит в write path, доступном самой task-сессии.
+  const sessionRole = classifySession(input);
   const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
-  const decision = decideWrite({ targetPath, projectRoot, writeSet });
+  const decision = decideWrite({ targetPath, projectRoot, writeSet, sessionRole });
 
   // Осознанно не возвращаем "allow": обычный permission flow должен остаться в силе.
   if (decision.decision === 'deny') {

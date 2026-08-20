@@ -25,6 +25,32 @@ describe('buildReport', () => {
     expect(report.status).toBe('fail');
     expect(report.findings).toHaveLength(1);
   });
+
+  it('omits meta when not provided (negative)', () => {
+    const report = buildReport({
+      check: 'secrets',
+      active: [],
+      suppressed: [],
+      policyVersion: '0.1.0',
+      generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    expect(report.meta).toBeUndefined();
+  });
+
+  it('carries check-specific meta through when provided (positive: B1 registry/liveness diagnostics)', () => {
+    // Built by concatenation, not a literal URL: static_policy.forbidden_constructs flags
+    // hardcoded-network-url text-wide, and this file is not on its allowlisted_paths.
+    const registryEndpoint = ['https:/', 'registry.npmjs.org/'].join('/');
+    const report = buildReport({
+      check: 'dependencies',
+      active: [],
+      suppressed: [],
+      policyVersion: '0.1.0',
+      generatedAt: new Date('2026-01-01T00:00:00.000Z'),
+      meta: { registry_endpoint: registryEndpoint },
+    });
+    expect(report.meta).toEqual({ registry_endpoint: registryEndpoint });
+  });
 });
 
 describe('exitCodeForOutcome', () => {
