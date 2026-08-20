@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { listJsonFilesInGitDir, readGitBlob, resolveCommit } from './git-source.ts';
 import type { TaskDeclaration } from './task-ownership.ts';
 
 /**
@@ -37,6 +38,45 @@ const isTaskDeclaration = (value: unknown): value is TaskDeclaration =>
   typeof (value as Record<string, unknown>)['owner_role'] === 'string' &&
   Array.isArray((value as Record<string, unknown>)['write_paths']);
 
+type ParsedTasksFile =
+  | {
+      readonly kind: 'ok';
+      readonly tasks: readonly TaskDeclaration[];
+      readonly leadPaths: readonly string[];
+    }
+  | { readonly kind: 'invalid'; readonly reason: string };
+
+/** Разбирает содержимое одного `.claude/tasks/*.json` независимо от источника (диск/git). */
+const parseTasksFileContent = (raw: string, label: string): ParsedTasksFile => {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    return { kind: 'invalid', reason: `${label} не является валидным JSON: ${String(error)}` };
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return { kind: 'invalid', reason: `${label}: должен быть объектом` };
+  }
+
+  const file = parsed as TasksFile;
+  if (!Array.isArray(file.tasks) || !file.tasks.every(isTaskDeclaration)) {
+    return {
+      kind: 'invalid',
+      reason: `${label}: обязательное поле tasks — массив TaskDeclaration (task_id, owner_role, write_paths)`,
+    };
+  }
+
+  const leadPaths: string[] = [];
+  if (file.lead_paths !== undefined) {
+    if (!Array.isArray(file.lead_paths) || !file.lead_paths.every((p) => typeof p === 'string')) {
+      return { kind: 'invalid', reason: `${label}: lead_paths должен быть списком строк` };
+    }
+    leadPaths.push(...(file.lead_paths as readonly string[]));
+  }
+
+  return { kind: 'ok', tasks: file.tasks, leadPaths };
+};
+
 /** Читает и объединяет все `.claude/tasks/*.json`. Отсутствие каталога/файлов — `'absent'`. */
 export const loadTaskDeclarations = (tasksDir: string): TasksDirectoryResult => {
   let entries: string[];
@@ -61,31 +101,51 @@ export const loadTaskDeclarations = (tasksDir: string): TasksDirectoryResult => 
       return { kind: 'invalid', reason: `${entry} недоступен: ${String(error)}` };
     }
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (error) {
-      return { kind: 'invalid', reason: `${entry} не является валидным JSON: ${String(error)}` };
-    }
-    if (typeof parsed !== 'object' || parsed === null) {
-      return { kind: 'invalid', reason: `${entry}: должен быть объектом` };
+    const result = parseTasksFileContent(raw, entry);
+    if (result.kind === 'invalid') return result;
+    tasks.push(...result.tasks);
+    leadPaths.push(...result.leadPaths);
+  }
+
+  return { kind: 'loaded', tasks, leadPaths };
+};
+
+/**
+ * Читает и объединяет все `<ref>:<tasksDir>/*.json` из git-объекта, а не из рабочего дерева
+ * (N1/N2, второй раунд верификации). См. развёрнутое обоснование у `loadWriteSetFromGit` в
+ * `writeset.ts`: рабочее дерево — путь, который может исправить сама ограничиваемая task-сессия,
+ * поэтому авторитетная проверка (`subagent-stop-writeset.ts`) не должна на него полагаться.
+ *
+ * Если `ref` не резолвится в коммит — fail-closed (`kind: 'invalid'`), а не чтение рабочего дерева.
+ */
+export const loadTaskDeclarationsFromGit = (
+  projectRoot: string,
+  ref: string,
+  tasksDir = '.claude/tasks',
+): TasksDirectoryResult => {
+  const commit = resolveCommit(projectRoot, ref);
+  if (commit.kind === 'error') return { kind: 'invalid', reason: commit.reason };
+
+  const entries = listJsonFilesInGitDir(projectRoot, ref, tasksDir);
+  if (entries.length === 0) return { kind: 'absent' };
+
+  const tasks: TaskDeclaration[] = [];
+  const leadPaths: string[] = [];
+
+  for (const path of entries) {
+    const blob = readGitBlob(projectRoot, ref, path);
+    if (blob.kind !== 'ok') {
+      const reason =
+        blob.kind === 'error'
+          ? blob.reason
+          : `путь пропал между перечислением каталога и чтением файла в git-объекте ${ref}`;
+      return { kind: 'invalid', reason: `${path} недоступен из git-объекта ${ref}: ${reason}` };
     }
 
-    const file = parsed as TasksFile;
-    if (!Array.isArray(file.tasks) || !file.tasks.every(isTaskDeclaration)) {
-      return {
-        kind: 'invalid',
-        reason: `${entry}: обязательное поле tasks — массив TaskDeclaration (task_id, owner_role, write_paths)`,
-      };
-    }
-    tasks.push(...file.tasks);
-
-    if (file.lead_paths !== undefined) {
-      if (!Array.isArray(file.lead_paths) || !file.lead_paths.every((p) => typeof p === 'string')) {
-        return { kind: 'invalid', reason: `${entry}: lead_paths должен быть списком строк` };
-      }
-      leadPaths.push(...(file.lead_paths as readonly string[]));
-    }
+    const result = parseTasksFileContent(blob.content, path);
+    if (result.kind === 'invalid') return result;
+    tasks.push(...result.tasks);
+    leadPaths.push(...result.leadPaths);
   }
 
   return { kind: 'loaded', tasks, leadPaths };

@@ -6,7 +6,7 @@ const NOW = new Date('2026-08-20T00:00:00.000Z');
 const valid = {
   id: 'exc-001',
   check: 'dependencies' as const,
-  scope: 'lodash',
+  scope: 'lodash@4.17.21',
   reason: 'Обоснование для теста',
   compensating_control: 'Компенсирующий контроль для теста',
   owner: 'security-owner',
@@ -58,7 +58,7 @@ describe('parseExceptions', () => {
   });
 
   it('rejects duplicate ids, invalidating all entries sharing the id (negative)', () => {
-    const duplicate = { ...valid, scope: 'other-package' };
+    const duplicate = { ...valid, scope: 'other-package@2.0.0' };
     const result = parseExceptions(JSON.stringify([valid, duplicate]), NOW);
     expect(result.valid).toHaveLength(0);
     expect(result.errors.some((error) => /duplicate/i.test(error.message))).toBe(true);
@@ -76,9 +76,51 @@ describe('parseExceptions', () => {
   });
 });
 
+describe('parseExceptions — minor2: dependencies scope must be an instance identifier', () => {
+  it('rejects a bare package name as scope for check="dependencies" (negative: was blanket-suppressing all advisories including future ones)', () => {
+    const result = parseExceptions(JSON.stringify([{ ...valid, scope: 'minimatch' }]), NOW);
+    expect(result.valid).toHaveLength(0);
+    expect(result.errors.some((error) => /package@version|advisory id/.test(error.message))).toBe(
+      true,
+    );
+  });
+
+  it('accepts a numeric advisory id as scope for check="dependencies" (positive)', () => {
+    const result = parseExceptions(JSON.stringify([{ ...valid, scope: '1096485' }]), NOW);
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toHaveLength(1);
+  });
+
+  it('accepts package@version as scope for check="dependencies" (positive)', () => {
+    const result = parseExceptions(JSON.stringify([{ ...valid, scope: 'minimatch@3.0.4' }]), NOW);
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toHaveLength(1);
+  });
+
+  it('accepts a scoped package@version as scope for check="dependencies" (positive: scoped npm package names contain their own "@")', () => {
+    const result = parseExceptions(JSON.stringify([{ ...valid, scope: '@babel/core@7.0.0' }]), NOW);
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toHaveLength(1);
+  });
+
+  it('does not apply the dependencies instance-scope rule to other checks (negative: package-name scope is fine for e.g. no-llm)', () => {
+    const result = parseExceptions(
+      JSON.stringify([{ ...valid, check: 'no-llm', scope: 'openai' }]),
+      NOW,
+    );
+    expect(result.errors).toEqual([]);
+    expect(result.valid).toHaveLength(1);
+  });
+});
+
 describe('applyExceptions', () => {
   const findings = [
-    { id: 'lodash', severity: 'high' as const, package: 'lodash', message: 'known vulnerability' },
+    {
+      id: 'lodash-advisory',
+      severity: 'high' as const,
+      package: 'lodash@4.17.21',
+      message: 'known vulnerability',
+    },
     {
       id: 'left-pad',
       severity: 'high' as const,
@@ -90,7 +132,7 @@ describe('applyExceptions', () => {
   it('suppresses a finding whose package/path exactly matches a valid exception scope for this check (positive)', () => {
     const result = applyExceptions(findings, [valid], 'dependencies');
     expect(result.active.map((f) => f.id)).toEqual(['left-pad']);
-    expect(result.suppressed.map((f) => f.id)).toEqual(['lodash']);
+    expect(result.suppressed.map((f) => f.id)).toEqual(['lodash-advisory']);
   });
 
   it('does not suppress findings for a different check (negative)', () => {

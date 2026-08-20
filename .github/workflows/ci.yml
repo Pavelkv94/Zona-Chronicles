@@ -60,6 +60,12 @@ jobs:
         if: github.event_name == 'pull_request'
         run: pnpm ownership:check .claude/tasks/I00.json "${{ github.event.pull_request.base.sha }}"
 
+      # DEV-01: статус capability не блокирует gate (реальных адаптеров нет по scope I00),
+      # но обязан быть видимым в каждом прогоне, а не спрятан в локальной команде.
+      - name: Report usage-window capability status (DEV-01, non-blocking)
+        if: always()
+        run: pnpm continuity:capability-check || echo "LIMIT_AUTOCONTINUE_UNAVAILABLE — адаптеры telemetry/wake/resume отсутствуют, автопродолжение не обещается"
+
       - name: Upload machine-readable reports
         if: always()
         uses: actions/upload-artifact@v5

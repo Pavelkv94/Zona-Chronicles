@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { readGitBlob, resolveCommit } from './git-source.ts';
 
 /**
  * Declared write set текущей задачи (`08_TDD_AND_AGENT_WORKFLOW` §12).
@@ -81,4 +82,36 @@ export const loadWriteSet = (path: string): WriteSetLoadResult => {
     return { kind: 'invalid', reason: `writeset.json недоступен: ${String(error)}` };
   }
   return parseWriteSet(raw);
+};
+
+/**
+ * Читает write set из git-объекта `<ref>:<path>`, а не с диска (N1/N2, второй раунд верификации).
+ *
+ * Рабочее дерево — write path, доступный самой ограничиваемой task-сессии (через Bash в обход
+ * PreToolUse-слоёв). Git-объект уже закоммиченного `ref` ей недоступен на запись без `git commit`,
+ * а слои `decide-write.ts` и Bash-эвристика в `decide-bash.ts` не дают наполнить `.claude/**`
+ * вредоносным содержимым до коммита. Это — авторитетный источник для `subagent-stop-writeset.ts`;
+ * `loadWriteSet` (дисковый) остаётся для PreToolUse-хуков, где решение нужно до первого коммита
+ * задачи и где протокол «lead коммитит control-файлы до старта задачи» — часть orchestration-flow.
+ *
+ * Если `ref` не резолвится в коммит — fail-closed (`kind: 'invalid'`), а не попытка прочитать
+ * рабочее дерево.
+ */
+export const loadWriteSetFromGit = (
+  projectRoot: string,
+  ref: string,
+  path = '.claude/writeset.json',
+): WriteSetLoadResult => {
+  const commit = resolveCommit(projectRoot, ref);
+  if (commit.kind === 'error') return { kind: 'invalid', reason: commit.reason };
+
+  const blob = readGitBlob(projectRoot, ref, path);
+  if (blob.kind === 'absent') return { kind: 'lead' };
+  if (blob.kind === 'error') {
+    return {
+      kind: 'invalid',
+      reason: `writeset.json недоступен из git-объекта ${ref}: ${blob.reason}`,
+    };
+  }
+  return parseWriteSet(blob.content);
 };

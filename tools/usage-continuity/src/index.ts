@@ -31,6 +31,7 @@ export {
   isInstantError,
   compareInstants,
   addMinutes,
+  STRICT_ISO_8601_INSTANT_PATTERN,
 } from './instant.ts';
 export type { Instant, InstantError } from './instant.ts';
 

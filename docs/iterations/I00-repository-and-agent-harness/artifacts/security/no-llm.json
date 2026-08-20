@@ -1,0 +1,8 @@
+{
+  "check": "no-llm",
+  "status": "pass",
+  "findings": [],
+  "suppressed": [],
+  "policy_version": "0.1.0-i00-skeleton",
+  "generated_at": "2026-08-20T22:48:40.620Z"
+}

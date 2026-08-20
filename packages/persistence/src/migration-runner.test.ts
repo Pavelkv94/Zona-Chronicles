@@ -16,16 +16,13 @@ const silentLogger: Logger = {
   error: () => {},
 };
 
-/** Фейковая миграция: `up` никогда реально не вызывается фейковым executor-ом (см. ниже). */
+/** Фейковая миграция: у `Migration` нет `up` — единственный канал исполнения `statements`. */
 function fakeMigration(id: string, name: string, phase: MigrationPhase = 'expand'): Migration {
   return {
     id,
     name,
     phase,
     statements: [`-- ${id} ${name}`],
-    up: async () => {
-      /* no-op: фейковый executor не вызывает up() напрямую */
-    },
   };
 }
 

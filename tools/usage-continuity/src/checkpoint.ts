@@ -71,6 +71,12 @@ export function renderCheckpoint(checkpoint: Checkpoint): string {
   if (checkpoint.resume_attempted_at !== undefined) {
     lines.push(`resume_attempted_at: ${JSON.stringify(checkpoint.resume_attempted_at)}`);
   }
+  if (checkpoint.resume_completed_at !== undefined) {
+    lines.push(`resume_completed_at: ${JSON.stringify(checkpoint.resume_completed_at)}`);
+  }
+  if (checkpoint.resume_result !== undefined) {
+    lines.push(`resume_result: ${JSON.stringify(checkpoint.resume_result)}`);
+  }
   if (checkpoint.last_resume_validation_error !== undefined) {
     lines.push(
       `last_resume_validation_error: ${JSON.stringify(checkpoint.last_resume_validation_error)}`,
@@ -219,16 +225,45 @@ export function parseCheckpoint(text: string): Checkpoint | CheckpointParseError
     checkpointed_at: getString('checkpointed_at'),
   };
 
-  return applyOptionalStringFields(checkpoint, fields, [
+  const withStringFields = applyOptionalStringFields(checkpoint, fields, [
     'capability_status',
     'resume_attempted_at',
+    'resume_completed_at',
     'last_resume_validation_error',
   ]);
+  if (isCheckpointParseError(withStringFields)) {
+    return withStringFields;
+  }
+
+  return applyOptionalResumeResult(withStringFields, fields);
 }
 
 /** Ключи опциональных строковых полей Checkpoint — единственные, применяемые ниже. */
 type OptionalCheckpointStringKey =
-  'capability_status' | 'resume_attempted_at' | 'last_resume_validation_error';
+  | 'capability_status'
+  | 'resume_attempted_at'
+  | 'resume_completed_at'
+  | 'last_resume_validation_error';
+
+/**
+ * `resume_result` — не произвольная строка, а замкнутое множество `'ok' | 'failed'` (N9), поэтому
+ * применяется отдельной функцией с явной проверкой значения, а не через `applyOptionalStringFields`.
+ */
+function applyOptionalResumeResult(
+  checkpoint: Checkpoint,
+  fields: Map<string, unknown>,
+): Checkpoint | CheckpointParseError {
+  const value = fields.get('resume_result');
+  if (value === undefined) {
+    return checkpoint;
+  }
+  if (value !== 'ok' && value !== 'failed') {
+    return {
+      error: `поле "resume_result" присутствует, но не "ok"/"failed": ${JSON.stringify(value)}`,
+    };
+  }
+  return { ...checkpoint, resume_result: value };
+}
 
 /**
  * Присваивает опциональные строковые поля (capability_status, resume_attempted_at,

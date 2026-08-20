@@ -36,10 +36,59 @@ describe('checkOwnership', () => {
     expect(report.problems).toEqual([{ kind: 'unowned', path: 'packages/domain/src/rules.ts' }]);
   });
 
-  it('разрешает пути, явно оставленные за lead-ом', () => {
+  it('разрешает пути, явно оставленные за lead-ом (режим по умолчанию — lead-audit)', () => {
     const report = checkOwnership(['docs/iterations/I00-x/REPORT.md'], tasks, ['docs/**']);
     expect(report.problems).toEqual([]);
     expect(report.ownedBy['docs/iterations/I00-x/REPORT.md']).toBe('lead');
+  });
+
+  it('lead-audit: то же самое явно с mode="lead-audit"', () => {
+    const report = checkOwnership(
+      ['docs/iterations/I00-x/REPORT.md'],
+      tasks,
+      ['docs/**'],
+      'lead-audit',
+    );
+    expect(report.problems).toEqual([]);
+    expect(report.ownedBy['docs/iterations/I00-x/REPORT.md']).toBe('lead');
+  });
+
+  it('N1: task-session — совпадение только с lead_paths это нарушение, а не владение', () => {
+    // Ровно воспроизведённый обход: task-сессия удаляет .claude/writeset.json, hook падает на
+    // карту задач, и README.md/.claude/** попадают только в lead_paths, не в write_paths ни одной
+    // задачи. В режиме 'task-session' это обязано быть проблемой (lead-only), а не ownedBy: 'lead'.
+    const report = checkOwnership(
+      ['README.md', '.claude/settings.autonomous.json'],
+      tasks,
+      ['README.md', '.claude/**'],
+      'task-session',
+    );
+    expect(report.ownedBy).toEqual({});
+    expect(report.problems).toEqual([
+      { kind: 'lead-only', path: 'README.md' },
+      { kind: 'lead-only', path: '.claude/settings.autonomous.json' },
+    ]);
+  });
+
+  it('N1: task-session — путь, не покрытый ни задачей, ни lead_paths, остаётся unowned', () => {
+    const report = checkOwnership(
+      ['packages/domain/src/rules.ts'],
+      tasks,
+      ['docs/**'],
+      'task-session',
+    );
+    expect(report.problems).toEqual([{ kind: 'unowned', path: 'packages/domain/src/rules.ts' }]);
+  });
+
+  it('N1: task-session — файл внутри write_paths реальной задачи по-прежнему владение задачей', () => {
+    const report = checkOwnership(
+      ['tools/usage-continuity/src/runner.ts'],
+      tasks,
+      ['tools/usage-continuity/**'], // даже если lead_paths тоже совпадает — write_paths задачи главнее
+      'task-session',
+    );
+    expect(report.problems).toEqual([]);
+    expect(report.ownedBy['tools/usage-continuity/src/runner.ts']).toBe('I00-T02');
   });
 
   it('находит пересечение write sets', () => {
@@ -91,5 +140,6 @@ describe('formatOwnershipProblem', () => {
       'protected',
     );
     expect(formatOwnershipProblem({ kind: 'human-only', path: '.env' })).toContain('человек');
+    expect(formatOwnershipProblem({ kind: 'lead-only', path: 'README.md' })).toContain('lead');
   });
 });

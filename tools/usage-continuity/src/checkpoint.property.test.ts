@@ -33,6 +33,8 @@ const checkpointArb: fc.Arbitrary<Checkpoint> = fc.record(
     checkpointed_at: isoTimestampArb,
     capability_status: stringArb,
     resume_attempted_at: isoTimestampArb,
+    resume_completed_at: isoTimestampArb,
+    resume_result: fc.constantFrom('ok', 'failed'),
     last_resume_validation_error: stringArb,
   },
   {

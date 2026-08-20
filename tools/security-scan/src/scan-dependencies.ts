@@ -31,6 +31,12 @@ export type Advisory = {
   readonly severity: string;
   readonly title: string;
   readonly url: string;
+  /**
+   * minor2: установленные версии, к которым относится этот advisory
+   * (`findings[].version` из npm-audit-v1, deduped). Пусто, если формат ответа
+   * их не содержит — тогда экземпляр однозначно определяется только advisory id.
+   */
+  readonly installedVersions?: readonly string[];
 };
 
 export type AuditParseResult =
@@ -79,12 +85,28 @@ export const parseAuditJson = (raw: string): AuditParseResult => {
     }
     const rawId = entry['id'];
     const id = typeof rawId === 'string' || typeof rawId === 'number' ? String(rawId) : key;
+    const rawFindings = entry['findings'];
+    const installedVersions: string[] = [];
+    if (Array.isArray(rawFindings)) {
+      for (const item of rawFindings) {
+        if (typeof item !== 'object' || item === null) continue;
+        const version = (item as Record<string, unknown>)['version'];
+        if (
+          typeof version === 'string' &&
+          version.length > 0 &&
+          !installedVersions.includes(version)
+        ) {
+          installedVersions.push(version);
+        }
+      }
+    }
     advisories.push({
       id,
       package: typeof entry['module_name'] === 'string' ? entry['module_name'] : 'unknown',
       severity,
       title: typeof entry['title'] === 'string' ? entry['title'] : '',
       url: typeof entry['url'] === 'string' ? entry['url'] : '',
+      installedVersions,
     });
   }
   return { kind: 'ok', advisories };
@@ -111,10 +133,21 @@ export const applyDependencyPolicy = (
       : minIndex !== -1 && index >= minIndex;
     if (!blocks) continue;
 
+    // minor2: если ровно одна установленная версия известна, находка адресует
+    // её однозначно (`package@version`) — это позволяет exceptions.json
+    // ссылаться на конкретный экземпляр, а не на пакет целиком (см. exceptions.ts).
+    // Ноль или несколько версий — версия неоднозначна, находка остаётся с
+    // голым именем пакета; такой advisory всё ещё можно погасить по advisory id.
+    const installedVersions = advisory.installedVersions ?? [];
+    const packageIdentifier =
+      installedVersions.length === 1
+        ? `${advisory.package}@${installedVersions[0]}`
+        : advisory.package;
+
     findings.push({
       id: advisory.id,
       severity: advisory.severity,
-      package: advisory.package,
+      package: packageIdentifier,
       message: isUnknownSeverity
         ? `неизвестная severity "${advisory.severity}" (unknown_severity_behavior=block): ${advisory.title}`
         : `${advisory.title} (${advisory.url})`,
@@ -138,7 +171,7 @@ const registryOverrideArgs = (): readonly string[] => {
   return override !== undefined && override.length > 0 ? ['--registry', override] : [];
 };
 
-type SpawnAuditResult =
+export type SpawnAuditResult =
   { readonly ok: true; readonly stdout: string } | { readonly ok: false; readonly reason: string };
 
 /**
@@ -244,19 +277,43 @@ const resolveRegistryEndpoint = (repoRoot: string): string => {
   return result.stdout.trim();
 };
 
+/**
+ * N4 (review finding): io-зависимости `runDependenciesScan`, вынесенные за интерфейс,
+ * чтобы проводку "пустые advisories → обязательная проба → config-error" можно было
+ * протестировать напрямую (тест на саму функцию, а не только на чистую
+ * `evaluateLivenessProbe`) без сети/подпроцессов. Продакшн вызывает с
+ * `DEFAULT_DEPENDENCIES_SCAN_IO` (реальные `pnpm audit`/liveness-проба); тесты
+ * подставляют детерминированные фейки.
+ */
+export type DependenciesScanIo = {
+  readonly runAudit: (repoRoot: string) => SpawnAuditResult;
+  readonly runLivenessProbe: () => AuditParseResult;
+  readonly resolveRegistryEndpoint: (repoRoot: string) => string;
+};
+
+export const DEFAULT_DEPENDENCIES_SCAN_IO: DependenciesScanIo = {
+  runAudit: runPnpmAudit,
+  runLivenessProbe,
+  resolveRegistryEndpoint,
+};
+
 /** io: полный dependency scan репозитория. */
-export const runDependenciesScan = (repoRoot: string, now: Date = new Date()): ScanOutcome => {
+export const runDependenciesScan = (
+  repoRoot: string,
+  now: Date = new Date(),
+  io: DependenciesScanIo = DEFAULT_DEPENDENCIES_SCAN_IO,
+): ScanOutcome => {
   const policyResult = loadPolicy(repoRoot);
   if (policyResult.kind === 'invalid')
     return { kind: 'config-error', message: policyResult.reason };
 
-  const auditRun = runPnpmAudit(repoRoot);
+  const auditRun = io.runAudit(repoRoot);
   if (!auditRun.ok) return { kind: 'config-error', message: auditRun.reason };
 
   const parsed = parseAuditJson(auditRun.stdout);
   if (parsed.kind === 'invalid') return { kind: 'config-error', message: parsed.reason };
 
-  const registryEndpoint = resolveRegistryEndpoint(repoRoot);
+  const registryEndpoint = io.resolveRegistryEndpoint(repoRoot);
 
   let liveness: Record<string, unknown>;
   if (parsed.advisories.length > 0) {
@@ -267,7 +324,7 @@ export const runDependenciesScan = (repoRoot: string, now: Date = new Date()): S
       reason: 'real advisories present, endpoint already proven live',
     };
   } else {
-    const probeResult = evaluateLivenessProbe(runLivenessProbe());
+    const probeResult = evaluateLivenessProbe(io.runLivenessProbe());
     if (probeResult.kind === 'unconfirmed') {
       return {
         kind: 'config-error',

@@ -1,13 +1,29 @@
 /**
- * Валидируемое время на границе портов continuity harness (DEV-01, review finding m3).
+ * Валидируемое время на границе портов continuity harness (DEV-01, review finding m3/N7).
  *
  * `ClockPort.now()` и `UsageWindowSample.reported_reset_at`/`observed_at` — инъектированные
  * ISO-8601 строки, а не wall clock, но они всё равно приходят снаружи (CLI, тесты, будущий
- * provider-адаптер) и могут быть невалидны. `Date.parse` на мусорной строке даёт `NaN`, и любое
- * сравнение с `NaN` молча возвращает `false` — то есть "ещё не наступило" вместо явной ошибки
- * конфигурации, а `new Date(NaN).toISOString()` бросает `RangeError` в неожиданный момент.
+ * provider-адаптер) и могут быть невалидны или неоднозначны.
  *
- * `parseInstant` — единственная точка, где ISO-строка становится валидированным `Instant`;
+ * Голый `Date.parse` не годится по двум независимым причинам:
+ * 1. Мусорная строка даёт `NaN`, и любое сравнение с `NaN` молча возвращает `false` — то есть
+ *    "ещё не наступило" вместо явной ошибки конфигурации (m3).
+ * 2. `Date.parse` принимает форматы, которые не являются ISO-8601 date-time, и для части из
+ *    них (`"March 1, 2026"`, `"2026"`, `"12/31/2026"`, `"2026-01-01 05:00"` без смещения)
+ *    результат зависит от локали/часового пояса ХОСТА, на котором выполняется парсинг (N7).
+ *    Такое значение, записанное в `reported_reset_at`/`checkpointed_at` checkpoint-а, даёт
+ *    разный `epochMs` в зависимости от того, где именно был создан или прочитан checkpoint —
+ *    ровно та неопределённость, которую checkpoint обязан исключать.
+ *
+ * КОНТРАКТ `Instant` (обязателен и для будущего I01 world time): валидная строка — это
+ * ISO-8601 `date-time` с обязательным ЯВНЫМ смещением (`Z` либо `±HH:MM`). Никакие формы без
+ * явного смещения не принимаются — не потому что они "не ISO-8601" вообще (date-only и
+ * local-time формы существуют в стандарте), а потому что именно они интерпретируются
+ * относительно локали/часового пояса среды выполнения, а не абсолютного момента времени.
+ * Календарная корректность (`2026-02-30` и подобные) проверяется явно, а не полагается на
+ * то, что переполнение молча "перетечёт" в соседний месяц.
+ *
+ * `parseInstant` — единственная точка, где строка становится валидированным `Instant`;
  * дальше арифметика и сравнение работают только над `epochMs`, без повторного `Date.parse`.
  */
 
@@ -24,12 +40,82 @@ export function isInstantError(value: Instant | InstantError): value is InstantE
   return 'error' in value;
 }
 
+/**
+ * Строгий ISO-8601 `date-time` с ОБЯЗАТЕЛЬНЫМ явным смещением: `Z` либо `±HH:MM`.
+ * Экспортируется, чтобы будущие потребители контракта (I01 world time) могли переиспользовать
+ * ровно это определение, а не заново отгадывать формат.
+ */
+export const STRICT_ISO_8601_INSTANT_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
+
+function isLeapYear(year: number): boolean {
+  return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+}
+
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
+
+function daysInMonth(year: number, month: number): number {
+  if (month === 2 && isLeapYear(year)) {
+    return 29;
+  }
+  // Non-null assertion: month всегда 1..12 — проверено вызывающим до вызова daysInMonth.
+  return DAYS_IN_MONTH[month - 1]!;
+}
+
 /** Парсит ISO-8601 метку времени. Никогда не бросает исключение — только `{ error }`. */
 export function parseInstant(value: string): Instant | InstantError {
-  const epochMs = Date.parse(value);
-  if (Number.isNaN(epochMs)) {
-    return { error: `невалидная ISO-8601 метка времени: ${JSON.stringify(value)}` };
+  const match = STRICT_ISO_8601_INSTANT_PATTERN.exec(value);
+  if (match === null) {
+    return {
+      error:
+        `невалидная ISO-8601 метка времени (ожидается YYYY-MM-DDTHH:mm:ss[.sss](Z|±HH:MM)): ` +
+        `${JSON.stringify(value)}`,
+    };
   }
+
+  // Группы 1-6 и 8 обязательны в самом regex (без "?"), поэтому раз `match` не null, они
+  // гарантированно строки — non-null assertion отражает это, а не обходит проверку.
+  const [, yearStr, monthStr, dayStr, hourStr, minuteStr, secondStr, fractionStr, offsetStr] =
+    match;
+  const year = Number(yearStr!);
+  const month = Number(monthStr!);
+  const day = Number(dayStr!);
+  const hour = Number(hourStr!);
+  const minute = Number(minuteStr!);
+  const second = Number(secondStr!);
+
+  if (month < 1 || month > 12) {
+    return { error: `невалидный месяц в ISO-8601 метке: ${JSON.stringify(value)}` };
+  }
+  if (day < 1 || day > daysInMonth(year, month)) {
+    return {
+      error: `невалидный день месяца в ISO-8601 метке (несуществующая дата): ${JSON.stringify(value)}`,
+    };
+  }
+  if (hour > 23 || minute > 59 || second > 59) {
+    return { error: `невалидное время суток в ISO-8601 метке: ${JSON.stringify(value)}` };
+  }
+
+  const milliseconds =
+    fractionStr === undefined ? 0 : Number(`0.${fractionStr}`.slice(0, 5)) * 1000;
+
+  // Смещение обязательно (проверено regex-ом): "Z" -> 0, иначе "+HH:MM"/"-HH:MM".
+  const offset = offsetStr!;
+  let offsetMinutes = 0;
+  if (offset !== 'Z') {
+    const sign = offset[0] === '-' ? -1 : 1;
+    const offsetHours = Number(offset.slice(1, 3));
+    const offsetMins = Number(offset.slice(4, 6));
+    if (offsetHours > 23 || offsetMins > 59) {
+      return { error: `невалидное смещение в ISO-8601 метке: ${JSON.stringify(value)}` };
+    }
+    offsetMinutes = sign * (offsetHours * 60 + offsetMins);
+  }
+
+  const epochMs =
+    Date.UTC(year, month - 1, day, hour, minute, second, Math.round(milliseconds)) -
+    offsetMinutes * 60_000;
+
   return { iso: value, epochMs };
 }
 

@@ -62,6 +62,15 @@ module.exports = {
       to: { path: '^(packages/(?!content/)|apps/|tools/|scripts/|tests/)' },
     },
     {
+      name: 'observer-api-does-not-reach-persistence',
+      severity: 'error',
+      comment:
+        'OPS-03: observer path не должен иметь физической возможности читать канонические таблицы. ' +
+        'ADR-002 не даёт api ребра к persistence; данные приходят только через projections.',
+      from: { path: '^apps/api/' },
+      to: { path: '^packages/persistence/' },
+    },
+    {
       name: 'packages-do-not-depend-on-apps',
       severity: 'error',
       from: { path: '^packages/' },

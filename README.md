@@ -11,8 +11,15 @@
 
 Pre-production. Итерация **I00** — репозиторий и agent harness
 (см. [`docs/10_ITERATION_MASTER_PLAN.md`](docs/10_ITERATION_MASTER_PLAN.md)).
-Мир ещё не симулируется: I00 доказывает, что gate воспроизводим, границы исполняются
-инструментами, а прерывание работы не теряет и не дублирует шаг.
+Мир ещё не симулируется. I00 доказывает, что gate воспроизводим, что границы исполняются
+инструментами, а не соглашением, и что механика checkpoint/resume не теряет и не дублирует
+шаг **на инъектированных фикстурах**.
+
+Важное ограничение: реальных адаптеров usage telemetry, persisted wake и session resume в
+репозитории нет. `pnpm continuity:capability-check` в текущей среде честно отвечает
+`LIMIT_AUTOCONTINUE_UNAVAILABLE` и завершается кодом 1. Автоматическое продолжение работы
+после исчерпания пятичасового окна **не обеспечено** и не должно обещаться до появления
+адаптеров.
 
 ## Быстрый старт
 
@@ -20,11 +27,12 @@ Pre-production. Итерация **I00** — репозиторий и agent har
 corepack enable                      # pnpm берётся из поля packageManager
 pnpm install --frozen-lockfile
 pnpm verify                          # быстрый gate: формат, lint, границы, типы, тесты, security, build
-docker compose up -d postgres        # PostgreSQL + PostGIS для integration-тестов
 pnpm verify:full                     # тот же gate плюс integration и replay
 ```
 
-Требуется Node из [`.nvmrc`](.nvmrc) и Docker для тестов с настоящей БД.
+Требуется Node из [`.nvmrc`](.nvmrc) и запущенный Docker: integration-тесты поднимают
+собственный контейнер PostgreSQL/PostGIS через Testcontainers. Отдельный
+`docker compose up -d postgres` нужен для ручной работы с БД, а не для тестов.
 
 ## Структура
 

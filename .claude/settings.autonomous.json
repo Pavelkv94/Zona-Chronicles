@@ -34,7 +34,7 @@
       "allowWrite": ["."]
     },
     "network": {
-      "allowedDomains": []
+      "allowedDomains": ["registry.npmjs.org", "*.npmjs.org"]
     }
   }
 }

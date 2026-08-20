@@ -17,7 +17,7 @@ export type Finding = {
   readonly message: string;
 };
 
-export type ReportStatus = 'pass' | 'fail';
+export type ReportStatus = 'pass' | 'fail' | 'config_error';
 
 export type Report = {
   readonly check: CheckName;
@@ -65,6 +65,42 @@ export const writeReportFile = (report: Report, repoRoot: string): void => {
   const dir = `${repoRoot}/reports/security`;
   mkdirSync(dir, { recursive: true });
   writeFileSync(`${dir}/${report.check}.json`, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
+};
+
+/**
+ * minor1 (review finding): раньше при `config-error` отчёт вообще не писался, и
+ * `reports/security/<check>.json` оставался со СТАРЫМ `status: "pass"` от
+ * предыдущего успешного прогона — а CI выгружает `reports/` с `if: always()`,
+ * то есть именно в самом важном сценарии (сломанная конфигурация/инструмент)
+ * артефакт лгал. Чистая функция: строит машиночитаемый отчёт и для config-error.
+ */
+export const buildConfigErrorReport = (
+  check: CheckName,
+  message: string,
+  generatedAt: Date,
+): Report => ({
+  check,
+  status: 'config_error',
+  findings: [{ id: 'config-error', severity: 'critical', message }],
+  suppressed: [],
+  policy_version: 'unknown',
+  generated_at: generatedAt.toISOString(),
+});
+
+/**
+ * io: пишет отчёт для ЛЮБОГО исхода проверки — `ok` (как есть) или `config-error`
+ * (через `buildConfigErrorReport`) — так что `reports/security/<check>.json`
+ * никогда не остаётся устаревшим "pass" после сломанной конфигурации (minor1).
+ */
+export const writeOutcomeReport = (
+  outcome: ScanOutcome,
+  check: CheckName,
+  repoRoot: string,
+  now: Date = new Date(),
+): void => {
+  const report =
+    outcome.kind === 'ok' ? outcome.report : buildConfigErrorReport(check, outcome.message, now);
+  writeReportFile(report, repoRoot);
 };
 
 /** io: печатает краткую сводку в stdout/stderr и, при config-error, пишет причину. */

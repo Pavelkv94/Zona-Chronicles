@@ -22,6 +22,68 @@ type Rule = {
   readonly reason: string;
 };
 
+/**
+ * N2 review finding (второй раунд верификации), первый (не авторитетный) слой.
+ *
+ * До фикса `decideBashForSession` проверяла только список lead-only команд и не смотрела на пути
+ * записи вообще: `cat > .claude/writeset.json <<...` не совпадал ни с одним правилом выше →
+ * allow. После этого task-сессия могла выписать себе `{"write_paths":["**"],"allow_protected_paths":
+ * ["**"]}` и пройти `pre-tool-use-write.ts`/`subagent-stop-writeset.ts`, потому что источник их
+ * решения — тот же файл.
+ *
+ * Здесь — узкий набор проверок для конкретных операций записи в `.claude/**`, а не попытка
+ * разобрать shell целиком (это принципиально невозможно регуляркой, см. docstring файла).
+ * Авторитетный слой — `loadWriteSetFromGit`/`loadTaskDeclarationsFromGit` в `subagent-stop-writeset.ts`
+ * (`../git-source.ts`): он не доверяет рабочему дереву вовсе, поэтому даже полный обход этого
+ * списка не расширяет фактические права — он просто не будет пойман здесь, а будет пойман на
+ * `SubagentStop` как protected-path violation.
+ *
+ * Что этот слой **не** ловит (документированная граница, не полнота):
+ *   - запись через интерпретируемый код внутри команды: `python3 -c "open('.claude/writeset.json',
+ *     'w').write(...)"`, `node -e`, `perl -e`, `awk`, `dd of=...`;
+ *   - запись через переменные/косвенные пути: `f=.claude/writeset.json; cat > "$f"`,
+ *     конкатенацию строк, `eval`, base64-декодирование пути;
+ *   - запись по абсолютному пути, если он не содержит буквально `.claude/`
+ *     (симлинк, `$PWD/../…`, переход через другой worktree на тот же файл);
+ *   - вложенные кавычки/экранирование, ломающие простые текстовые паттерны.
+ */
+const PROTECTED_DIR = '\\.claude/';
+const CLAUDE_DIR_WRITE_RULES: readonly Rule[] = [
+  {
+    pattern: new RegExp(`>{1,2}\\s*['"]?(\\./)?${PROTECTED_DIR}`),
+    reason:
+      'Перенаправление вывода (>/>>) в .claude/** запрещено task-сессии: это источник её же ' +
+      'ограничений (N2). Изменение вносит orchestrator/lead.',
+  },
+  {
+    pattern: new RegExp(`\\btee\\b[^|;&\\n]*${PROTECTED_DIR}`),
+    reason: '`tee` в .claude/** запрещён task-сессии: это источник её же ограничений (N2).',
+  },
+  {
+    pattern: new RegExp(`\\b(cp|mv)\\b[^|;&\\n]*${PROTECTED_DIR}`),
+    reason:
+      '`cp`/`mv`, упоминающие .claude/**, запрещены task-сессии: это источник её же ' +
+      'ограничений (N2). Правило намеренно шире факта записи (ловит и чтение из .claude/** этой ' +
+      'командой), потому что различить источник и назначение без разбора shell ненадёжно.',
+  },
+  {
+    pattern: new RegExp(`\\brm\\b[^|;&\\n]*${PROTECTED_DIR}`),
+    reason:
+      'Удаление файлов в .claude/** запрещено task-сессии (тот же класс, что и исходный B2: ' +
+      '`rm -f .claude/writeset.json`).',
+  },
+  {
+    pattern: new RegExp(`\\bsed\\b[^|;&\\n]*-i[^|;&\\n]*${PROTECTED_DIR}`),
+    reason:
+      '`sed -i` над файлом в .claude/** запрещён task-сессии: это источник её же ограничений (N2).',
+  },
+  {
+    pattern: new RegExp(`\\btruncate\\b[^|;&\\n]*${PROTECTED_DIR}`),
+    reason:
+      '`truncate` файла в .claude/** запрещён task-сессии: это источник её же ограничений (N2).',
+  },
+];
+
 const LEAD_ONLY_RULES: readonly Rule[] = [
   {
     pattern: /\b(pnpm|npm|yarn|bun)\s+(i|add|install|update|upgrade|remove|link)\b/,
@@ -57,7 +119,7 @@ const LEAD_ONLY_RULES: readonly Rule[] = [
 /** Чистое решение по строке Bash-команды task-сессии, без учёта роли/write set. */
 export const decideBashCommand = (command: string): BashDecision => {
   const normalized = command.replace(/\s+/g, ' ').trim();
-  for (const rule of LEAD_ONLY_RULES) {
+  for (const rule of [...CLAUDE_DIR_WRITE_RULES, ...LEAD_ONLY_RULES]) {
     if (rule.pattern.test(normalized)) {
       return { decision: 'deny', reason: rule.reason };
     }

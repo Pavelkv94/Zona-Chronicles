@@ -65,6 +65,22 @@ const nondeterminismRestrictions = [
   },
 ];
 
+/** Структурные запреты ADR-002, обязательные во всех пакетах и приложениях. */
+const structuralRestrictions = [
+  {
+    selector: 'TSEnumDeclaration',
+    message: 'ADR-002: TypeScript enum запрещён, используйте union of literals + const map.',
+  },
+  {
+    selector: 'TSModuleDeclaration[kind="namespace"]',
+    message: 'ADR-002: runtime namespaces запрещены.',
+  },
+  {
+    selector: 'Decorator',
+    message: 'ADR-002: decorators запрещены.',
+  },
+];
+
 /** Глобалы, которых каноническое ядро не должно касаться напрямую (ADR-003, SIM-01). */
 const nondeterminismGlobals = [
   { name: 'fetch', message: 'ADR-003: сеть в каноническом ядре запрещена.' },
@@ -210,8 +226,11 @@ export default tseslint.config(
     files: ['apps/*/src/**/*.ts'],
     ignores: ['apps/*/src/config.ts', 'apps/*/src/config.test.ts'],
     rules: {
+      // Правила ESLint не сливаются, а переопределяются целиком: базовые запреты
+      // ADR-002 обязаны повторяться здесь явно, иначе они молча исчезают для apps/**.
       'no-restricted-syntax': [
         'error',
+        ...structuralRestrictions,
         {
           selector: "MemberExpression[object.name='process'][property.name='env']",
           message:

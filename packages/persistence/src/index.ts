@@ -4,7 +4,7 @@ export type { Migration, MigrationPhase } from './migrations/types.ts';
 export { migrations } from './migrations/index.ts';
 
 export type { Database, DatabaseConnectionConfig, SchemaMigrationsTable } from './database.ts';
-export { createDatabase } from './database.ts';
+export { createDatabase, parseDatabaseConnectionUrl } from './database.ts';
 
 export type { AppliedMigrationRecord } from './migration-ledger.ts';
 export { computeChecksum } from './migration-ledger.ts';

@@ -7,10 +7,10 @@ import { runNoLlmScan } from '../../tools/security-scan/src/scan-no-llm.ts';
 import {
   exitCodeForOutcome,
   printOutcomeSummary,
-  writeReportFile,
+  writeOutcomeReport,
 } from '../../tools/security-scan/src/report.ts';
 
 const outcome = runNoLlmScan(process.cwd());
-if (outcome.kind === 'ok') writeReportFile(outcome.report, process.cwd());
+writeOutcomeReport(outcome, 'no-llm', process.cwd());
 printOutcomeSummary(outcome);
 process.exit(exitCodeForOutcome(outcome));

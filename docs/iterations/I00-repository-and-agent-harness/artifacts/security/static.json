@@ -1,0 +1,15 @@
+{
+  "check": "static",
+  "status": "pass",
+  "findings": [],
+  "suppressed": [
+    {
+      "id": "hardcoded-network-url",
+      "severity": "low",
+      "path": "tools/security-scan/src/report.test.ts",
+      "message": "Хардкоженный сетевой адрес внутри строкового литерала в исходниках (скелет, не домен-allowlist; minor9 — сузили до строковых литералов, чтобы не ловить комментарии/doc-ссылки и не провоцировать обход склейкой строк): \"'https://registry.npmjs.org/'\""
+    }
+  ],
+  "policy_version": "0.1.0-i00-skeleton",
+  "generated_at": "2026-08-20T22:48:40.306Z"
+}

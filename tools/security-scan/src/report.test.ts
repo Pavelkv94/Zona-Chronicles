@@ -38,9 +38,11 @@ describe('buildReport', () => {
   });
 
   it('carries check-specific meta through when provided (positive: B1 registry/liveness diagnostics)', () => {
-    // Built by concatenation, not a literal URL: static_policy.forbidden_constructs flags
-    // hardcoded-network-url text-wide, and this file is not on its allowlisted_paths.
-    const registryEndpoint = ['https:/', 'registry.npmjs.org/'].join('/');
+    // A plain literal is fine here (minor9 review finding): static_policy.hardcoded-network-url
+    // now only flags URLs inside string literals, and this exact literal is carved out by a
+    // scoped, owner-tracked security/exceptions.json entry rather than obfuscated in code —
+    // routing around a control via string concatenation was itself the minor9 finding.
+    const registryEndpoint = 'https://registry.npmjs.org/';
     const report = buildReport({
       check: 'dependencies',
       active: [],

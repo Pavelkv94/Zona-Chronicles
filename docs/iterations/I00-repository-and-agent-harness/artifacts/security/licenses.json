@@ -1,0 +1,12 @@
+{
+  "check": "licenses",
+  "status": "pass",
+  "findings": [],
+  "suppressed": [],
+  "policy_version": "0.1.0-i00-skeleton",
+  "generated_at": "2026-08-20T22:48:39.301Z",
+  "meta": {
+    "production_package_count": 66,
+    "dev_only_package_count": 332
+  }
+}

@@ -8,10 +8,10 @@ import { runStaticScan } from '../../tools/security-scan/src/scan-static.ts';
 import {
   exitCodeForOutcome,
   printOutcomeSummary,
-  writeReportFile,
+  writeOutcomeReport,
 } from '../../tools/security-scan/src/report.ts';
 
 const outcome = runStaticScan(process.cwd());
-if (outcome.kind === 'ok') writeReportFile(outcome.report, process.cwd());
+writeOutcomeReport(outcome, 'static', process.cwd());
 printOutcomeSummary(outcome);
 process.exit(exitCodeForOutcome(outcome));

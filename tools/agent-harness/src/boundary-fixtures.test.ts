@@ -11,9 +11,17 @@
  * Каждая проверка утверждает конкретное имя правила (`ruleId` у eslint, `rule.name` у depcruise) и
  * узнаваемый фрагмент сообщения, а не просто «есть какая-то ошибка»: иначе тест не заметил бы,
  * что кто-то подменил или ослабил именно нужное правило, оставив рядом другое.
+ *
+ * minor 5 (второй раунд верификации): при жёстком `kill` тестового процесса `finally`/`afterAll`
+ * не выполняются, и фикстуры остаются в исходниках пакетов. Две меры: (1) имя каталога детерминировано
+ * и узнаваемо (`__fixture-<pid>__`, двойное подчёркивание — соглашение репозитория для «не рабочий
+ * код»), поэтому его невозможно спутать с обычным исходником; (2) `sweepStaleFixtureDirs` в начале
+ * `beforeAll` удаляет ЛЮБОЙ каталог вида `__fixture-*__` в тех же трёх директориях независимо от
+ * PID — не только текущего прогона, но и осиротевших от прошлого killed-процесса — прежде чем
+ * создавать новые фикстуры.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -43,6 +51,35 @@ const FIXTURE_DIRS = [DOMAIN_DIR, SIMULATION_DIR, REPRESENTATION_DIR];
 
 const cleanupFixtures = (): void => {
   for (const dir of FIXTURE_DIRS) rmSync(dir, { recursive: true, force: true });
+};
+
+/** Родительские директории, в которых материализуются фикстуры (для minor 5 sweep). */
+const FIXTURE_PARENT_DIRS = [
+  resolve(REPO_ROOT, 'packages/domain/src'),
+  resolve(REPO_ROOT, 'packages/simulation/src'),
+  resolve(REPO_ROOT, 'packages/representation/src'),
+];
+const FIXTURE_DIR_PATTERN = /^__fixture-\d+__$/;
+
+/**
+ * Удаляет ЛЮБОЙ `__fixture-<pid>__`, включая осиротевшие от прошлого killed-процесса (не только
+ * текущего PID) — minor 5. Вызывается ДО создания фикстур текущего прогона, чтобы остаточные
+ * каталоги от прошлого прогона не пережили следующий запуск этого файла.
+ */
+const sweepStaleFixtureDirs = (): void => {
+  for (const parent of FIXTURE_PARENT_DIRS) {
+    let entries: string[];
+    try {
+      entries = readdirSync(parent);
+    } catch {
+      continue; // Родительская директория ещё не создана — нечего сметать.
+    }
+    for (const entry of entries) {
+      if (FIXTURE_DIR_PATTERN.test(entry)) {
+        rmSync(resolve(parent, entry), { recursive: true, force: true });
+      }
+    }
+  }
 };
 
 /** Позитивный случай + одно нарушение на файл — чтобы сообщение однозначно указывало на правило. */
@@ -115,6 +152,7 @@ const runCapture = (command: string, args: readonly string[]): string => {
 };
 
 beforeAll(() => {
+  sweepStaleFixtureDirs();
   try {
     for (const dir of FIXTURE_DIRS) mkdirSync(dir, { recursive: true });
     for (const [name, content] of Object.entries(domainFiles)) {

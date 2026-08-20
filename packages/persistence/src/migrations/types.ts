@@ -1,6 +1,3 @@
-import type { Kysely } from 'kysely';
-import type { Database } from '../database.ts';
-
 /**
  * Фаза миграции по expand → migrate/backfill → contract (§12 03_TECHNICAL_DESIGN.md).
  * `expand` — добавляет новое, ничего не ломает для старого reader/writer;
@@ -16,16 +13,29 @@ export type MigrationPhase = 'expand' | 'backfill' | 'contract';
  * задающий порядок применения. Реестр (`migrations/index.ts`) — явный
  * упорядоченный массив, а не сканирование каталога.
  *
- * `statements` — явный, стабильный текст SQL, который фактически применяет
- * `up`. Checksum журнала (`computeChecksum`) считается от `statements`, а не
- * от кода `up`, потому что текст функции меняется при смене версии
- * TypeScript/транспайлера/минификатора — это дало бы ложный
- * `MIGRATION_CHECKSUM_MISMATCH` на непотронутой миграции.
+ * `statements` — ЕДИНСТВЕННЫЙ канал исполнения: общий runner
+ * (`migration-runner.ts`) применяет их по порядку через `sql.raw(...)`.
+ * У миграции намеренно нет произвольной `up(db)` — раньше она была свободной
+ * функцией, и review показал (N3, I00-F2), что `up` можно было изменить, не
+ * трогая `statements`: checksum журнала (`computeChecksum`) считается от
+ * `statements`, поэтому такое изменение проходило бы integrity check молча,
+ * а применённая миграция меняла бы эффект — на невосполнимом журнале это
+ * OPS-01/OPS-04. Раздельное поле `up` для checksum не годится и по другой
+ * причине: `Function.prototype.toString()` нестабилен между версиями
+ * TypeScript/транспайлера/минификатора и дал бы ложный
+ * `MIGRATION_CHECKSUM_MISMATCH` на непотронутой миграции — этот вариант уже
+ * был отклонён в предыдущем раунде review.
+ *
+ * Итог: checksum обязан покрывать ровно то, что исполняется, поэтому
+ * единственный вариант — не давать миграции исполняемого кода вообще.
+ * Если будущей миграции (I02A+) понадобится императивная логика (например,
+ * batched backfill с переменным числом шагов), это осознанное расширение
+ * контракта — оно обязано принести собственное покрытие checksum, а не
+ * добавлять `up` обратно молча.
  */
 export interface Migration {
   readonly id: string;
   readonly name: string;
   readonly phase: MigrationPhase;
   readonly statements: readonly string[];
-  up(db: Kysely<Database>): Promise<void>;
 }

@@ -98,6 +98,54 @@ describe('renderCheckpoint / parseCheckpoint round trip', () => {
     expect(parsed).toEqual(withBoth);
   });
 
+  it('resume_completed_at опционален и round-trip сохраняет его при наличии (N9)', () => {
+    const withCompleted: Checkpoint = {
+      ...sampleCheckpoint,
+      resume_attempted_at: '2026-08-20T12:05:00.000Z',
+      resume_completed_at: '2026-08-20T12:05:03.000Z',
+    };
+    const parsed = parseCheckpoint(renderCheckpoint(withCompleted));
+    expect(parsed).toEqual(withCompleted);
+  });
+
+  it('resume_result опционален, round-trip сохраняет "ok" и "failed" (N9)', () => {
+    const withOk: Checkpoint = {
+      ...sampleCheckpoint,
+      resume_attempted_at: '2026-08-20T12:05:00.000Z',
+      resume_completed_at: '2026-08-20T12:05:03.000Z',
+      resume_result: 'ok',
+    };
+    expect(parseCheckpoint(renderCheckpoint(withOk))).toEqual(withOk);
+
+    const withFailed: Checkpoint = { ...withOk, resume_result: 'failed' };
+    expect(parseCheckpoint(renderCheckpoint(withFailed))).toEqual(withFailed);
+  });
+
+  it('resume_result со значением, отличным от "ok"/"failed", даёт { error }, а не тихо принимается (N9)', () => {
+    const withCompleted: Checkpoint = {
+      ...sampleCheckpoint,
+      resume_attempted_at: '2026-08-20T12:05:00.000Z',
+      resume_completed_at: '2026-08-20T12:05:03.000Z',
+      resume_result: 'ok',
+    };
+    const rendered = renderCheckpoint(withCompleted).replace(
+      'resume_result: "ok"',
+      'resume_result: "totally-fine"',
+    );
+    const result = parseCheckpoint(rendered);
+    expect(result).toHaveProperty('error');
+  });
+
+  it('resume_attempted_at без resume_completed_at (оборванная попытка, N9) — валидное состояние checkpoint, round-trip сохраняет отсутствие resume_completed_at', () => {
+    const onlyAttempted: Checkpoint = {
+      ...sampleCheckpoint,
+      resume_attempted_at: '2026-08-20T12:05:00.000Z',
+    };
+    const parsed = parseCheckpoint(renderCheckpoint(onlyAttempted));
+    expect(parsed).toEqual(onlyAttempted);
+    expect(parsed).not.toHaveProperty('resume_completed_at');
+  });
+
   it('парсинг мусора возвращает { error }, а не бросает исключение', () => {
     const result = parseCheckpoint('это не checkpoint');
     expect(result).toHaveProperty('error');

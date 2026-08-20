@@ -115,6 +115,11 @@ merge/rebase/push, скрытый stash, destructive reset, обновление
 Если telemetry, persisted wake или session resume недоступны — записать
 `LIMIT_AUTOCONTINUE_UNAVAILABLE` и вернуть управление orchestrator-у, не обещая автопродолжение.
 
+**Текущее состояние репозитория:** реальных адаптеров нет, `pnpm continuity:capability-check`
+отвечает `LIMIT_AUTOCONTINUE_UNAVAILABLE` и завершается кодом 1. Механика checkpoint/resume
+доказана только на инъектированных фикстурах (`pnpm continuity:dry-run`). Автопродолжение
+обещать нельзя.
+
 Протокол и acceptance: §9 `08_TDD_AND_AGENT_WORKFLOW`, I00 в `10_ITERATION_MASTER_PLAN`.
 
 ## Что читать перед изменением scope

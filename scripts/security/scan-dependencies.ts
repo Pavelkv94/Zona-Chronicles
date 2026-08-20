@@ -7,10 +7,10 @@ import { runDependenciesScan } from '../../tools/security-scan/src/scan-dependen
 import {
   exitCodeForOutcome,
   printOutcomeSummary,
-  writeReportFile,
+  writeOutcomeReport,
 } from '../../tools/security-scan/src/report.ts';
 
 const outcome = runDependenciesScan(process.cwd());
-if (outcome.kind === 'ok') writeReportFile(outcome.report, process.cwd());
+writeOutcomeReport(outcome, 'dependencies', process.cwd());
 printOutcomeSummary(outcome);
 process.exit(exitCodeForOutcome(outcome));

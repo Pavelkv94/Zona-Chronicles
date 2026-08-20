@@ -53,5 +53,6 @@
       "owner_role": "tooling-implementer",
       "write_paths": ["security/**", "scripts/security/**", "tools/security-scan/**"]
     }
-  ]
+  ],
+  "//": "Карта владения путями итерации. Урок I00: этот файл обязан быть закоммичен на contract-freeze ДО запуска implementer-ов — ownership:check читает его из git-объекта base-коммита, поэтому декларация, добавленная позже в рабочем дереве, прав не даёт (это и есть цель)."
 }

@@ -12,14 +12,38 @@
  *   2. если файла нет — используем карту задач итерации `.claude/tasks/*.json`;
  *   3. если нет ни того, ни другого — завершение блокируется явной причиной, а не пропускается.
  * Lead-сессия (нет agent_id/agent_type) по-прежнему не ограничена write set-ом.
+ *
+ * N1/N2 review finding (второй раунд верификации), два независимых слоя:
+ *
+ * N1 — `.claude/tasks/*.json` содержит `lead_paths`, и до фикса совпадение с ним трактовалось
+ * как владение lead-а даже в контексте task-сессии: `rm -f .claude/writeset.json` откатывал
+ * hook на карту задач, где `README.md`/`.claude/**` и другие lead-only пути молча становились
+ * `ownedBy: 'lead'`. Исправлено через `checkOwnership(..., 'task-session')`: в этом режиме
+ * совпадение только с `lead_paths` — нарушение (`lead-only`), а не владение.
+ *
+ * N2 — источник ограничений (`.claude/writeset.json`, `.claude/tasks/*.json`) читался с диска,
+ * то есть из write path, доступного самой ограничиваемой task-сессии через Bash в обход
+ * PreToolUse-слоёв (`cat > .claude/writeset.json <<...`). Исправлено чтением из git-объекта
+ * `HEAD` (`loadWriteSetFromGit`/`loadTaskDeclarationsFromGit`, `../git-source.ts`): рабочее дерево
+ * для этого решения больше не читается вовсе, а `git commit` не создаёт новый контент — только
+ * фиксирует то, что уже есть, куда Bash-эвристика в `decide-bash.ts` не даёт записать `.claude/**`.
  */
 import { execFileSync } from 'node:child_process';
 import { findDiffViolations, formatViolations } from '../diff-violations.ts';
 import { classifySession } from '../session-role.ts';
 import { checkOwnership, formatOwnershipProblem } from '../task-ownership.ts';
-import { loadTaskDeclarations } from '../tasks-directory.ts';
-import { loadWriteSet } from '../writeset.ts';
+import { loadTaskDeclarationsFromGit } from '../tasks-directory.ts';
+import { loadWriteSetFromGit } from '../writeset.ts';
 import { readHookInput } from './read-stdin.ts';
+
+/**
+ * База сравнения для источника ограничений — тот же коммит, который уже служит базой для
+ * `git diff --name-only HEAD` ниже. Задавать иной base-коммит явно (env/CLI-параметр) для hook-а
+ * некуда: hook запускается автоматически, без интерактивного ввода, а `.claude/settings.json`
+ * (owner — lead) не в write scope этого фикса. `HEAD` резолвится в git-объект всегда, кроме
+ * репозитория без единого коммита, — в этом (единственном) случае ниже сработает fail-closed.
+ */
+const BASE_REF = 'HEAD';
 
 const git = (projectRoot: string, args: readonly string[]): string[] => {
   try {
@@ -51,10 +75,12 @@ const main = async (): Promise<void> => {
   ];
   const uniqueChanged = [...new Set(changed)];
 
-  const loaded = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
+  const loaded = loadWriteSetFromGit(projectRoot, BASE_REF);
 
   if (loaded.kind === 'invalid') {
-    fail(`Fail-closed: .claude/writeset.json повреждён: ${loaded.reason}`);
+    fail(
+      `Fail-closed: .claude/writeset.json недоступен из git-объекта ${BASE_REF}: ${loaded.reason}`,
+    );
     return;
   }
 
@@ -66,12 +92,15 @@ const main = async (): Promise<void> => {
     return;
   }
 
-  // loaded.kind === 'lead' — .claude/writeset.json отсутствует (в т.ч. удалён самой сессией).
-  // Task-сессия обязана быть покрыта картой задач итерации; иначе завершение блокируется.
-  const tasksResult = loadTaskDeclarations(`${projectRoot}/.claude/tasks`);
+  // loaded.kind === 'lead' — .claude/writeset.json отсутствует в git-объекте BASE_REF (в т.ч. никогда
+  // не был закоммичен, включая попытку подменить/удалить его в рабочем дереве — N2). Task-сессия
+  // обязана быть покрыта картой задач итерации; иначе завершение блокируется.
+  const tasksResult = loadTaskDeclarationsFromGit(projectRoot, BASE_REF);
 
   if (tasksResult.kind === 'invalid') {
-    fail(`Fail-closed: .claude/tasks/*.json повреждена: ${tasksResult.reason}`);
+    fail(
+      `Fail-closed: .claude/tasks/*.json недоступна из git-объекта ${BASE_REF}: ${tasksResult.reason}`,
+    );
     return;
   }
 
@@ -84,7 +113,13 @@ const main = async (): Promise<void> => {
     return;
   }
 
-  const report = checkOwnership(uniqueChanged, tasksResult.tasks, tasksResult.leadPaths);
+  // N1: leadPaths здесь не дают владения — только фиксируют нарушение (см. checkOwnership doc).
+  const report = checkOwnership(
+    uniqueChanged,
+    tasksResult.tasks,
+    tasksResult.leadPaths,
+    'task-session',
+  );
   if (report.problems.length > 0) {
     const lines = report.problems.map((problem) => `  - ${formatOwnershipProblem(problem)}`);
     fail(

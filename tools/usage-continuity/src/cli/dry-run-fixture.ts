@@ -1,7 +1,7 @@
 /**
- * Общий fixture двухпроцессного dry-run continuity harness (DEV-01, review m5).
- * Импортируется отдельно КАЖДЫМ из двух `node`-процессов (`dry-run-phase1.ts`,
- * `dry-run-phase2.ts`) — они не делят память, только checkpoint-файл на диске (сам предмет
+ * Общий fixture многопроцессного dry-run continuity harness (DEV-01, review m5, N9).
+ * Импортируется отдельно КАЖДЫМ из `node`-процессов (`dry-run-phase1.ts`, `dry-run-phase2.ts`,
+ * `dry-run-phase3.ts`) — они не делят память, только checkpoint-файл на диске (сам предмет
  * доказательства B3), поэтому эти константы должны совпадать между процессами, а не
  * передаваться через shared JS state.
  */
@@ -9,6 +9,9 @@ import type { RepoStatePort } from '../ports.ts';
 import type { Checkpoint, UsageWindowSample } from '../types.ts';
 
 export const TASK_ID = 'I00-T02-dry-run';
+
+/** Отдельная задача для ветки "оборванный resume" (N9) — не пересекается с TASK_ID. */
+export const TASK_ID_CRASH = 'I00-T02-dry-run-crash';
 
 /** Момент, когда provider обещает reset пятичасового окна. */
 export const RESET_AT = '2026-01-01T05:00:00.000Z';
@@ -56,6 +59,26 @@ export function buildSeedCheckpoint(): Checkpoint {
     usage_window_remaining_percent: 5,
     reported_reset_at: RESET_AT,
     checkpointed_at: PHASE1_NOW,
+  };
+}
+
+/**
+ * Seed checkpoint для ветки N9 "оборванный resume": уже в `waiting_for_usage_reset` на диске,
+ * как если бы phase 1 для этой (отдельной) задачи уже отработал. Строится напрямую, а не через
+ * `runContinuityLoop`, потому что предмет доказательства этой ветки — поведение
+ * `resumeFromCheckpoint` на СТАРТЕ, а не путь к `waiting_for_usage_reset`, который уже покрыт
+ * `dry-run-phase1.ts`.
+ */
+export function buildCrashSeedCheckpoint(): Checkpoint {
+  return {
+    ...buildSeedCheckpoint(),
+    task_id: TASK_ID_CRASH,
+    objective: 'dry-run: оборванный resume — action бросает после старта попытки (N9)',
+    next_exact_action: 'dry-run-crash-action',
+    decisions: [
+      'dry-run: N9 — action бросает после resume_attempted_at записан, до resume_completed_at',
+      'dry-run: следующий resumeFromCheckpoint обязан вернуть resume_incomplete, а не resume_conflict/progressed',
+    ],
   };
 }
 

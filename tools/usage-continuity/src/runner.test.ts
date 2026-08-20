@@ -434,7 +434,35 @@ describe('resumeFromCheckpoint — B3: межпроцессный resume', () =>
     expect(markedWriteIndex).toBeGreaterThanOrEqual(0);
   });
 
-  it('повторный resumeFromCheckpoint после отмеченной попытки: outcome=resume_conflict, action НЕ выполняется повторно', () => {
+  it('успешный resume: пишет resume_completed_at и resume_result вместе с resume_attempted_at (N9)', () => {
+    const { store, writes } = collectingStore(seed);
+    const { actions, calls } = collectingActions('ok');
+    const { scheduler } = collectingScheduler();
+
+    const result = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(result.outcome).toBe('progressed');
+    expect(calls).toEqual(['pnpm test:unit']);
+    expect(result.checkpoint.resume_attempted_at).toBeDefined();
+    expect(result.checkpoint.resume_completed_at).toBeDefined();
+    expect(result.checkpoint.resume_result).toBe('ok');
+
+    // Финальная запись в store несёт оба маркера — попытка ДОШЛА до конца, а не просто началась.
+    const lastWrite = writes[writes.length - 1];
+    expect(lastWrite?.resume_attempted_at).toBeDefined();
+    expect(lastWrite?.resume_completed_at).toBeDefined();
+    expect(lastWrite?.resume_result).toBe('ok');
+  });
+
+  it('повторный resumeFromCheckpoint после УСПЕШНО завершённой попытки: outcome=resume_already_completed, action НЕ выполняется повторно (N9)', () => {
     const { store } = collectingStore(seed);
     const { actions, calls } = collectingActions('ok');
     const { scheduler } = collectingScheduler();
@@ -449,6 +477,7 @@ describe('resumeFromCheckpoint — B3: межпроцессный resume', () =>
       scheduler,
     });
     expect(first.outcome).toBe('progressed');
+    expect(first.checkpoint.resume_completed_at).toBeDefined();
     expect(calls).toHaveLength(1);
 
     // Новый "процесс": та же store (тот же checkpoint на диске), свежие fakes.
@@ -463,19 +492,92 @@ describe('resumeFromCheckpoint — B3: межпроцессный resume', () =>
       scheduler,
     });
 
-    expect(second.outcome).toBe('resume_conflict');
-    expect(second.actionResult).toBeNull();
+    expect(second.outcome).toBe('resume_already_completed');
+    // Ранее вычисленный исход возвращается, а не теряется за null.
+    expect(second.actionResult).toBe('ok');
     expect(calls2).toEqual([]);
     // Действие суммарно выполнено ровно один раз между двумя "процессами".
     expect(calls).toHaveLength(1);
   });
 
-  it('resume, начатый до падения процесса (attempted_at уже стоит), не запускает action даже если repo state расходится', () => {
-    const alreadyAttempted: Checkpoint = {
+  it('оборванный resume: action бросает ПОСЛЕ старта попытки — checkpoint остаётся с resume_attempted_at, но без resume_completed_at (N9)', () => {
+    const { store, writes } = collectingStore(seed);
+    const crashingActions: ActionRunnerPort = {
+      run: () => {
+        throw new Error('simulated crash mid-action');
+      },
+    };
+    const { scheduler } = collectingScheduler();
+
+    expect(() =>
+      resumeFromCheckpoint({
+        taskId: 'I00-T02',
+        store,
+        telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+        clock: clockAtReset,
+        actions: crashingActions,
+        repoState: matchingRepoState,
+        scheduler,
+      }),
+    ).toThrow(/simulated crash mid-action/);
+
+    // Последняя запись на диске — со СТАРТОМ попытки, но БЕЗ отметки завершения.
+    const lastWrite = writes[writes.length - 1];
+    expect(lastWrite?.resume_attempted_at).toBeDefined();
+    expect(lastWrite?.resume_completed_at).toBeUndefined();
+  });
+
+  it('resume после оборванной попытки: outcome=resume_incomplete — ОТЛИЧИМ от resume_already_completed, action не запускается автоматически, next_exact_action виден в checkpoint (N9)', () => {
+    const { store, writes } = collectingStore(seed);
+    const crashingActions: ActionRunnerPort = {
+      run: () => {
+        throw new Error('simulated crash mid-action');
+      },
+    };
+    const { scheduler } = collectingScheduler();
+
+    expect(() =>
+      resumeFromCheckpoint({
+        taskId: 'I00-T02',
+        store,
+        telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+        clock: clockAtReset,
+        actions: crashingActions,
+        repoState: matchingRepoState,
+        scheduler,
+      }),
+    ).toThrow();
+
+    // Новый "процесс" видит на диске оборванную попытку и обязан вернуть отдельный исход.
+    const { actions: actions2, calls: calls2 } = collectingActions('ok');
+    const resumed = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions: actions2,
+      repoState: matchingRepoState,
+      scheduler,
+    });
+
+    expect(resumed.outcome).toBe('resume_incomplete');
+    expect(resumed.outcome).not.toBe('resume_already_completed');
+    expect(resumed.actionResult).toBeNull();
+    expect(calls2).toEqual([]);
+    expect(resumed.checkpoint.next_exact_action).toBe(seed.next_exact_action);
+    expect(resumed.checkpoint.resume_completed_at).toBeUndefined();
+    // resume_incomplete тоже не запускает store.write заново по этому пути (читает как есть).
+    expect(writes[writes.length - 1]?.resume_completed_at).toBeUndefined();
+  });
+
+  it('resume, начатый и УСПЕШНО завершённый до вызова (attempted_at и completed_at уже стоят), не запускает action даже если repo state расходится', () => {
+    const alreadyCompleted: Checkpoint = {
       ...seed,
       resume_attempted_at: '2026-08-20T12:00:00.000Z',
+      resume_completed_at: '2026-08-20T12:00:05.000Z',
+      resume_result: 'ok',
     };
-    const { store } = collectingStore(alreadyAttempted);
+    const { store } = collectingStore(alreadyCompleted);
     const { actions, calls } = collectingActions();
     const { scheduler } = collectingScheduler();
     const divergedRepoState: RepoStatePort = {
@@ -493,7 +595,35 @@ describe('resumeFromCheckpoint — B3: межпроцессный resume', () =>
       scheduler,
     });
 
-    expect(result.outcome).toBe('resume_conflict');
+    expect(result.outcome).toBe('resume_already_completed');
+    expect(result.actionResult).toBe('ok');
+    expect(calls).toEqual([]);
+  });
+
+  it('resume, начатый но НЕ завершённый до вызова (только attempted_at), не запускает action даже если repo state расходится', () => {
+    const onlyAttempted: Checkpoint = {
+      ...seed,
+      resume_attempted_at: '2026-08-20T12:00:00.000Z',
+    };
+    const { store } = collectingStore(onlyAttempted);
+    const { actions, calls } = collectingActions();
+    const { scheduler } = collectingScheduler();
+    const divergedRepoState: RepoStatePort = {
+      ...matchingRepoState,
+      headSha: () => 'anything-else',
+    };
+
+    const result = resumeFromCheckpoint({
+      taskId: 'I00-T02',
+      store,
+      telemetry: fixedTelemetry(sample(100, '2026-08-20T12:00:00.000Z')),
+      clock: clockAtReset,
+      actions,
+      repoState: divergedRepoState,
+      scheduler,
+    });
+
+    expect(result.outcome).toBe('resume_incomplete');
     expect(calls).toEqual([]);
   });
 });

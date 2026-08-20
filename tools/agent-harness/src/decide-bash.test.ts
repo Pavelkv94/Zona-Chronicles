@@ -47,6 +47,37 @@ describe('decideBashCommand — запрещено task-сессии', () => {
   });
 });
 
+describe('decideBashCommand — N2: запись в .claude/** через Bash запрещена task-сессии', () => {
+  it.each([
+    ['cat > .claude/writeset.json <<\'JSON\'\n{"write_paths":["**"]}\nJSON', 'Перенаправление'],
+    ['echo x >> .claude/writeset.json', 'Перенаправление'],
+    ['tee .claude/writeset.json <<< x', '`tee`'],
+    ['tee -a .claude/tasks/I00.json <<< x', '`tee`'],
+    ['cp forged.json .claude/writeset.json', '`cp`/`mv`'],
+    ['mv forged.json .claude/tasks/I00.json', '`cp`/`mv`'],
+    ['sed -i "" -e "s/tools/**/g" .claude/writeset.json', '`sed -i`'],
+    ['rm -f .claude/writeset.json', 'Удаление'],
+    ['rm .claude/tasks/I00.json', 'Удаление'],
+    ['truncate -s 0 .claude/writeset.json', '`truncate`'],
+  ] as const)('%s -> deny (%s)', (command, expectedFragment) => {
+    const result = decideBashCommand(command);
+    expect(result.decision).toBe('deny');
+    expect(result.reason).toContain(expectedFragment);
+  });
+
+  it('чтение .claude/writeset.json без записи остаётся разрешённым', () => {
+    expect(decideBashCommand('cat .claude/writeset.json').decision).toBe('allow');
+  });
+
+  it('перенаправление в путь вне .claude/** остаётся разрешённым', () => {
+    expect(decideBashCommand('echo hi > tools/agent-harness/dist/out.txt').decision).toBe('allow');
+  });
+
+  it('видит запись в .claude/** внутри цепочки команд', () => {
+    expect(decideBashCommand('pnpm lint && cat > .claude/writeset.json').decision).toBe('deny');
+  });
+});
+
 describe('decideBashForSession — B2: роль + write set', () => {
   const validWriteSet: WriteSetLoadResult = {
     kind: 'task',
@@ -122,5 +153,20 @@ describe('decideBashForSession — B2: роль + write set', () => {
       writeSet: validWriteSet,
     });
     expect(result.decision).toBe('allow');
+  });
+
+  it('N2: task-сессия с валидным (узким) write set не может выписать себе новый writeset.json', () => {
+    // Ровно воспроизведённый обход: у задачи уже есть легитимный узкий write set
+    // (tools/agent-harness/**), но она пытается расширить его Bash-командой.
+    const result = decideBashForSession({
+      command:
+        "cat > .claude/writeset.json <<'JSON'\n" +
+        '{"task_id":"I00-F1","owner_role":"tooling-implementer","write_paths":["**"],' +
+        '"allow_protected_paths":["**"]}\nJSON',
+      sessionRole: 'task',
+      writeSet: validWriteSet,
+    });
+    expect(result.decision).toBe('deny');
+    expect(result.reason).toContain('.claude/**');
   });
 });

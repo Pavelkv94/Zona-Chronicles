@@ -164,3 +164,80 @@ describe('applyLicensePolicy (M2/M3 end-to-end + m7 severity gating)', () => {
     expect(findings).toEqual([]);
   });
 });
+
+describe('parseLicensesJson — N5: a single entry can carry multiple installed versions', () => {
+  it("expands every version of a multi-version entry into a separate package (positive: real `pnpm licenses list --json` shape, e.g. this repo's ajv 6.15.0/8.20.0)", () => {
+    const raw = JSON.stringify({
+      MIT: [
+        {
+          name: 'ajv',
+          versions: ['6.15.0', '8.20.0'],
+          license: 'MIT',
+          paths: ['/node_modules/.pnpm/ajv@6.15.0', '/node_modules/.pnpm/ajv@8.20.0'],
+        },
+      ],
+    });
+    const result = parseLicensesJson(raw);
+    expect(result.kind).toBe('ok');
+    if (result.kind === 'ok') {
+      expect(result.packages).toEqual([
+        { name: 'ajv', version: '6.15.0', license: 'MIT' },
+        { name: 'ajv', version: '8.20.0', license: 'MIT' },
+      ]);
+    }
+  });
+
+  it('fails closed when versions is an empty array (negative: N5 fail-closed)', () => {
+    const raw = JSON.stringify({ MIT: [{ name: 'ajv', versions: [], license: 'MIT' }] });
+    expect(parseLicensesJson(raw).kind).toBe('invalid');
+  });
+
+  it('fails closed when the versions field is missing (negative: N5 fail-closed — was silently "unknown" before)', () => {
+    const raw = JSON.stringify({ MIT: [{ name: 'ajv', license: 'MIT' }] });
+    expect(parseLicensesJson(raw).kind).toBe('invalid');
+  });
+
+  it('fails closed when versions contains a non-string entry (negative: N5 fail-closed)', () => {
+    const raw = JSON.stringify({ MIT: [{ name: 'ajv', versions: ['1.0.0', 42], license: 'MIT' }] });
+    expect(parseLicensesJson(raw).kind).toBe('invalid');
+  });
+});
+
+describe('parseLicensesJson + partitionGraphs + applyLicensePolicy (N5 end-to-end)', () => {
+  it('checks every installed version of a multi-version PRODUCTION entry under the strict allowlist, not just the first (positive: N5 — old code only ever saw versions[0], so a second production-shipped version went completely unchecked; this repo has exactly this shape for process-warning, real-require and fast-uri)', () => {
+    const prodRaw = JSON.stringify({
+      'MPL-2.0': [{ name: 'weakcopyleft-pkg', versions: ['1.0.0', '2.0.0'], license: 'MPL-2.0' }],
+    });
+    const prodParsed = parseLicensesJson(prodRaw);
+    if (prodParsed.kind !== 'ok') throw new Error('test setup: parse failed');
+    const graphs = partitionGraphs({ production: prodParsed.packages, full: prodParsed.packages });
+    const findings = applyLicensePolicy(graphs, policy);
+    const flaggedPackages = findings.map((f) => f.package);
+    // MPL-2.0 is development-only-allowed, NOT production-allowed: every
+    // production-shipped version must be flagged as a dev-only-leak.
+    expect(flaggedPackages).toContain('weakcopyleft-pkg@1.0.0');
+    expect(flaggedPackages).toContain('weakcopyleft-pkg@2.0.0');
+  });
+
+  it('judges the production-present version of a package strictly even though another version of the same package is dev-only (positive: N5 acceptance requirement)', () => {
+    const prodRaw = JSON.stringify({
+      'MPL-2.0': [{ name: 'weakcopyleft-pkg', versions: ['8.20.0'], license: 'MPL-2.0' }],
+    });
+    const fullRaw = JSON.stringify({
+      'MPL-2.0': [{ name: 'weakcopyleft-pkg', versions: ['6.15.0', '8.20.0'], license: 'MPL-2.0' }],
+    });
+    const prodParsed = parseLicensesJson(prodRaw);
+    const fullParsed = parseLicensesJson(fullRaw);
+    if (prodParsed.kind !== 'ok' || fullParsed.kind !== 'ok')
+      throw new Error('test setup: parse failed');
+    const graphs = partitionGraphs({ production: prodParsed.packages, full: fullParsed.packages });
+    const findings = applyLicensePolicy(graphs, policy);
+    // The production-shipped version (8.20.0) is judged strictly: MPL-2.0 is not
+    // production-allowed, so it must be flagged as a dev-only-leak.
+    const productionLeak = findings.find((f) => f.package === 'weakcopyleft-pkg@8.20.0');
+    expect(productionLeak?.message).toMatch(/production-графе/);
+    // The genuinely dev-only version (6.15.0) is judged by the softer development
+    // allowlist, where MPL-2.0 is allowed — it must NOT be flagged.
+    expect(findings.some((f) => f.package === 'weakcopyleft-pkg@6.15.0')).toBe(false);
+  });
+});

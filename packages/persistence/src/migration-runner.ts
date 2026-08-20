@@ -228,7 +228,7 @@ export const DEFAULT_LOCK_TIMEOUT_MS = 5_000;
 
 /**
  * `statement_timeout` соединения миграции: верхняя граница на выполнение
- * одного SQL statement внутри `up`. 30с — с запасом покрывает baseline
+ * одного SQL statement из `migration.statements`. 30с — с запасом покрывает baseline
  * (create extension/table) и оставляет диагностируемую границу вместо
  * бесконечного зависания; доменные миграции I02A с большими backfill
  * обязаны передавать больший явный `statementTimeoutMs`.
@@ -308,7 +308,13 @@ function createPostgresMigrationExecutor(
     async applyMigration(migration, checksum) {
       return connection.transaction().execute(async (trx) => {
         const start = now();
-        await migration.up(trx);
+        // Единственный канал исполнения: `statements` по порядку объявления —
+        // это ровно то, от чего считается checksum (см. `migrations/types.ts`,
+        // N3 I00-F2). У `Migration` намеренно нет `up(db)`, поэтому здесь
+        // нечего вызывать, кроме этого цикла.
+        for (const statement of migration.statements) {
+          await sql.raw(statement).execute(trx);
+        }
         const durationMs = now().getTime() - start.getTime();
         await recordAppliedMigration(trx, {
           id: migration.id,

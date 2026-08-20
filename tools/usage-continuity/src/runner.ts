@@ -226,20 +226,35 @@ function collectResumeMismatches(checkpoint: Checkpoint, repoState: RepoStatePor
 }
 
 /**
- * Точка входа НОВОГО процесса, возобновляющего задачу по persisted wake (B3).
+ * Точка входа НОВОГО процесса, возобновляющего задачу по persisted wake (B3, N9).
  *
  * 1. `store.read(taskId)` — отсутствие checkpoint это явная ошибка (бросает Error), а не
  *    тихий старт с нуля.
- * 2. Если попытка resume уже отмечена (`resume_attempted_at` присутствует) — действие НЕ
- *    выполняется повторно, возвращается `outcome: 'resume_conflict'` (идемпотентность п.3).
+ * 2. Если попытка resume уже отмечена (`resume_attempted_at` присутствует), исход зависит от
+ *    того, зафиксировано ли завершение (`resume_completed_at`) — это два РАЗНЫХ, различимых
+ *    исхода (N9), а не один перегруженный `resume_conflict`:
+ *      - `resume_attempted_at` И `resume_completed_at` присутствуют -> попытка ДОШЛА до конца.
+ *        Action не выполняется повторно, `outcome: 'resume_already_completed'`,
+ *        `actionResult` возвращает ранее записанный `resume_result`.
+ *      - `resume_attempted_at` присутствует, `resume_completed_at` — НЕТ -> попытка НАЧАЛАСЬ и
+ *        ОБОРВАЛАСЬ (процесс, выполнявший `next_exact_action`, упал между стартом и записью
+ *        исхода). Action тоже не запускается автоматически — это не тот случай, где harness
+ *        вправе сам решить, что делать — но `outcome: 'resume_incomplete'` явно отличим от
+ *        успеха, а `checkpoint.next_exact_action` в результате точно говорит, что именно нужно
+ *        повторить, когда решение будет принято.
  * 3. Если телеметрия ещё не подтверждает reset (ни `now >= reported_reset_at`, ни recovered) —
  *    resume откладывается: wake переставляется, `outcome: 'waiting_for_reset'`, action не
  *    запускается.
  * 4. `validating_resume`: сверка repo state (m4). При расхождении — обновлённый checkpoint с
  *    описанием расхождения пишется В STORE ДО throw (evidence не теряется), только потом Error.
  * 5. При совпадении: `resume_attempted_at` пишется в checkpoint ДО запуска действия — это и есть
- *    персистентный маркер идемпотентности, переживающий падение процесса между wake и
- *    завершением действия.
+ *    персистентный маркер СТАРТА попытки, переживающий падение процесса между wake и
+ *    завершением действия. Если `actions.run()` бросает исключение (падение процесса), функция
+ *    НЕ перехватывает его и НЕ пишет `resume_completed_at` — на диске сознательно остаётся
+ *    checkpoint с "начатой, но не завершённой" попыткой, чтобы следующий resume её обнаружил
+ *    (см. п.2, `resume_incomplete`). Если `actions.run()` вернул `'ok'`/`'failed'` без
+ *    исключения, СРАЗУ ПОСЛЕ этого пишется `resume_completed_at` + `resume_result` — это и есть
+ *    маркер ИСХОДА попытки, отличающий "выполнено" от "оборвано".
  * 6. `store.archive(taskId)` НЕ вызывается здесь — только после подтверждённого внешним
  *    verify устойчивого Green, см. `archiveResumedCheckpoint`.
  */
@@ -258,8 +273,21 @@ export function resumeFromCheckpoint(input: ResumeFromCheckpointInput): ResumeFr
   }
 
   if (stored.resume_attempted_at !== undefined) {
+    if (stored.resume_completed_at !== undefined) {
+      // Попытка уже дошла до конца (успешно или с actionResult="failed" — в обоих случаях
+      // исход ИЗВЕСТЕН и зафиксирован). Повторный запуск действия не требуется и не выполняется.
+      return {
+        outcome: 'resume_already_completed',
+        finalState: 'in_progress',
+        checkpoint: stored,
+        actionResult: stored.resume_result ?? null,
+      };
+    }
+    // resume_attempted_at есть, resume_completed_at — нет: попытка стартовала и оборвалась
+    // (процесс упал между записью resume_attempted_at и записью исхода). Это отдельное,
+    // требующее решения состояние — НЕ тихий успех и НЕ автоматический повторный запуск.
     return {
-      outcome: 'resume_conflict',
+      outcome: 'resume_incomplete',
       finalState: 'validating_resume',
       checkpoint: stored,
       actionResult: null,
@@ -323,15 +351,35 @@ export function resumeFromCheckpoint(input: ResumeFromCheckpointInput): ResumeFr
     );
   }
 
-  // Персистентный маркер идемпотентности пишется ДО запуска действия (B3 п.3): падение
-  // процесса между этой записью и завершением action не приведёт к повторному запуску при
-  // следующем wake — следующий вызов resumeFromCheckpoint увидит resume_attempted_at и
-  // откажется выполнять действие повторно (outcome: 'resume_conflict').
+  // Персистентный маркер СТАРТА попытки пишется ДО запуска действия (B3 п.3, N9): падение
+  // процесса между этой записью и завершением action оставит на диске checkpoint с
+  // resume_attempted_at без resume_completed_at — следующий вызов resumeFromCheckpoint обязан
+  // распознать это как 'resume_incomplete', а не как успех.
   const marked: Checkpoint = { ...withTelemetry, resume_attempted_at: now.iso };
   input.store.write(marked);
 
+  // Если `actions.run()` бросает исключение здесь, выполнение НЕ доходит до записи
+  // resume_completed_at ниже — это намеренно: оборванная попытка обязана остаться различимой
+  // на диске (N9), а не молча выглядеть так же, как выполненная.
   const actionResult = input.actions.run(marked.next_exact_action);
-  return { outcome: 'progressed', finalState: 'in_progress', checkpoint: marked, actionResult };
+
+  // Маркер ИСХОДА попытки пишется СРАЗУ ПОСЛЕ того, как action вернул управление без
+  // исключения — независимо от того, 'ok' это или 'failed': оба случая означают, что попытка
+  // ДОШЛА до конца и её больше не нужно повторять автоматически.
+  const completedNow = requireInstant(input.clock.now(), 'ClockPort.now()');
+  const completed: Checkpoint = {
+    ...marked,
+    resume_completed_at: completedNow.iso,
+    resume_result: actionResult,
+  };
+  input.store.write(completed);
+
+  return {
+    outcome: 'progressed',
+    finalState: 'in_progress',
+    checkpoint: completed,
+    actionResult,
+  };
 }
 
 /**

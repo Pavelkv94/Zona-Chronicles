@@ -7,6 +7,13 @@ import { readFileSync } from 'node:fs';
  * wildcard-символы, а также любой `*` внутри пути — область обязана быть точной)
  * или с истёкшим `expiry` невалидно. `now` инъектируется вызывающей стороной:
  * чистая функция не читает системные часы напрямую.
+ *
+ * minor2 (review finding): для `check === 'dependencies'` scope обязан быть
+ * идентификатором конкретного ЭКЗЕМПЛЯРА — numeric advisory id (`"1096485"`, как
+ * в `pnpm audit --json`) или `package@version` (`"minimatch@3.0.4"`). Голое имя
+ * пакета (`"minimatch"`, без версии) подавляло бы ВСЕ его advisories, включая
+ * будущие, — то же blanket-подавление, что и M1, только по другой оси (версия,
+ * а не check/category). Предложение по ADR-008 в REVIEW.md требует `package@version`.
  */
 
 export const CHECK_NAMES = ['secrets', 'dependencies', 'licenses', 'static', 'no-llm'] as const;
@@ -50,6 +57,19 @@ const isCheckName = (value: unknown): value is CheckName =>
 
 /** Blanket scope: точный `*` или строка, состоящая только из wildcard-символов, или содержащая `*`. */
 const isBlanketScope = (scope: string): boolean => scope.includes('*') || scope.includes('?');
+
+/**
+ * minor2: для `check === 'dependencies'` — является ли scope идентификатором
+ * экземпляра (numeric advisory id или `package@version`), а не голым именем пакета.
+ */
+const isDependencyInstanceScope = (scope: string): boolean => {
+  if (/^[0-9]+$/.test(scope)) return true; // npm-audit advisory id, всегда числовой
+  const at = scope.lastIndexOf('@');
+  if (at <= 0) return false; // нет имени перед версией (и не допускает scope, начинающийся с "@")
+  const namePart = scope.slice(0, at);
+  const versionPart = scope.slice(at + 1);
+  return namePart.length > 0 && /^\d/.test(versionPart);
+};
 
 const parseDate = (value: string): Date | null => {
   const parsed = new Date(value);
@@ -96,6 +116,21 @@ const validateEntry = (
   if (typeof scope === 'string' && scope.length > 0 && isBlanketScope(scope)) {
     errors.push({
       message: `exceptions[${index}]: scope "${scope}" — blanket/wildcard scope запрещён, требуется точный путь/пакет/advisory`,
+      check,
+    });
+  }
+  if (
+    check === 'dependencies' &&
+    typeof scope === 'string' &&
+    scope.length > 0 &&
+    !isBlanketScope(scope) &&
+    !isDependencyInstanceScope(scope)
+  ) {
+    errors.push({
+      message:
+        `exceptions[${index}]: scope "${scope}" для check="dependencies" обязан быть ` +
+        `идентификатором экземпляра — advisory id (например "1096485") или package@version ` +
+        `(например "minimatch@3.0.4"); голое имя пакета подавило бы все его advisories, включая будущие (minor2)`,
       check,
     });
   }

@@ -1,8 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadTaskDeclarations } from './tasks-directory.ts';
+import { loadTaskDeclarations, loadTaskDeclarationsFromGit } from './tasks-directory.ts';
 
 let dir: string | undefined;
 
@@ -119,5 +120,86 @@ describe('loadTaskDeclarations', () => {
       }),
     );
     expect(loadTaskDeclarations(d).kind).toBe('invalid');
+  });
+});
+
+describe('loadTaskDeclarationsFromGit (N1/N2 review finding)', () => {
+  let repo: string | undefined;
+
+  const git = (args: readonly string[], cwd: string): void => {
+    execFileSync('git', [...args], { cwd, stdio: 'pipe' });
+  };
+
+  const makeRepo = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'agent-harness-tasks-git-'));
+    git(['init', '-q'], dir);
+    git(['config', 'user.email', 'test@example.com'], dir);
+    git(['config', 'user.name', 'Test'], dir);
+    repo = dir;
+    return dir;
+  };
+
+  afterEach(() => {
+    if (repo !== undefined) {
+      rmSync(repo, { recursive: true, force: true });
+      repo = undefined;
+    }
+  });
+
+  const commitTasksFile = (root: string, name: string, content: Record<string, unknown>): void => {
+    mkdirSync(join(root, '.claude', 'tasks'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'tasks', name), JSON.stringify(content));
+    git(['add', '.'], root);
+    git(['commit', '-q', '-m', 'lead: declare tasks map'], root);
+  };
+
+  it('читает и объединяет закоммиченные *.json', () => {
+    const root = makeRepo();
+    commitTasksFile(root, 'I00.json', {
+      lead_paths: ['docs/**'],
+      tasks: [{ task_id: 'I00-T02', owner_role: 'r', write_paths: ['tools/a/**'] }],
+    });
+    const result = loadTaskDeclarationsFromGit(root, 'HEAD');
+    expect(result.kind).toBe('loaded');
+    if (result.kind === 'loaded') {
+      expect(result.tasks.map((t) => t.task_id)).toEqual(['I00-T02']);
+      expect(result.leadPaths).toEqual(['docs/**']);
+    }
+  });
+
+  it('N1/N2: файл, добавленный ТОЛЬКО в рабочее дерево (без коммита), не учитывается', () => {
+    const root = makeRepo();
+    commitTasksFile(root, 'I00.json', {
+      lead_paths: ['docs/**'],
+      tasks: [{ task_id: 'I00-T02', owner_role: 'r', write_paths: ['tools/a/**'] }],
+    });
+    // Приём N2: task-сессия дописывает/расширяет карту задач в рабочем дереве без коммита.
+    writeFileSync(
+      join(root, '.claude', 'tasks', 'forged.json'),
+      JSON.stringify({ lead_paths: ['**'], tasks: [] }),
+    );
+    const result = loadTaskDeclarationsFromGit(root, 'HEAD');
+    expect(result.kind).toBe('loaded');
+    if (result.kind === 'loaded') expect(result.leadPaths).toEqual(['docs/**']);
+  });
+
+  it('отсутствующая директория задач в git-объекте — absent', () => {
+    const root = makeRepo();
+    git(['commit', '-q', '-m', 'empty', '--allow-empty'], root);
+    expect(loadTaskDeclarationsFromGit(root, 'HEAD').kind).toBe('absent');
+  });
+
+  it('fail-closed: ref не резолвится (нет ни одного коммита)', () => {
+    const root = makeRepo();
+    expect(loadTaskDeclarationsFromGit(root, 'HEAD').kind).toBe('invalid');
+  });
+
+  it('fail-closed на невалидный JSON, даже если он закоммичен', () => {
+    const root = makeRepo();
+    mkdirSync(join(root, '.claude', 'tasks'), { recursive: true });
+    writeFileSync(join(root, '.claude', 'tasks', 'broken.json'), '{not json');
+    git(['add', '.'], root);
+    git(['commit', '-q', '-m', 'broken'], root);
+    expect(loadTaskDeclarationsFromGit(root, 'HEAD').kind).toBe('invalid');
   });
 });

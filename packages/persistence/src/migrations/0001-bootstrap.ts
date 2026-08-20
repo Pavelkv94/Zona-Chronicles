@@ -1,4 +1,3 @@
-import { sql } from 'kysely';
 import type { Migration } from './types.ts';
 
 /**
@@ -29,15 +28,14 @@ const statements: readonly string[] = [CREATE_EXTENSION_POSTGIS, CREATE_SCHEMA_M
  *
  * `phase: 'expand'` — миграция только добавляет (журнал + extension), ничего
  * не ломает для не существующего пока reader/writer.
+ *
+ * Никакой `up()` здесь больше нет: общий runner (`migration-runner.ts`)
+ * исполняет `statements` по порядку — это и есть то, что фактически
+ * применяется, и то, от чего считается checksum (см. `migrations/types.ts`).
  */
 export const bootstrapMigration: Migration = {
   id: '0001',
   name: 'bootstrap',
   phase: 'expand',
   statements,
-  async up(db) {
-    for (const statement of statements) {
-      await sql.raw(statement).execute(db);
-    }
-  },
 };

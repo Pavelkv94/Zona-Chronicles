@@ -83,10 +83,35 @@ export const parseLicensesJson = (raw: string): LicensesParseResult => {
           reason: `pnpm licenses list --json: запись без поля name (лицензия "${licenseKey}")`,
         };
       }
-      const version =
-        Array.isArray(versions) && typeof versions[0] === 'string' ? versions[0] : 'unknown';
+      // N5 (review finding): `pnpm licenses list --json` группирует по пакету, но
+      // одна запись может нести НЕСКОЛЬКО установленных версий одновременно
+      // (`versions: [...]`, например когда и production-, и dev-зависимость тянут
+      // разные версии одного пакета). Раньше бралась только `versions[0]`, из-за
+      // чего (а) production-версия могла получить версионный "ключ" полного
+      // графа не той версии, что реально стоит в production, и по ключу
+      // `name@version` попасть в dev-only ведро с мягким allowlist, и (б) любая
+      // версия начиная со второй молча выпадала из проверки вообще (в этом
+      // репозитории — не менее 30 версий сразу в нескольких пакетах: `ajv`,
+      // `json-schema-traverse`, `process-warning`, `real-require`, `fast-uri` и
+      // 27 других записей полного графа). Fail-closed: `versions` обязано быть
+      // непустым массивом строк — молчаливого fallback на "unknown" больше нет,
+      // и КАЖДАЯ версия становится отдельным `LicensedPackage`.
+      if (
+        !Array.isArray(versions) ||
+        versions.length === 0 ||
+        !versions.every((version) => typeof version === 'string' && version.length > 0)
+      ) {
+        return {
+          kind: 'invalid',
+          reason:
+            `pnpm licenses list --json: запись "${name}" (лицензия "${licenseKey}") имеет ` +
+            `некорректное поле versions — ожидался непустой массив строк`,
+        };
+      }
       const license = typeof record['license'] === 'string' ? record['license'] : licenseKey;
-      packages.push({ name, version, license });
+      for (const version of versions) {
+        packages.push({ name, version, license });
+      }
     }
   }
   return { kind: 'ok', packages };

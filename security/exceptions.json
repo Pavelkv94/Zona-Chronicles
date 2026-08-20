@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "id": "exc-static-report-test-registry-url-literal",
+    "check": "static",
+    "scope": "tools/security-scan/src/report.test.ts",
+    "reason": "buildReport-тест для B1-диагностики (meta.registry_endpoint) намеренно использует реальный литерал публичного npm registry URL как assertion-данные — не сетевой вызов и не поставляемый код. До minor9 (review finding) этот же тест обходил static_policy.hardcoded-network-url склейкой строк ('https:/' + 'registry.npmjs.org/'), что и было находкой: контроль был настолько широким (ловил URL в любом тексте, включая комментарии), что провоцировал обход вместо явного, отслеживаемого исключения.",
+    "compensating_control": "Область — ровно один *.test.ts файл, не входящий в production-артефакт; production/dev license- и dependency-графы проверяются отдельно security:licenses/security:dependencies; литерал не используется как сетевой вызов внутри теста.",
+    "owner": "platform-security (lead, I00)",
+    "created_at": "2026-08-21",
+    "expiry": "2027-08-21"
+  }
+]

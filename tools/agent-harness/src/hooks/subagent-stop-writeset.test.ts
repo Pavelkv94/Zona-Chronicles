@@ -170,10 +170,92 @@ describe('subagent-stop-writeset.ts (real process)', () => {
 
   it('fail-closed на повреждённый .claude/writeset.json (task-сессия)', () => {
     const root = makeRepo();
+    // N2: источник теперь — git-объект HEAD, а не рабочее дерево, поэтому битый файл обязан быть
+    // закоммичен, чтобы hook вообще его увидел (некоммиченная порча не расширяет права — это и есть
+    // фикс N2 — но и не должна давать fail-closed за то, чего hook не видит).
     mkdirSync(join(root, '.claude'), { recursive: true });
     writeFileSync(join(root, '.claude', 'writeset.json'), '{not json');
+    commitAll(root, 'lead: declare broken write set');
     const result = runHook(root, { agent_id: 'agent-1' });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('Fail-closed');
+  });
+
+  describe('N1 (review, второй раунд): lead_paths — не владение task-сессии', () => {
+    it('удаление writeset.json + покрытие только lead_paths (README.md, .claude/**) — код 2', () => {
+      // Точное воспроизведение из отчёта: task-сессия меняет README.md и
+      // .claude/settings.autonomous.json, затем удаляет .claude/writeset.json. До фикса N1 это
+      // давало exit 0, потому что checkOwnership трактовала lead_paths как ownedBy: 'lead'.
+      const root = makeRepo();
+      writeWriteSet(root, {
+        task_id: 'I00-F1',
+        owner_role: 'tooling-implementer',
+        write_paths: ['tools/agent-harness/**'],
+      });
+      writeTasksFile(root, 'I00.json', {
+        iteration_id: 'I00',
+        lead_paths: ['README.md', '.claude/**'],
+        tasks: [
+          {
+            task_id: 'I00-F1',
+            owner_role: 'tooling-implementer',
+            write_paths: ['tools/agent-harness/**'],
+          },
+        ],
+      });
+      writeFileSync(join(root, 'README.md'), 'изменено task-сессией\n');
+      mkdirSync(join(root, '.claude'), { recursive: true });
+      writeFileSync(join(root, '.claude', 'settings.autonomous.json'), '{"tampered":true}');
+
+      rmSync(join(root, '.claude', 'writeset.json'));
+
+      const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('README.md');
+    });
+  });
+
+  describe('N2 (review, второй раунд): источник — git-объект HEAD, не рабочее дерево', () => {
+    it('подмена .claude/writeset.json в рабочем дереве (без коммита) не расширяет write_paths', () => {
+      // Точное воспроизведение: task-сессия выписывает себе {"write_paths":["**"],
+      // "allow_protected_paths":["**"]} через Bash-редирект (здесь эмулируется прямой правкой
+      // рабочего дерева, т.к. слой decide-bash — отдельный, PreToolUse-контроль). До фикса N2 hook
+      // читал этот файл с диска и доверял ему; после — читает git-объект HEAD.
+      const root = makeRepo();
+      writeWriteSet(root, {
+        task_id: 'I00-F1',
+        owner_role: 'tooling-implementer',
+        write_paths: ['tools/agent-harness/**'],
+      });
+      writeFileSync(join(root, 'CLAUDE.md'), 'изменено вне declared write set\n');
+
+      // Подмена рабочего дерева без коммита — тот же эффект, что у `cat > .claude/writeset.json`.
+      writeFileSync(
+        join(root, '.claude', 'writeset.json'),
+        JSON.stringify({
+          task_id: 'I00-F1',
+          owner_role: 'tooling-implementer',
+          write_paths: ['**'],
+          allow_protected_paths: ['**'],
+        }),
+      );
+
+      const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('CLAUDE.md');
+    });
+
+    it('легитимная работа внутри write set остаётся кодом 0 (регрессия)', () => {
+      const root = makeRepo();
+      writeWriteSet(root, {
+        task_id: 'I00-F1',
+        owner_role: 'tooling-implementer',
+        write_paths: ['tools/agent-harness/**'],
+      });
+      writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 7;\n');
+      const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+    });
   });
 });

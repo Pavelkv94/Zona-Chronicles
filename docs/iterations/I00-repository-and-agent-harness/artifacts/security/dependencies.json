@@ -1,0 +1,16 @@
+{
+  "check": "dependencies",
+  "status": "pass",
+  "findings": [],
+  "suppressed": [],
+  "policy_version": "0.1.0-i00-skeleton",
+  "generated_at": "2026-08-20T22:48:37.529Z",
+  "meta": {
+    "registry_endpoint": "https://registry.npmjs.org/",
+    "audit_report_format": "npm-audit-v1 (top-level \"advisories\"/\"metadata\" keys)",
+    "liveness": {
+      "probe": "live",
+      "fixture_advisory_count": 4
+    }
+  }
+}
