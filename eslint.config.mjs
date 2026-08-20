@@ -10,25 +10,70 @@ import globals from 'globals';
  */
 const nondeterminismRestrictions = [
   {
-    selector: "MemberExpression[object.name='Date'][property.name='now']",
-    message: 'SIM-01: используйте инъектированный Clock port вместо Date.now().',
+    selector: "MemberExpression[object.name='Date'][property.name=/^(now|parse|UTC)$/]",
+    message: 'SIM-01: используйте инъектированный Clock port вместо Date.now/Date.parse/Date.UTC.',
   },
   {
-    selector: "NewExpression[callee.name='Date']",
-    message: 'SIM-01: используйте инъектированный Clock port вместо new Date().',
+    // `new Date(iso)` детерминирован и разрешён; запрещено только чтение системных часов.
+    selector: "NewExpression[callee.name='Date'][arguments.length=0]",
+    message: 'SIM-01: `new Date()` читает системные часы; берите world time из Clock port.',
   },
   {
     selector: "MemberExpression[object.name='Math'][property.name='random']",
     message: 'SIM-01: используйте инъектированный RandomSource port вместо Math.random().',
   },
   {
-    selector: "MemberExpression[object.name='process'][property.name='env']",
-    message: 'ADR-003: домен не читает process.env; конфигурация приходит через Ruleset/ports.',
+    selector: "MemberExpression[object.name='process']",
+    message:
+      'ADR-003: домен не обращается к process (env, hrtime, argv); конфигурация приходит через Ruleset/ports.',
   },
   {
     selector: "MemberExpression[object.name='performance'][property.name='now']",
     message: 'SIM-01: wall clock запрещён в каноническом ядре.',
   },
+  {
+    selector: "MemberExpression[object.name='crypto']",
+    message:
+      'SIM-01: crypto.randomUUID/getRandomValues недетерминированы; используйте IdFactory и RandomSource ports.',
+  },
+  {
+    selector: "CallExpression[callee.name='fetch']",
+    message:
+      'ADR-003: сеть в каноническом ядре запрещена. `fetch` — глобал и не ловится запретом импорта.',
+  },
+  {
+    selector: "MemberExpression[object.name='Intl']",
+    message: 'SIM-01: locale-зависимое поведение не должно влиять на канонический результат.',
+  },
+  {
+    selector:
+      'MemberExpression[property.name=/^(toLocaleString|toLocaleDateString|toLocaleTimeString|toLocaleLowerCase|toLocaleUpperCase|localeCompare)$/]',
+    message:
+      'SIM-01: locale-зависимые форматирование и сравнение меняют результат между машинами; используйте явные детерминированные функции.',
+  },
+  {
+    selector: 'TSEnumDeclaration',
+    message: 'ADR-002: TypeScript enum запрещён, используйте union of literals + const map.',
+  },
+  {
+    selector: 'TSModuleDeclaration[kind="namespace"]',
+    message: 'ADR-002: runtime namespaces запрещены.',
+  },
+  {
+    selector: 'Decorator',
+    message: 'ADR-002: decorators запрещены.',
+  },
+];
+
+/** Глобалы, которых каноническое ядро не должно касаться напрямую (ADR-003, SIM-01). */
+const nondeterminismGlobals = [
+  { name: 'fetch', message: 'ADR-003: сеть в каноническом ядре запрещена.' },
+  { name: 'XMLHttpRequest', message: 'ADR-003: сеть в каноническом ядре запрещена.' },
+  { name: 'WebSocket', message: 'ADR-003: сеть в каноническом ядре запрещена.' },
+  { name: 'crypto', message: 'SIM-01: используйте IdFactory и RandomSource ports.' },
+  { name: 'Intl', message: 'SIM-01: locale не должна влиять на канонический результат.' },
+  { name: 'process', message: 'ADR-003: конфигурация приходит через Ruleset/ports.' },
+  { name: 'performance', message: 'SIM-01: wall clock запрещён в каноническом ядре.' },
 ];
 
 /** Пакеты-адаптеры, запрещённые к импорту из ядра (ADR-002, ADR-003). */
@@ -150,22 +195,27 @@ export default tseslint.config(
     // Каноническое ядро: дополнительные детерминистские запреты.
     files: ['packages/domain/**/*.ts', 'packages/simulation/**/*.ts', 'packages/contracts/**/*.ts'],
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        ...nondeterminismRestrictions,
-        {
-          selector: 'TSEnumDeclaration',
-          message: 'ADR-002: TypeScript enum запрещён.',
-        },
-        {
-          selector: 'TSModuleDeclaration[kind="namespace"]',
-          message: 'ADR-002: runtime namespaces запрещены.',
-        },
-      ],
+      'no-restricted-syntax': ['error', ...nondeterminismRestrictions],
+      'no-restricted-globals': ['error', ...nondeterminismGlobals],
       'no-restricted-imports': [
         'error',
         {
           patterns: [...adapterImportRestrictions.patterns, ...llmImportRestrictions.patterns],
+        },
+      ],
+    },
+  },
+  {
+    // Приложения читают окружение только через валидируемый allowlist в собственном config.ts.
+    files: ['apps/*/src/**/*.ts'],
+    ignores: ['apps/*/src/config.ts', 'apps/*/src/config.test.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "MemberExpression[object.name='process'][property.name='env']",
+          message:
+            'process.env читается только в config.ts приложения, где есть allowlist и валидация (§12 03_TECHNICAL_DESIGN).',
         },
       ],
     },

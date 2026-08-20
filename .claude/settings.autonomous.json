@@ -13,7 +13,15 @@
       "Write(./.env.*)",
       "Bash(curl:*)",
       "Bash(wget:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm install:*)",
+      "Bash(npm install:*)",
+      "Bash(npm i:*)",
+      "Bash(yarn add:*)",
+      "Bash(git merge:*)",
+      "Bash(git rebase:*)",
+      "Bash(git reset --hard:*)"
     ]
   },
   "sandbox": {
@@ -26,7 +34,7 @@
       "allowWrite": ["."]
     },
     "network": {
-      "allowedDomains": ["registry.npmjs.org", "*.npmjs.org"]
+      "allowedDomains": []
     }
   }
 }

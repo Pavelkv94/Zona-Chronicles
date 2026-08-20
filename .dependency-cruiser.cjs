@@ -25,47 +25,55 @@ module.exports = {
       severity: 'error',
       comment: 'packages/contracts не импортирует внутренние пакеты приложения (ADR-002).',
       from: { path: '^packages/contracts/' },
-      to: { path: '^(packages/(?!contracts/)|apps/|tools/)' },
+      to: { path: '^(packages/(?!contracts/)|apps/|tools/|scripts/|tests/)' },
     },
     {
       name: 'domain-depends-on-contracts-only',
       severity: 'error',
       comment: 'packages/domain зависит только от contracts (ADR-003).',
       from: { path: '^packages/domain/' },
-      to: { path: '^(packages/(?!contracts/|domain/)|apps/|tools/)' },
+      to: { path: '^(packages/(?!contracts/|domain/)|apps/|tools/|scripts/|tests/)' },
     },
     {
       name: 'simulation-depends-on-contracts-and-domain',
       severity: 'error',
       from: { path: '^packages/simulation/' },
-      to: { path: '^(packages/(?!contracts/|domain/|simulation/)|apps/|tools/)' },
+      to: { path: '^(packages/(?!contracts/|domain/|simulation/)|apps/|tools/|scripts/|tests/)' },
     },
     {
       name: 'persistence-does-not-import-simulation',
       severity: 'error',
       comment: 'Persistence не дублирует доменные правила и не тянет планировщик.',
       from: { path: '^packages/persistence/' },
-      to: { path: '^(packages/(simulation|projections|representation)/|apps/)' },
+      to: { path: '^(packages/(simulation|projections|representation)/|apps/|scripts/)' },
     },
     {
       name: 'representation-reads-projections-only',
       severity: 'error',
       comment: 'ADR-005: representation работает поверх contracts и read-only projections.',
       from: { path: '^packages/representation/' },
-      to: { path: '^(packages/(domain|simulation|persistence|testkit)/|apps/)' },
+      to: { path: '^(packages/(domain|simulation|persistence|testkit)/|apps/|scripts/)' },
     },
     {
       name: 'content-is-data-only',
       severity: 'error',
       comment: 'packages/content — входные данные, а не исполняемая логика.',
       from: { path: '^packages/content/' },
-      to: { path: '^(packages/(?!content/)|apps/|tools/)' },
+      to: { path: '^(packages/(?!content/)|apps/|tools/|scripts/|tests/)' },
     },
     {
       name: 'packages-do-not-depend-on-apps',
       severity: 'error',
       from: { path: '^packages/' },
       to: { path: '^apps/' },
+    },
+    {
+      name: 'packages-do-not-depend-on-scripts-or-tests',
+      severity: 'error',
+      comment:
+        'scripts/ и tests/ не являются продуктовым кодом и не могут быть маршрутом обхода границ.',
+      from: { path: '^packages/' },
+      to: { path: '^(scripts/|tests/)' },
     },
     {
       name: 'packages-do-not-depend-on-tools',
@@ -79,9 +87,11 @@ module.exports = {
       severity: 'error',
       comment: 'ADR-003: домен и симуляция не знают о БД, HTTP и логгере.',
       from: { path: `^${core}/` },
+      // Матчим и резолвленный путь в node_modules, и голое имя модуля: незаявленная
+      // зависимость не резолвится (dependencyTypes: unknown), и ограничение по типу
+      // делало это правило инертным ровно в самом опасном случае.
       to: {
-        dependencyTypes: ['npm', 'npm-dev', 'npm-optional', 'npm-peer'],
-        path: '^(fastify|@fastify|kysely|pg|pino|next|react|maplibre-gl)',
+        path: '(^|node_modules/)(@fastify/|(fastify|kysely|pg|pino|next|react|maplibre-gl)($|/))',
       },
     },
     {
@@ -90,8 +100,16 @@ module.exports = {
       comment: 'ADR-006: до Gate E в репозитории нет LLM SDK.',
       from: {},
       to: {
-        path: '^(@anthropic-ai|openai|@google/(generative-ai|genai)|cohere-ai|@mistralai|ollama|langchain|@langchain|llamaindex|@huggingface)',
+        path: '(^|node_modules/)(@anthropic-ai/|@google/(generative-ai|genai)|@mistralai/|@langchain/|@huggingface/|(openai|cohere-ai|ollama|langchain|llamaindex)($|/))',
       },
+    },
+    {
+      name: 'no-unresolvable',
+      severity: 'error',
+      comment:
+        'Нерезолвимый импорт означает незаявленную зависимость: без этого правила запреты по имени модуля молча не срабатывают.',
+      from: {},
+      to: { couldNotResolve: true },
     },
     {
       name: 'no-deprecated-core',
@@ -104,7 +122,7 @@ module.exports = {
     doNotFollow: { path: 'node_modules' },
     exclude: { path: '(^|/)(node_modules|dist|coverage|\\.turbo)/' },
     tsPreCompilationDeps: true,
-    tsConfig: { fileName: 'tsconfig.base.json' },
+    tsConfig: { fileName: 'tsconfig.depcruise.json' },
     enhancedResolveOptions: {
       exportsFields: ['exports'],
       conditionNames: ['import', 'require', 'node', 'default', 'types'],

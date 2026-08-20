@@ -28,7 +28,8 @@
     "docker-compose.yml",
     "AGENTS.md",
     "CLAUDE.md",
-    "README.md"
+    "README.md",
+    "tsconfig.depcruise.json"
   ],
   "tasks": [
     {

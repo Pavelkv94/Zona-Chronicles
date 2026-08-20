@@ -1,0 +1,23 @@
+{
+  "//": "Только для boundaries:check. Рабочие сборки резолвят @zona/* через dist по project references; dependency-cruiser обязан видеть рёбра между пакетами, поэтому здесь они отображаются на исходники.",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@zona/contracts": ["packages/contracts/src/index.ts"],
+      "@zona/domain": ["packages/domain/src/index.ts"],
+      "@zona/simulation": ["packages/simulation/src/index.ts"],
+      "@zona/persistence": ["packages/persistence/src/index.ts"],
+      "@zona/projections": ["packages/projections/src/index.ts"],
+      "@zona/representation": ["packages/representation/src/index.ts"],
+      "@zona/content": ["packages/content/src/index.ts"],
+      "@zona/testkit": ["packages/testkit/src/index.ts"],
+      "@zona/agent-harness": ["tools/agent-harness/src/index.ts"],
+      "@zona/usage-continuity": ["tools/usage-continuity/src/index.ts"],
+      "@zona/security-scan": ["tools/security-scan/src/index.ts"]
+    }
+  }
+}

@@ -16,3 +16,8 @@ allowBuilds:
   cpu-features: false
   protobufjs: false
   ssh2: false
+
+# Общие версии, которые обязаны совпадать между contracts, api и будущими потребителями.
+# Иначе TypeBox-схемы и type provider разъезжаются по версиям (риск, зафиксированный на review I00).
+catalog:
+  '@sinclair/typebox': 0.34.52

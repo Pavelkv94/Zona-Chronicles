@@ -24,7 +24,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   '@zona/representation': ['@zona/contracts', '@zona/projections'],
   '@zona/content': [],
   '@zona/testkit': ['@zona/contracts', '@zona/domain'],
-  '@zona/api': ['@zona/contracts', '@zona/projections', '@zona/persistence'],
+  '@zona/api': ['@zona/contracts', '@zona/projections'],
   '@zona/worker': [
     '@zona/contracts',
     '@zona/domain',

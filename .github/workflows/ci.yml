@@ -54,6 +54,12 @@ jobs:
       - name: Continuity harness dry-run (DEV-01)
         run: pnpm continuity:dry-run
 
+      # DEV-02: контроль владения на уровне результата переживает порчу session-level
+      # настроек агента, поэтому повторяется вне агентной сессии.
+      - name: Task ownership vs declared write sets
+        if: github.event_name == 'pull_request'
+        run: pnpm ownership:check .claude/tasks/I00.json "${{ github.event.pull_request.base.sha }}"
+
       - name: Upload machine-readable reports
         if: always()
         uses: actions/upload-artifact@v5
