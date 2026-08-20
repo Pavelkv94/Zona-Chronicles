@@ -1,34 +1,125 @@
-# Claude Code instructions
+# Claude Code instructions — «Живая Зона»
 
-Этот workspace — нормативная design/implementation documentation проекта «Живая Зона», а не исполняемый code repository. Перед изменением scope полностью прочитать `AGENTS.md`, `00_README.md` и перечисленные там нормативные документы. Не отмечать implementation backlog выполненным без кода и test evidence из будущего репозитория.
+Этот репозиторий содержит нормативную документацию (`docs/`) **и** исполняемый код прототипа.
+Этот файл — контекст модели, а не security boundary и не acceptance evidence. Доказательством
+являются requirement IDs, Red/Green output, CI/replay/invariant evidence, независимый review и
+решение gate из [10_ITERATION_MASTER_PLAN](docs/10_ITERATION_MASTER_PLAN.md). Критичные
+ограничения дублируются permissions/hooks (`.claude/`), lint/import rules, DB grants и CI (ADR-008).
 
-Этот файл не является гарантией качества и не считается acceptance evidence: он задаёт контекст модели, а не исполняемый control. Качество принимается только по requirement IDs, Red/Green output, CI/replay/invariant evidence, независимому review и решению gate из `10_ITERATION_MASTER_PLAN.md`. Критичные ограничения будущего code repository обязаны дублироваться permissions/sandbox/hooks, lint/import rules, DB grants/constraints и CI по ADR-008; ответ агента «правило соблюдено» доказательством не является.
+## Команды
 
-Постоянные правила:
+| Задача              | Команда                                                                                                   |
+| ------------------- | --------------------------------------------------------------------------------------------------------- |
+| Установка (frozen)  | `pnpm install --frozen-lockfile`                                                                          |
+| Полный быстрый gate | `pnpm verify`                                                                                             |
+| Полный gate с БД    | `pnpm verify:full` (нужен запущенный Docker)                                                              |
+| Формат / lint       | `pnpm format:check`, `pnpm lint`                                                                          |
+| Границы пакетов     | `pnpm boundaries:check`                                                                                   |
+| Типы                | `pnpm typecheck`                                                                                          |
+| Тесты               | `pnpm test:unit`, `pnpm test:property`, `pnpm test:contract`, `pnpm test:integration`, `pnpm test:replay` |
+| Security            | `pnpm security:all`                                                                                       |
+| Continuity dry-run  | `pnpm continuity:dry-run`, `pnpm continuity:capability-check`                                             |
+| Локальная БД        | `docker compose up -d postgres`                                                                           |
 
-- пользователь только наблюдает canonical world;
-- replay/resimulation детерминированы для одинаковых snapshot/seed, immutable rules/content/schema bundles и qualified runtime profile;
-- fact, claim, observer signal и representation не смешиваются;
-- до Gate E запрещены runtime LLM SDK, provider keys/accounts, prompts, embeddings, generation queues и model-specific persistence;
-- документы проекта писать по-русски; technical identifiers могут быть английскими;
-- до письменного IP-разрешения использовать только оригинальный/нейтральный контент;
-- менять product/spec до contracts/plan/backlog и сохранять Obsidian wiki links.
+Node фиксирован в `.nvmrc` (24.x), package manager — в поле `packageManager`.
 
-Перед правкой назвать observable behavior и requirement ID из `11_REQUIREMENTS_TRACEABILITY.md`. Если новый behavior не имеет ID, сначала обновить нормативный source и traceability, затем downstream contracts/ADR/plan/backlog. Не ослаблять threshold/test/gate ради зелёного статуса; любое исключение имеет точную область, owner, причину и expiry.
+## Архитектурные границы (ADR-002, ADR-003)
 
-Для изменений architecture/security/determinism дополнительно проверить ADR-008 и разделы 7/11–12 `03_TECHNICAL_DESIGN.md`: observer snapshot не равен canonical snapshot; runtime/serialization/rules-content bundles входят в deterministic profile; admin/worker/migration/query roles разделены; release требует migration/restore/security evidence.
+```text
+contracts <- domain <- simulation
+     ^          ^           ^
+ api/web   persistence   worker/cli
+     ^          ^           |
+     └──── projections <────┘
+representation -> contracts + read-only projections
+```
 
-## Обязательное продолжение после пятичасового usage limit
+- `packages/domain` и `packages/simulation` не импортируют Fastify, Kysely, `pg`, сеть,
+  файловую систему, `process.env`, `Date.now()`, `Math.random()`, `new Date()`;
+  время, случайность, ID и коэффициенты приходят через порты `Clock`, `RandomSource`,
+  `IdFactory`, `Ruleset`;
+- `packages/contracts` не импортирует внутренние пакеты приложения;
+- `packages/content` — данные, не логика; `tools/**` — dev harness, продукт от него не зависит;
+- публичный API read-only; observer path не читает канонические таблицы.
 
-Пятичасовое usage window Anthropic не является завершением задачи, `blocked` или поводом сокращать acceptance scope.
+Границы исполняются `pnpm boundaries:check` и `pnpm lint`, а не доверием.
 
-1. Использовать только provider/platform telemetry пятичасового окна; не путать её с context window или token estimate.
-2. При остатке `<= 2%` не начинать новый subtask, merge, migration или долгий test. Обновить `.claude/checkpoints/<task-id>.md`.
-3. При остатке `<= 1%` завершить только безопасный checkpoint и остановить новые model calls до reset. Не объявлять задачу завершённой.
-4. Checkpoint обязан содержать objective, iteration/task ID, plan status, branch/worktree, base/HEAD SHA, dirty/changed files, свои commits, последний Red/Green output, незавершённые commands/processes, решения/риски и одну точную следующую команду/проверку.
-5. Orchestrator/runner обязан поставить внешний wake/resume на reported reset time + safety margin. Ожидание выполняется harness-ом без расхода model calls; нельзя держать активный ответ в busy-wait.
-6. После reset автоматически возобновить тот же task/session из checkpoint, сначала сверить branch/HEAD/diff/process state и повторить последний незавершённый test, затем продолжить план.
-7. Нельзя во время checkpoint делать merge/push, скрытый `stash`, destructive reset, ослаблять тесты или создавать видимость завершения.
-8. Если среда не предоставляет telemetry, scheduled wake или session resume, записать `LIMIT_AUTOCONTINUE_UNAVAILABLE` в checkpoint и вернуть управление внешнему orchestrator-у. Для автономного workflow это blocker I00: нельзя обещать автоматическое продолжение, пока harness не реализован и не прошёл dry-run.
+## Постоянные правила продукта
 
-Точный protocol и acceptance описаны в разделе «Непрерывность при пятичасовом usage window» файла `08_TDD_AND_AGENT_WORKFLOW.md` и в I00 `10_ITERATION_MASTER_PLAN.md`.
+- пользователь только наблюдает canonical world; публичные API не управляют миром;
+- canonical state меняется только валидированными командами/событиями;
+- replay детерминирован для одинаковых snapshot/seed, immutable rules/content/schema bundles
+  и qualified runtime profile;
+- fact, knowledge claim, observer signal и representation — разные слои (ADR-005);
+  текст никогда не является источником факта;
+- знание не появляется без provenance;
+- до Gate E запрещены runtime LLM SDK, provider keys, prompts, embeddings, generation queues
+  и model-specific persistence (ADR-006);
+- до письменного IP-разрешения — только оригинальный/нейтральный контент;
+- документы проекта пишутся по-русски; technical identifiers могут быть английскими.
+
+## Обязательный рабочий цикл
+
+1. Назвать наблюдаемое поведение и requirement ID из
+   [11_REQUIREMENTS_TRACEABILITY](docs/11_REQUIREMENTS_TRACEABILITY.md).
+   Нет ID — сначала обновить нормативный источник и трассировку.
+2. Заморозить contracts и file ownership.
+3. **Red** — маленький тест падает по ожидаемой причине (записать точный вывод).
+4. **Green** — минимальная реализация без будущих абстракций.
+5. **Refactor** — убрать дублирование при зелёных тестах.
+6. Независимый review; затем полный gate и решение итерации.
+
+Запрещено без отдельного change request: менять замороженные acceptance-ожидания, использовать
+`.skip`/`.only`/retry, снижать property runs или coverage, обновлять golden без причинного
+объяснения, мокать тестируемое поведение, удалять или ослаблять существующие assertions.
+
+Тест меняется только вместе с объяснением изменившегося поведения в `PLAN.md` итерации —
+никогда ради зелёного статуса.
+
+## Роли и владение
+
+Orchestrator/lead владеет: iteration plan, contracts до freeze, root configs, `pnpm-lock.yaml`,
+установкой зависимостей, порядком миграций, назначением write paths, интеграцией веток и
+финальным gate. Реализация делегируется subagents из `.claude/agents/` (Sonnet), архитектурные
+и контрактные роли — Opus (ADR-007). Implementer не принимает собственную работу.
+
+Задача субагента объявляет write set в `.claude/writeset.json` (см. `.claude/templates/`).
+Записи вне него и в protected paths блокируются hook-ами; при завершении задачи фактический
+`git diff` сверяется с write set.
+
+## Definition of Done
+
+Полный список — §13 [08_TDD_AND_AGENT_WORKFLOW](docs/08_TDD_AND_AGENT_WORKFLOW.md). Минимум:
+acceptance-критерии исполняемы, тест наблюдался красным, happy path и отказ выражены событиями,
+коэффициенты в versioned ruleset, схемы версионированы и валидируются в runtime, replay и
+идемпотентность не нарушены, миграция протестирована на пустой и существующей БД, новых часов/
+случайности/сети/env в домене нет, документация/ADR обновлены, полный gate зелёный, независимый
+reviewer не нашёл blocker, diff ограничен заявленным scope.
+
+## Непрерывность при пятичасовом usage window (DEV-01)
+
+Исчерпание окна — техническая пауза, а не `complete`, `blocked` или повод сократить scope.
+
+```text
+remaining > 2%  -> обычная работа
+remaining <= 2% -> checkpoint_only: не начинать новый task/merge/долгий test
+remaining <= 1% -> waiting_for_usage_reset: только атомарный checkpoint и безопасная остановка
+usage reset     -> validating_resume -> in_progress
+```
+
+Порог определяется только provider telemetry пятичасового окна (не context window и не оценка
+токенов). При `<= 2%` создаётся/обновляется `.claude/checkpoints/<task-id>.md` со всеми
+обязательными полями. При `<= 1%` запрещены новый model call, subagent, установка зависимостей,
+merge/rebase/push, скрытый stash, destructive reset, обновление golden и ослабление gate.
+Ожидание и возобновление выполняет внешний runner по `reported_reset_at + safety_margin`.
+Если telemetry, persisted wake или session resume недоступны — записать
+`LIMIT_AUTOCONTINUE_UNAVAILABLE` и вернуть управление orchestrator-у, не обещая автопродолжение.
+
+Протокол и acceptance: §9 `08_TDD_AND_AGENT_WORKFLOW`, I00 в `10_ITERATION_MASTER_PLAN`.
+
+## Что читать перед изменением scope
+
+`docs/00_README.md` (приоритет документов), `docs/07_MVP_MECHANICS_SPEC.md`,
+`docs/09_EVENT_AND_COMMAND_CONTRACTS.md`, `docs/06_ARCHITECTURE_DECISIONS.md`,
+`docs/10_ITERATION_MASTER_PLAN.md`, `docs/11_REQUIREMENTS_TRACEABILITY.md`,
+`docs/13_WORLD_SYSTEMS_SPEC.md`. При конфликте действует приоритет из `00_README.md`.

@@ -1,0 +1,13 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+  - 'tools/*'
+
+# Lifecycle scripts зависимостей — исполняемый код (ADR-008).
+# Решение по каждому пакету принимается явно; молчаливого «игнора» быть не должно.
+allowBuilds:
+  esbuild: true
+  turbo: true
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

@@ -1,0 +1,32 @@
+{
+  "name": "@zona/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Fastify read-only observer API и SSE.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
+    "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "dependencies": {
+    "@zona/contracts": "workspace:*",
+    "@zona/projections": "workspace:*",
+    "@zona/persistence": "workspace:*",
+    "fastify": "5.12.1",
+    "@fastify/type-provider-typebox": "6.1.0",
+    "@sinclair/typebox": "0.34.52",
+    "pino": "10.3.1"
+  }
+}

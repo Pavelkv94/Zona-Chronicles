@@ -1,0 +1,52 @@
+{
+  "name": "zona-chronicles",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.22.0",
+  "engines": {
+    "node": ">=24.14.0 <25"
+  },
+  "scripts": {
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "boundaries:check": "node scripts/boundaries/check-workspace-graph.ts && depcruise --config .dependency-cruiser.cjs apps packages tools",
+    "typecheck": "turbo run typecheck",
+    "build": "turbo run build",
+    "test:unit": "vitest run --project unit --project hooks",
+    "test:property": "vitest run --project property",
+    "test:integration": "vitest run --project integration",
+    "test:contract": "vitest run --project contract",
+    "test:replay": "vitest run --project replay",
+    "test:coverage": "vitest run --coverage",
+    "security:secrets": "node scripts/security/scan-secrets.ts",
+    "security:dependencies": "node scripts/security/scan-dependencies.ts",
+    "security:licenses": "node scripts/security/scan-licenses.ts",
+    "security:static": "node scripts/security/scan-static.ts",
+    "security:no-llm": "node scripts/security/scan-no-llm.ts",
+    "security:all": "pnpm security:secrets && pnpm security:dependencies && pnpm security:licenses && pnpm security:static && pnpm security:no-llm",
+    "continuity:dry-run": "node tools/usage-continuity/src/cli/dry-run.ts",
+    "continuity:capability-check": "node tools/usage-continuity/src/cli/capability-check.ts",
+    "verify": "pnpm format:check && pnpm lint && pnpm boundaries:check && pnpm typecheck && pnpm test:unit && pnpm test:property && pnpm test:contract && pnpm security:all && pnpm build",
+    "verify:full": "pnpm verify && pnpm test:integration && pnpm test:replay",
+    "ci:pr": "pnpm verify:full"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@testcontainers/postgresql": "12.1.0",
+    "@types/node": "24.10.2",
+    "@vitest/coverage-v8": "4.1.11",
+    "dependency-cruiser": "18.2.0",
+    "eslint": "10.8.1",
+    "eslint-config-prettier": "10.1.8",
+    "fast-check": "4.9.0",
+    "globals": "17.11.0",
+    "prettier": "3.9.6",
+    "testcontainers": "12.1.0",
+    "turbo": "2.10.11",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.67.0",
+    "vitest": "4.1.11"
+  }
+}

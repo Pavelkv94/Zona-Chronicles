@@ -2,7 +2,8 @@
 
 ## Scope
 
-This workspace is the normative design and implementation documentation for «Живая Зона». It is not yet the executable code repository. Do not mark implementation backlog items complete without code/test evidence from that future repository.
+This repository holds the normative design and implementation documentation for «Живая Зона» in `docs/` **and** the executable prototype (`apps/`, `packages/`, `tools/`), bootstrapped in iteration I00.
+Do not mark implementation backlog items complete without code and test evidence: a green gate (`pnpm verify`), the recorded Red output that preceded it, and an independent reviewer with zero blocker findings.
 
 The product is an observer-only web experience over a persistent deterministic simulation. Its core hypothesis is that coherent stories emerge from world rules, local knowledge, memory and consequences—not from generated prose.
 

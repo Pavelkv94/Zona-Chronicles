@@ -1,0 +1,6 @@
+{
+  "task_id": "I00-T02",
+  "owner_role": "tooling-implementer",
+  "write_paths": ["tools/usage-continuity/**"],
+  "allow_protected_paths": []
+}

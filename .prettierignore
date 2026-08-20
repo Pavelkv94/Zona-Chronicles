@@ -1,0 +1,7 @@
+node_modules/
+dist/
+coverage/
+.turbo/
+pnpm-lock.yaml
+# Нормативная документация форматируется вручную: автоформат ломает таблицы и wiki links.
+docs/

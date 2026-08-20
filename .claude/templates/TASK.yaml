@@ -1,0 +1,35 @@
+# Шаблон задачи субагента (`08_TDD_AND_AGENT_WORKFLOW` §12).
+# Задача без наблюдаемого результата или с двумя несвязанными целями сначала дробится.
+task_id: IXX-TYY
+goal: Одно наблюдаемое изменение поведения
+owner_role: domain-implementer
+base_commit:
+contract_freeze_commit:
+depends_on: []
+read_paths:
+  - packages/contracts/**
+write_paths:
+  - packages/domain/**
+protected_paths:
+  - tests/acceptance/**
+  - packages/contracts/**
+acceptance:
+  - Given / When / Then
+invariants:
+  - Что никогда не должно стать возможным
+required_red:
+  command:
+  expected_failure:
+required_green:
+  - pnpm test:unit -- <filter>
+  - pnpm test:property -- <filter>
+stop_conditions:
+  - contract insufficient
+  - write outside ownership required
+  - nondeterminism cannot be reproduced
+forbidden:
+  - change frozen tests
+  - install dependencies
+  - edit root config
+out_of_scope:
+  - Явно исключённые функции
