@@ -177,3 +177,34 @@ describe('parseInstant: целочисленная арифметика вмес
     expect(isInstantError(parseInstant('March 1, 2026'))).toBe(true);
   });
 });
+
+describe('parseInstant: правило високосных столетий (blocker верификации I00-F5)', () => {
+  // Мутация `isLeapYear` до `year % 4 === 0` заставляла принимать 1900-02-29 и 2100-02-29,
+  // не покрасив ни одного из 227 тестов: генератор property-набора ограничивал день
+  // диапазоном 1–28, поэтому граница февраля никогда не возникала.
+  const leap = ['1996-02-29T00:00:00Z', '2000-02-29T00:00:00Z', '2400-02-29T00:00:00Z'];
+  const notLeap = ['1900-02-29T00:00:00Z', '2100-02-29T00:00:00Z', '2200-02-29T00:00:00Z'];
+
+  it('принимает 29 февраля в високосном году, включая делящийся на 400', () => {
+    for (const value of leap) {
+      expect(isInstantError(parseInstant(value)), value).toBe(false);
+    }
+  });
+
+  it('отвергает 29 февраля в столетии, не делящемся на 400', () => {
+    for (const value of notLeap) {
+      expect(isInstantError(parseInstant(value)), value).toBe(true);
+    }
+  });
+
+  it('отвергает 31-е число в месяцах длиной 30 дней', () => {
+    for (const value of [
+      '2026-04-31T00:00:00Z',
+      '2026-06-31T00:00:00Z',
+      '2026-09-31T00:00:00Z',
+      '2026-11-31T00:00:00Z',
+    ]) {
+      expect(isInstantError(parseInstant(value)), value).toBe(true);
+    }
+  });
+});
