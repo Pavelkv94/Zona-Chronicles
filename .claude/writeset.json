@@ -1,35 +1,6 @@
 {
-  "task_id": "I00-F5",
-  "owner_role": "tooling-implementer",
-  "//": "Объединённый write set раунда фиксов. Ограничение harness: .claude/writeset.json один на репозиторий, поэтому параллельные task-сессии не могут иметь разные write set-ы (finding раунда 3, назначен в I00-F5-T1). Пер-задачное владение остаётся проверяемым: pnpm ownership:check .claude/tasks/I00-F5.json <base_commit> сверяет diff с картой задач по каждой задаче отдельно.",
-  "write_paths": [
-    ".dependency-cruiser.cjs",
-    "eslint.config.mjs",
-    "packages/persistence/**",
-    "scripts/security/**",
-    "security/**",
-    "tools/agent-harness/src/boundary-fixtures.test.ts",
-    "tools/agent-harness/src/cli/**",
-    "tools/agent-harness/src/decide-bash.test.ts",
-    "tools/agent-harness/src/decide-bash.ts",
-    "tools/agent-harness/src/decide-write.test.ts",
-    "tools/agent-harness/src/decide-write.ts",
-    "tools/agent-harness/src/hooks/**",
-    "tools/agent-harness/src/protected-paths.test.ts",
-    "tools/agent-harness/src/protected-paths.ts",
-    "tools/agent-harness/src/session-role.test.ts",
-    "tools/agent-harness/src/session-role.ts",
-    "tools/agent-harness/src/task-ownership.test.ts",
-    "tools/agent-harness/src/task-ownership.ts",
-    "tools/agent-harness/src/tasks-directory.test.ts",
-    "tools/agent-harness/src/tasks-directory.ts",
-    "tools/agent-harness/src/writeset.test.ts",
-    "tools/agent-harness/src/writeset.ts",
-    "tools/security-scan/**"
-  ],
-  "allow_protected_paths": [
-    ".dependency-cruiser.cjs",
-    "eslint.config.mjs",
-    "packages/persistence/src/migrations/**"
-  ]
+  "task_id": "I00-F5-VERIFY",
+  "owner_role": "reviewer",
+  "write_paths": [],
+  "allow_protected_paths": []
 }
