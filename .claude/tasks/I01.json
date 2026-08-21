@@ -1,0 +1,43 @@
+{
+  "iteration_id": "I01",
+  "base_commit": "cbddded",
+  "//": "Карта владения путями I01. Закоммичена на contract-freeze ДО запуска исполнителей.",
+  "lead_paths": [
+    ".claude/**", ".github/**", "docs/**", "ops/**", "tests/**",
+    "scripts/boundaries/**", "scripts/worktree/**",
+    "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "turbo.json",
+    "tsconfig.json", "tsconfig.base.json", "tsconfig.depcruise.json", "vitest.config.ts",
+    ".prettierrc.json", ".prettierignore", ".gitignore", ".nvmrc", ".tool-versions",
+    ".dockerignore", "docker-compose.yml", "eslint.config.mjs", ".dependency-cruiser.cjs",
+    "AGENTS.md", "CLAUDE.md", "README.md",
+    "tools/agent-harness/**", "tools/security-scan/**", "security/**", "scripts/security/**"
+  ],
+  "tasks": [
+    {
+      "task_id": "I01-T1",
+      "owner_role": "contract-steward",
+      "//": "Исполняемые TypeBox envelopes v1, canonical serialization, checksum, numeric units.",
+      "write_paths": ["packages/contracts/**"],
+      "allow_protected_paths": ["packages/contracts/**"]
+    },
+    {
+      "task_id": "I01-T2",
+      "owner_role": "acceptance-author",
+      "//": "Падающий acceptance-тест детерминизма (A1, A2, A3).",
+      "write_paths": ["tests/acceptance/**"],
+      "allow_protected_paths": ["tests/acceptance/**"]
+    },
+    {
+      "task_id": "I01-T3",
+      "owner_role": "domain-implementer",
+      "//": "Порты Clock/RandomSource/IdFactory/Ruleset, decide/evolve, exhaustiveness.",
+      "write_paths": ["packages/domain/**"]
+    },
+    {
+      "task_id": "I01-T4",
+      "owner_role": "domain-implementer",
+      "//": "Fixtures мира (данные, не логика) и CLI world seed / world inspect.",
+      "write_paths": ["packages/content/**", "apps/cli/**"]
+    }
+  ]
+}

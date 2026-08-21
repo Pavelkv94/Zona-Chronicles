@@ -1,6 +1,6 @@
 {
-  "task_id": "I00-F5-VERIFY",
-  "owner_role": "reviewer",
-  "write_paths": [],
-  "allow_protected_paths": []
+  "task_id": "I01-T1",
+  "owner_role": "contract-steward",
+  "write_paths": ["packages/contracts/**"],
+  "allow_protected_paths": ["packages/contracts/**"]
 }
