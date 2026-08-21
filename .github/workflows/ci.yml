@@ -15,6 +15,10 @@ env:
   COREPACK_ENABLE_DOWNLOAD_PROMPT: '0'
   TZ: UTC
   LANG: C.UTF-8
+  # Карта владения путями текущей итерации. Указывается явно, а не каталогом:
+  # карты разных итераций легитимно затрагивают одни и те же пути в разное время,
+  # и агрегация всех карт даёт ложное «пересечение write sets» (см. handoff I00-F5-T1).
+  ITERATION_TASKS: .claude/tasks/I00-F5.json
 
 jobs:
   gate:
@@ -23,6 +27,12 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+        with:
+          # M-3 (раунд 3): без полной истории `ownership:check` падает на резолве
+          # base-коммита (`fatal: Needed a single revision`), то есть шаг краснел бы
+          # по причине, не связанной с владением, — приглашение «починить» его
+          # ослаблением. Контроль обязан падать только по своей причине.
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
@@ -51,20 +61,20 @@ jobs:
       - run: pnpm security:no-llm
       - run: pnpm build
 
-      - name: Continuity harness dry-run (DEV-01)
-        run: pnpm continuity:dry-run
-
       # DEV-02: контроль владения на уровне результата переживает порчу session-level
       # настроек агента, поэтому повторяется вне агентной сессии.
+      #
+      # M-3 (раунд 3): раньше шаг был ограничен `pull_request`, поэтому прямые push
+      # в main не проверялись вовсе, а на PR он падал из-за shallow checkout — то есть
+      # не отработал ни разу. Теперь база берётся по типу события.
       - name: Task ownership vs declared write sets
-        if: github.event_name == 'pull_request'
-        run: pnpm ownership:check .claude/tasks/I00.json "${{ github.event.pull_request.base.sha }}"
-
-      # DEV-01: статус capability не блокирует gate (реальных адаптеров нет по scope I00),
-      # но обязан быть видимым в каждом прогоне, а не спрятан в локальной команде.
-      - name: Report usage-window capability status (DEV-01, non-blocking)
-        if: always()
-        run: pnpm continuity:capability-check || echo "LIMIT_AUTOCONTINUE_UNAVAILABLE — адаптеры telemetry/wake/resume отсутствуют, автопродолжение не обещается"
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          pnpm ownership:check "$ITERATION_TASKS" "$BASE"
 
       - name: Upload machine-readable reports
         if: always()

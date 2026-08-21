@@ -66,9 +66,14 @@ module.exports = {
       severity: 'error',
       comment:
         'OPS-03: observer path не должен иметь физической возможности читать канонические таблицы. ' +
-        'ADR-002 не даёт api ребра к persistence; данные приходят только через projections.',
+        'Правило транзитивное (`reachable: true`, major M-1, раунд 3 верификации I00): запрет по ' +
+        'смыслу распространяется на весь путь до persistence, а не только на прямое ребро — иначе ' +
+        'один легальный промежуточный пакет (например packages/projections), случайно или ' +
+        'преждевременно получивший зависимость на packages/persistence, тихо снимает запрет для ' +
+        'apps/api. ADR-002 не даёт api прямого ребра к persistence; данные приходят только через ' +
+        'read-only projections, которые сами не должны транзитивно протаскивать канонические таблицы.',
       from: { path: '^apps/api/' },
-      to: { path: '^packages/persistence/' },
+      to: { path: '^packages/persistence/', reachable: true },
     },
     {
       name: 'packages-do-not-depend-on-apps',
@@ -92,15 +97,44 @@ module.exports = {
       to: { path: '^tools/' },
     },
     {
+      name: 'apps-do-not-depend-on-scripts-or-tests',
+      severity: 'error',
+      comment:
+        'Симметрично packages-do-not-depend-on-scripts-or-tests (major M-1, раунд 3 верификации ' +
+        'I00): apps/** ограничивался ADR-002 только правилом про persistence, но не про scripts/ ' +
+        'и tests/, поэтому apps мог использовать их как необъявленный обходной путь к чему угодно.',
+      from: { path: '^apps/' },
+      to: { path: '^(scripts/|tests/)' },
+    },
+    {
+      name: 'apps-do-not-depend-on-tools',
+      severity: 'error',
+      comment:
+        'Симметрично packages-do-not-depend-on-tools (major M-1, раунд 3 верификации I00): tools/* ' +
+        '— dev harness, не входит в продукт ни для packages, ни для apps.',
+      from: { path: '^apps/' },
+      to: { path: '^tools/' },
+    },
+    {
       name: 'core-has-no-adapter-dependencies',
       severity: 'error',
-      comment: 'ADR-003: домен и симуляция не знают о БД, HTTP и логгере.',
+      comment:
+        'ADR-003 (SIM-01, правка от 2026-08-21): домен и симуляция не знают о БД, HTTP, логгере, ' +
+        'сети, файловой системе, процессе, crypto/perf_hooks. Запрет описывает источник ' +
+        'недетерминизма, а не форму импорта: node: и голое имя core-модуля запрещены одинаково, ' +
+        'иначе `import { randomUUID } from "node:crypto"` проходит незамеченным (blocker B-2, ' +
+        'раунд 3 верификации I00). Этот же перечень независимо продублирован в eslint.config.mjs ' +
+        '(no-restricted-imports) — оба контроля должны срабатывать на один и тот же вход.',
       from: { path: `^${core}/` },
-      // Матчим и резолвленный путь в node_modules, и голое имя модуля: незаявленная
-      // зависимость не резолвится (dependencyTypes: unknown), и ограничение по типу
-      // делало это правило инертным ровно в самом опасном случае.
+      // Матчим и резолвленный путь в node_modules (сторонние пакеты), и голое имя модуля:
+      // незаявленная зависимость не резолвится (dependencyTypes: unknown), и ограничение по типу
+      // делало это правило инертным ровно в самом опасном случае. Node builtins резолвятся
+      // dependency-cruiser в голую форму без префикса `node:` (подтверждено прогоном), поэтому
+      // вторая альтернатива матчит их по имени с необязательным подпутём (fs/promises и т.п.).
       to: {
-        path: '(^|node_modules/)(@fastify/|(fastify|kysely|pg|pino|next|react|maplibre-gl)($|/))',
+        path:
+          '(^|node_modules/)(@fastify/|(fastify|kysely|pg|pino|next|react|maplibre-gl)($|/))' +
+          '|^(crypto|perf_hooks|fs|http|https|net|tls|dgram|http2|dns|process|os|child_process|worker_threads)($|/)',
       },
     },
     {

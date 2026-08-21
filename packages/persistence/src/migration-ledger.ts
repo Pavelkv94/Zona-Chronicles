@@ -29,16 +29,32 @@ export interface AppliedMigrationRecord {
  * дал бы ложный `MIGRATION_CHECKSUM_MISMATCH` на нетронутой миграции —
  * ложную тревогу целостности на невосполнимом журнале.
  *
+ * С раунда 3 верификации (minor 3) checksum покрывает ещё и `phase`, не только
+ * `statements`. `phase` — не исполняемый SQL, а метка ("expand" | "backfill" |
+ * "contract"), но именно на ней держится `MigrationPhaseConflictError`
+ * (`migration-runner.ts`, `validatePhaseBatch`) — контроль «destructive contract
+ * не в одной поставке с первым новым reader/writer» (§12 03_TECHNICAL_DESIGN.md).
+ * Без `phase` в checksum фазу уже применённой миграции можно было изменить
+ * (например, задним числом перемаркировать `expand` в `contract`), не трогая
+ * `statements`, — integrity check журнала прошёл бы молча, хотя гарантия,
+ * которую даёт эта метка, больше не соответствует действительности.
+ *
  * Правило нормализации одного statement (детерминированное, описано явно,
  * чтобы форматирование текста миграции не считалось изменением содержимого):
  *  1. `\r\n` -> `\n` (перевод строк не зависит от ОС/редактора);
  *  2. с каждой строки убираются хвостовые пробелы/табы;
  *  3. у результата убираются ведущие/хвостовые пустые строки (`trim`).
  * Statements объединяются символом `\n` в порядке объявления в `statements`
- * (порядок значим — это порядок фактического исполнения).
+ * (порядок значим — это порядок фактического исполнения). `phase` добавляется
+ * как первое "слово" нормализованного текста, через пробел перед первым
+ * statement — простой и однозначный префикс: значения `phase` образуют
+ * закрытый список из трёх лексем без пробелов (`MigrationPhase`), поэтому
+ * коллизии с началом SQL-текста (который у admin-миграций начинается с
+ * `create`/`alter`/`drop` и т.п., а не с этих трёх слов) не возникает.
  */
-export function computeChecksum(migration: Pick<Migration, 'statements'>): string {
-  const normalized = migration.statements.map(normalizeStatement).join('\n');
+export function computeChecksum(migration: Pick<Migration, 'statements' | 'phase'>): string {
+  const normalizedStatements = migration.statements.map(normalizeStatement).join('\n');
+  const normalized = `${migration.phase} ${normalizedStatements}`;
   return createHash('sha256').update(normalized, 'utf8').digest('hex');
 }
 
@@ -67,13 +83,38 @@ export async function migrationLedgerExists(db: Kysely<Database>): Promise<boole
   return result.rows[0]?.table_exists ?? false;
 }
 
+/**
+ * Строит (но не исполняет) запрос применённых миграций, отсортированных по `id`.
+ *
+ * `orderBy('id', 'asc')` без явной коллации сортирует текст по коллации БД
+ * (`lc_collate` кластера/базы) — то есть порядок применения миграций зависел бы
+ * от настройки окружения, а не только от кода, что нарушает независимость от
+ * DB plan/locale (SIM-01, minor 2 раунда 3 верификации). `collate "C"` даёт
+ * побайтовое сравнение независимо от `lc_collate`; для текущих `[0-9]{4}`-префиксов
+ * результат совпадает с обычным `asc`, но не полагается на настройку сервера.
+ *
+ * Экспортируется отдельно от {@link loadAppliedMigrations}, чтобы юнит-тест мог
+ * проверить сгенерированный SQL через `.compile()` без реального подключения к
+ * БД (`.compile()` не открывает соединение — `pg.Pool` подключается лениво только
+ * при исполнении запроса). Воспроизвести саму разницу коллаций потребовало бы
+ * отдельного Postgres-кластера с нестандартным `lc_collate`, которого нет ни в
+ * одном профиле CI/Testcontainers этого репозитория — см. обоснование в
+ * `migration-ledger.test.ts`.
+ */
+export function buildAppliedMigrationsQuery(db: Kysely<Database>) {
+  return db
+    .selectFrom('schema_migrations')
+    .selectAll()
+    .orderBy(sql`id collate "C"`, 'asc');
+}
+
 export async function loadAppliedMigrations(
   db: Kysely<Database>,
 ): Promise<AppliedMigrationRecord[]> {
   if (!(await migrationLedgerExists(db))) {
     return [];
   }
-  const rows = await db.selectFrom('schema_migrations').selectAll().orderBy('id', 'asc').execute();
+  const rows = await buildAppliedMigrationsQuery(db).execute();
   return rows.map((row) => ({
     id: row.id,
     name: row.name,

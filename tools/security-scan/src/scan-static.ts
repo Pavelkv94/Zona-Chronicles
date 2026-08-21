@@ -17,6 +17,12 @@ import { buildReport } from './report.ts';
  * m7 (review finding): `static_policy.min_blocking_severity` теперь реально
  * применяется — раньше `low` (например `hardcoded-network-url`) блокировал gate
  * так же жёстко, как `critical`.
+ *
+ * M-5 (review finding, раунд 3): `collectSourceFiles` теперь также возвращает
+ * `unreadablePaths` — пути, которые не удалось прочитать (не "отсутствуют",
+ * а реально не читаются). Непустой `unreadablePaths` — `config-error`, а не
+ * `pass`: находки по непрочитанному содержимому получить нельзя (та же форма,
+ * что B1 в `scan-dependencies.ts`).
  */
 
 export type ScannedFile = { readonly path: string; readonly content: string };
@@ -66,8 +72,16 @@ export const runStaticScan = (repoRoot: string, now: Date = new Date()): ScanOut
   if (policyResult.kind === 'invalid')
     return { kind: 'config-error', message: policyResult.reason };
 
-  const files = collectSourceFiles(repoRoot);
-  const rawFindings = findStaticFindings(files, policyResult.policy);
+  const collected = collectSourceFiles(repoRoot);
+  if (collected.unreadablePaths.length > 0) {
+    return {
+      kind: 'config-error',
+      message:
+        `static scan: не удалось прочитать ${collected.unreadablePaths.length} файл(ов): ` +
+        `${collected.unreadablePaths.join(', ')} (M-5 review finding)`,
+    };
+  }
+  const rawFindings = findStaticFindings(collected.files, policyResult.policy);
 
   const exceptionsResult = loadExceptions(repoRoot, now);
   const { active, suppressed } = applyExceptions(rawFindings, exceptionsResult.valid, 'static');

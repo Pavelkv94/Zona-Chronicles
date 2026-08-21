@@ -1,5 +1,9 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   CLEAN_IMPORT_SAMPLE,
   EMBEDDINGS_DIR_PATH_SAMPLE,
@@ -11,7 +15,7 @@ import {
   PROMPTS_DIR_PATH_SAMPLE,
   REQUIRE_CALL_SAMPLE,
 } from './__fixtures__/no-llm-samples.ts';
-import { findLlmFindings } from './scan-no-llm.ts';
+import { findLlmFindings, runNoLlmScan } from './scan-no-llm.ts';
 import { parsePolicy } from './policy.ts';
 import type { SecurityPolicy } from './policy.ts';
 
@@ -23,6 +27,11 @@ const loadRealPolicy = (): SecurityPolicy => {
 };
 
 const policy = loadRealPolicy();
+
+// Real repo root, used only to seed the throwaway fixture repos below with the real,
+// checked-in `security/policy.json` — deterministic, no network. The rest of each
+// fixture repo (lockfile, git history, tracked files) is built fresh per test.
+const REAL_REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 const emptyInput = {
   lockfileContent: '',
@@ -137,5 +146,68 @@ describe('findLlmFindings', () => {
       policy,
     );
     expect(findings).toEqual([]);
+  });
+});
+
+/**
+ * M-5 (review finding, round 3): `runNoLlmScan` used to treat an unreadable
+ * `pnpm-lock.yaml` as an EMPTY lockfile — which passes every
+ * `packageNameRegex(denied).test(...)` check trivially, so ACCEPTANCE A11
+ * ("lockfile does not contain a provider SDK") reported `pass` having verified
+ * nothing. These tests exercise the real io path end-to-end (not the pure
+ * `findLlmFindings`), because that is exactly where the bug lived: the pure
+ * function was never wrong, `collectInput`'s error handling was.
+ */
+describe('runNoLlmScan (io integration: M-5 review finding)', () => {
+  let fixtureRepoRoot: string | undefined;
+
+  afterEach(() => {
+    if (fixtureRepoRoot !== undefined) rmSync(fixtureRepoRoot, { recursive: true, force: true });
+    fixtureRepoRoot = undefined;
+  });
+
+  /**
+   * io: builds a throwaway git repo OUTSIDE the real repo tree, seeded with the
+   * real `security/policy.json` (checked-in, deterministic) and an empty, valid
+   * `security/exceptions.json`. `git init` is required because `runNoLlmScan`
+   * shells out to `git ls-files` (see `git.ts`); a bare tmpdir with no `.git`
+   * would fail that call entirely, which is a different failure mode than the
+   * one under test here.
+   */
+  const buildFixtureRepo = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'zona-no-llm-scan-'));
+    mkdirSync(join(dir, 'security'), { recursive: true });
+    writeFileSync(
+      join(dir, 'security', 'policy.json'),
+      readFileSync(join(REAL_REPO_ROOT, 'security', 'policy.json'), 'utf8'),
+      'utf8',
+    );
+    writeFileSync(join(dir, 'security', 'exceptions.json'), '[]\n', 'utf8');
+    spawnSync('git', ['init', '-q'], { cwd: dir });
+    spawnSync('git', ['add', '-A'], { cwd: dir });
+    fixtureRepoRoot = dir;
+    return dir;
+  };
+
+  it('returns config-error, not pass, when pnpm-lock.yaml exists but cannot be read (positive: M-5 review finding)', () => {
+    const dir = buildFixtureRepo();
+    // A directory in place of the lockfile makes readFileSync fail with EISDIR —
+    // "exists but unreadable", not "absent". Deterministic and root-safe (unlike
+    // chmod-based permission denial).
+    mkdirSync(join(dir, 'pnpm-lock.yaml'));
+
+    const outcome = runNoLlmScan(dir);
+
+    expect(outcome.kind).toBe('config-error');
+  });
+
+  it('returns pass for a clean, readable fixture repo (negative: the happy path still works after the fix)', () => {
+    const dir = buildFixtureRepo();
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf8');
+
+    const outcome = runNoLlmScan(dir);
+
+    expect(outcome.kind).toBe('ok');
+    if (outcome.kind === 'ok') expect(outcome.report.status).toBe('pass');
   });
 });

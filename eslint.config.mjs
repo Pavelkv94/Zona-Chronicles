@@ -92,7 +92,16 @@ const nondeterminismGlobals = [
   { name: 'performance', message: 'SIM-01: wall clock запрещён в каноническом ядре.' },
 ];
 
-/** Пакеты-адаптеры, запрещённые к импорту из ядра (ADR-002, ADR-003). */
+/**
+ * Пакеты-адаптеры и источники недетерминизма, запрещённые к импорту из ядра (ADR-002, ADR-003,
+ * правка SIM-01 от 2026-08-21, blocker B-2 третьего раунда верификации I00).
+ *
+ * Запрет описывает источник недетерминизма, а не синтаксическую форму обращения к нему: и `node:`,
+ * и голая форма модуля запрещены одновременно, иначе `import { randomUUID } from 'node:crypto'`
+ * проходит мимо `no-restricted-globals`, который ловит только глобал `crypto`. Тот же список
+ * одновременно закрывается regex-правилом `core-has-no-adapter-dependencies` в
+ * `.dependency-cruiser.cjs` — это независимый второй контроль на тот же перечень источников.
+ */
 const adapterImportRestrictions = {
   patterns: [
     {
@@ -110,20 +119,44 @@ const adapterImportRestrictions = {
         'react/*',
         'pino',
         'pino/*',
+        // Файловая система: node:fs и голая форма, включая подпути (fs/promises и т.п.).
         'node:fs',
         'node:fs/*',
-        'node:http',
-        'node:https',
-        'node:net',
-        'node:child_process',
-        'node:process',
         'fs',
+        'fs/*',
+        // Сеть.
+        'node:http',
         'http',
+        'node:https',
         'https',
+        'node:net',
         'net',
+        'node:tls',
+        'tls',
+        'node:dgram',
+        'dgram',
+        'node:http2',
+        'http2',
+        'node:dns',
+        'dns',
+        // Процесс и окружение.
+        'node:child_process',
         'child_process',
+        'node:process',
+        'process',
+        'node:os',
+        'os',
+        'node:worker_threads',
+        'worker_threads',
+        // Случайность и wall-clock источники недоступные через синтаксические селекторы выше.
+        'node:crypto',
+        'crypto',
+        'node:perf_hooks',
+        'perf_hooks',
       ],
-      message: 'ADR-003: чистое ядро не импортирует адаптеры, сеть, файловую систему и процесс.',
+      message:
+        'ADR-003 (SIM-01): чистое ядро не импортирует адаптеры, сеть, файловую систему, процесс, ' +
+        'crypto или perf_hooks — источник недетерминизма запрещён независимо от того, как он назван при импорте.',
     },
   ],
 };

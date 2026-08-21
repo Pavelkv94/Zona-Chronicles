@@ -13,6 +13,12 @@ import { buildReport } from './report.ts';
  *
  * m7 (review finding): `secret_policy.min_blocking_severity` теперь реально
  * применяется — раньше любая активная находка валила gate независимо от severity.
+ *
+ * M-5 (review finding, раунд 3): `readTrackedFiles` теперь также возвращает
+ * `unreadablePaths` — отслеживаемые git пути, которые не удалось прочитать.
+ * Непустой `unreadablePaths` — `config-error`, а не `pass`: находки по
+ * непрочитанному содержимому получить нельзя (та же форма, что B1 в
+ * `scan-dependencies.ts`).
  */
 
 export type ScannedFile = { readonly path: string; readonly content: string };
@@ -61,8 +67,16 @@ export const runSecretsScan = (repoRoot: string, now: Date = new Date()): ScanOu
   }
 
   const trackedPaths = listGitTrackedFiles(repoRoot);
-  const files = readTrackedFiles(repoRoot, trackedPaths);
-  const rawFindings = findSecrets(files, policyResult.policy);
+  const collected = readTrackedFiles(repoRoot, trackedPaths);
+  if (collected.unreadablePaths.length > 0) {
+    return {
+      kind: 'config-error',
+      message:
+        `secrets scan: не удалось прочитать ${collected.unreadablePaths.length} отслеживаемых ` +
+        `файл(ов): ${collected.unreadablePaths.join(', ')} (M-5 review finding)`,
+    };
+  }
+  const rawFindings = findSecrets(collected.files, policyResult.policy);
 
   const exceptionsResult = loadExceptions(repoRoot, now);
   const { active, suppressed } = applyExceptions(rawFindings, exceptionsResult.valid, 'secrets');

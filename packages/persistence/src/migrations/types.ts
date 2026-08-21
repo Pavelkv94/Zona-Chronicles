@@ -5,6 +5,12 @@
  * `contract` — destructive-шаг (удаляет старую колонку/таблицу/constraint).
  * Runner запрещает применять `contract` в одном прогоне вместе с `expand`
  * той же поставки — см. `MigrationPhaseConflictError`.
+ *
+ * `phase` — часть checksum журнала (`computeChecksum`, `migration-ledger.ts`), не
+ * только `statements`: без этого фазу уже применённой миграции можно было бы
+ * изменить (например, задним числом перемаркировать `expand` в `contract`), не
+ * трогая `statements`, и `MigrationPhaseConflictError` держался бы на метке,
+ * достоверность которой ничем не проверяется (minor 3, раунд 3 верификации).
  */
 export type MigrationPhase = 'expand' | 'backfill' | 'contract';
 

@@ -124,6 +124,35 @@ describe('applyMigrations — целостность журнала', () => {
     expect(appliedInOrder).toEqual([]);
   });
 
+  /**
+   * Minor 3 (раунд 3 верификации), следствие 1: фазу уже применённой миграции
+   * раньше можно было изменить, не трогая `statements`, — checksum журнала считался
+   * только от `statements` и не замечал бы этого. `validatePhaseBatch` (контроль
+   * «destructive contract не в одной поставке с первым новым reader/writer») держится
+   * ровно на метке `phase`, поэтому необнаруживаемая правка фазы обесценивала контроль.
+   * Фикс — `computeChecksum` теперь включает `phase` (см. `migration-ledger.test.ts`).
+   */
+  it('падает с MIGRATION_CHECKSUM_MISMATCH, если фаза применённой миграции изменилась, а statements — нет', async () => {
+    const originallyApplied = fakeMigration('0001', 'bootstrap', 'expand');
+    const relabeled: Migration = { ...originallyApplied, phase: 'contract' };
+    const { executor, appliedInOrder } = createFakeExecutor({
+      initiallyApplied: [
+        {
+          id: '0001',
+          name: 'bootstrap',
+          checksum: computeChecksum(originallyApplied),
+          appliedAt: new Date(0),
+          durationMs: 1,
+        },
+      ],
+    });
+
+    await expect(applyMigrations(executor, [relabeled], silentLogger)).rejects.toThrow(
+      MigrationChecksumMismatchError,
+    );
+    expect(appliedInOrder).toEqual([]);
+  });
+
   it('падает с MIGRATION_NAME_MISMATCH, если применённый id встречается в реестре под другим name', async () => {
     const migration = fakeMigration('0001', 'renamed');
     const { executor, appliedInOrder } = createFakeExecutor({

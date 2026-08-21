@@ -149,22 +149,67 @@ export const findLlmFindings = (input: LlmScanInput, policy: SecurityPolicy): Fi
   return findings;
 };
 
-/** io: собирает вход для `findLlmFindings` из репозитория. */
-const collectInput = (repoRoot: string): LlmScanInput => {
+type CollectInputResult =
+  | { readonly kind: 'ok'; readonly input: LlmScanInput }
+  | { readonly kind: 'unreadable'; readonly reason: string };
+
+/**
+ * io: собирает вход для `findLlmFindings` из репозитория.
+ *
+ * M-5 (review finding, раунд 3): раньше нечитаемый `pnpm-lock.yaml` тихо
+ * превращался в `lockfileContent = ''`, которая проходит ЛЮБОЙ
+ * `packageNameRegex(denied).test(...)` как "не найдено" — A11 сообщал `pass`,
+ * не проверив ни одного байта lockfile. Та же форма, что B1 в
+ * `scan-dependencies.ts`: недоступность источника нельзя трактовать как
+ * подтверждённое отсутствие находок. Теперь недоступный lockfile (и любой
+ * непрочитанный tracked/source-файл — см. `git.ts`/`source-files.ts`)
+ * приводит к `kind: 'unreadable'`, которую `runNoLlmScan` превращает в
+ * `config-error` (exit 2), а не в `pass`.
+ */
+const collectInput = (repoRoot: string): CollectInputResult => {
   let lockfileContent: string;
   try {
     lockfileContent = readFileSync(`${repoRoot}/pnpm-lock.yaml`, 'utf8');
-  } catch {
-    lockfileContent = '';
+  } catch (error) {
+    return {
+      kind: 'unreadable',
+      reason:
+        `no-llm scan: не удалось прочитать pnpm-lock.yaml (${String(error)}) — A11 требует ` +
+        `ПОДТВЕРДИТЬ отсутствие запрещённых до Gate E пакетов, подтвердить по непрочитанному ` +
+        `lockfile нельзя (M-5 review finding)`,
+    };
   }
 
   const trackedPaths = listGitTrackedFiles(repoRoot);
   const packageJsonPaths = trackedPaths.filter((path) => path.endsWith('package.json'));
-  const packageJsonFiles = readTrackedFiles(repoRoot, packageJsonPaths);
-  const trackedFilesForEnv = readTrackedFiles(repoRoot, trackedPaths);
-  const sourceFiles = collectSourceFiles(repoRoot);
+  const packageJsonResult = readTrackedFiles(repoRoot, packageJsonPaths);
+  const trackedFilesForEnvResult = readTrackedFiles(repoRoot, trackedPaths);
+  const sourceResult = collectSourceFiles(repoRoot);
 
-  return { lockfileContent, packageJsonFiles, sourceFiles, trackedPaths, trackedFilesForEnv };
+  const unreadablePaths = [
+    ...packageJsonResult.unreadablePaths,
+    ...trackedFilesForEnvResult.unreadablePaths,
+    ...sourceResult.unreadablePaths,
+  ];
+  if (unreadablePaths.length > 0) {
+    return {
+      kind: 'unreadable',
+      reason:
+        `no-llm scan: не удалось прочитать ${unreadablePaths.length} файл(ов), необходимых ` +
+        `для A11: ${unreadablePaths.join(', ')}`,
+    };
+  }
+
+  return {
+    kind: 'ok',
+    input: {
+      lockfileContent,
+      packageJsonFiles: packageJsonResult.files,
+      sourceFiles: sourceResult.files,
+      trackedPaths,
+      trackedFilesForEnv: trackedFilesForEnvResult.files,
+    },
+  };
 };
 
 /** io: полный no-llm scan репозитория. */
@@ -173,7 +218,10 @@ export const runNoLlmScan = (repoRoot: string, now: Date = new Date()): ScanOutc
   if (policyResult.kind === 'invalid')
     return { kind: 'config-error', message: policyResult.reason };
 
-  const input = collectInput(repoRoot);
+  const collected = collectInput(repoRoot);
+  if (collected.kind === 'unreadable') return { kind: 'config-error', message: collected.reason };
+  const input = collected.input;
+
   const rawFindings = findLlmFindings(input, policyResult.policy);
 
   const exceptionsResult = loadExceptions(repoRoot, now);

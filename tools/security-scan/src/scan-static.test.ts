@@ -1,5 +1,8 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   CHILD_PROCESS_TEMPLATE_SAMPLE,
   CLEAN_STATIC_SAMPLE,
@@ -7,7 +10,7 @@ import {
   HARDCODED_URL_SAMPLE,
   NEW_FUNCTION_SAMPLE,
 } from './__fixtures__/static-samples.ts';
-import { findStaticFindings } from './scan-static.ts';
+import { findStaticFindings, runStaticScan } from './scan-static.ts';
 import { parsePolicy } from './policy.ts';
 import type { SecurityPolicy } from './policy.ts';
 
@@ -19,6 +22,8 @@ const loadRealPolicy = (): SecurityPolicy => {
 };
 
 const policy = loadRealPolicy();
+
+const REAL_REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 describe('findStaticFindings', () => {
   it('flags eval calls (positive)', () => {
@@ -96,5 +101,55 @@ describe('findStaticFindings', () => {
       highThresholdPolicy,
     );
     expect(findings.some((f) => f.id === 'eval-call')).toBe(true);
+  });
+});
+
+/**
+ * M-5 (review finding, round 3): `collectSourceFiles` now surfaces unreadable
+ * scan-root paths instead of silently dropping them (`source-files.ts`). This
+ * covers the `scan-static.ts` consumer side of that fix: a `pass` must not be
+ * possible when part of the scanned tree could not actually be read.
+ */
+describe('runStaticScan (io integration: M-5 review finding)', () => {
+  let fixtureRepoRoot: string | undefined;
+
+  afterEach(() => {
+    if (fixtureRepoRoot !== undefined) rmSync(fixtureRepoRoot, { recursive: true, force: true });
+    fixtureRepoRoot = undefined;
+  });
+
+  const buildFixtureRepo = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'zona-static-scan-'));
+    mkdirSync(join(dir, 'security'), { recursive: true });
+    writeFileSync(
+      join(dir, 'security', 'policy.json'),
+      readFileSync(join(REAL_REPO_ROOT, 'security', 'policy.json'), 'utf8'),
+      'utf8',
+    );
+    writeFileSync(join(dir, 'security', 'exceptions.json'), '[]\n', 'utf8');
+    fixtureRepoRoot = dir;
+    return dir;
+  };
+
+  it('returns config-error, not pass, when a source file under a SCAN_ROOT exists but cannot be read (positive: M-5 review finding)', () => {
+    const dir = buildFixtureRepo();
+    mkdirSync(join(dir, 'apps', 'api', 'src'), { recursive: true });
+    // Self-referential symlink -> ELOOP on read, "exists but unreadable" (not "absent").
+    symlinkSync('loop.ts', join(dir, 'apps', 'api', 'src', 'loop.ts'));
+
+    const outcome = runStaticScan(dir);
+
+    expect(outcome.kind).toBe('config-error');
+  });
+
+  it('returns pass for a clean, fully readable fixture repo (negative: the happy path still works after the fix)', () => {
+    const dir = buildFixtureRepo();
+    mkdirSync(join(dir, 'apps', 'api', 'src'), { recursive: true });
+    writeFileSync(join(dir, 'apps', 'api', 'src', 'clean.ts'), CLEAN_STATIC_SAMPLE, 'utf8');
+
+    const outcome = runStaticScan(dir);
+
+    expect(outcome.kind).toBe('ok');
+    if (outcome.kind === 'ok') expect(outcome.report.status).toBe('pass');
   });
 });

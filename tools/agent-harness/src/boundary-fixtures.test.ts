@@ -16,9 +16,19 @@
  * не выполняются, и фикстуры остаются в исходниках пакетов. Две меры: (1) имя каталога детерминировано
  * и узнаваемо (`__fixture-<pid>__`, двойное подчёркивание — соглашение репозитория для «не рабочий
  * код»), поэтому его невозможно спутать с обычным исходником; (2) `sweepStaleFixtureDirs` в начале
- * `beforeAll` удаляет ЛЮБОЙ каталог вида `__fixture-*__` в тех же трёх директориях независимо от
- * PID — не только текущего прогона, но и осиротевших от прошлого killed-процесса — прежде чем
+ * `beforeAll` удаляет ЛЮБОЙ каталог вида `__fixture-*__` во всех `FIXTURE_PARENT_DIRS` независимо
+ * от PID — не только текущего прогона, но и осиротевших от прошлого killed-процесса — прежде чем
  * создавать новые фикстуры.
+ *
+ * B-2/M-1/minor 7 (третий раунд верификации I00, правка ADR-003): список директорий вырос с трёх
+ * до восьми — добавлены `packages/contracts`, `packages/content`, `packages/persistence`,
+ * `packages/projections`, `apps/api`. Причина: «правило без фикстуры считается несуществующим» —
+ * каждое из ранее непокрытых правил dependency-cruiser (`contracts-are-leaf`, `content-is-data-only`,
+ * `persistence-does-not-import-simulation`, `observer-api-does-not-reach-persistence`,
+ * `apps-do-not-depend-on-tools`, `apps-do-not-depend-on-scripts-or-tests`, `no-unresolvable`,
+ * `no-circular`) теперь материализует фикстуру внутри того самого пакета, откуда правило смотрит
+ * на `from`, — иначе правило `from: '^packages/contracts/'` и т.п. не увидит фикстуру за пределами
+ * своего дерева.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -47,7 +57,26 @@ const SUFFIX = `fixture-${process.pid}`;
 const DOMAIN_DIR = resolve(REPO_ROOT, `packages/domain/src/__${SUFFIX}__`);
 const SIMULATION_DIR = resolve(REPO_ROOT, `packages/simulation/src/__${SUFFIX}__`);
 const REPRESENTATION_DIR = resolve(REPO_ROOT, `packages/representation/src/__${SUFFIX}__`);
-const FIXTURE_DIRS = [DOMAIN_DIR, SIMULATION_DIR, REPRESENTATION_DIR];
+// minor 7 (раунд 3 верификации I00): правило без фикстуры считается несуществующим (ADR-003).
+// Эти четыре директории материализуют фикстуры для правил dependency-cruiser, у которых раньше
+// не было ни одного теста: contracts-are-leaf, content-is-data-only,
+// persistence-does-not-import-simulation, observer-api-does-not-reach-persistence (+ новые
+// apps-do-not-depend-on-tools/scripts-or-tests, M-1).
+const CONTRACTS_DIR = resolve(REPO_ROOT, `packages/contracts/src/__${SUFFIX}__`);
+const CONTENT_DIR = resolve(REPO_ROOT, `packages/content/src/__${SUFFIX}__`);
+const PERSISTENCE_DIR = resolve(REPO_ROOT, `packages/persistence/src/__${SUFFIX}__`);
+const PROJECTIONS_DIR = resolve(REPO_ROOT, `packages/projections/src/__${SUFFIX}__`);
+const API_DIR = resolve(REPO_ROOT, `apps/api/src/__${SUFFIX}__`);
+const FIXTURE_DIRS = [
+  DOMAIN_DIR,
+  SIMULATION_DIR,
+  REPRESENTATION_DIR,
+  CONTRACTS_DIR,
+  CONTENT_DIR,
+  PERSISTENCE_DIR,
+  PROJECTIONS_DIR,
+  API_DIR,
+];
 
 const cleanupFixtures = (): void => {
   for (const dir of FIXTURE_DIRS) rmSync(dir, { recursive: true, force: true });
@@ -58,6 +87,11 @@ const FIXTURE_PARENT_DIRS = [
   resolve(REPO_ROOT, 'packages/domain/src'),
   resolve(REPO_ROOT, 'packages/simulation/src'),
   resolve(REPO_ROOT, 'packages/representation/src'),
+  resolve(REPO_ROOT, 'packages/contracts/src'),
+  resolve(REPO_ROOT, 'packages/content/src'),
+  resolve(REPO_ROOT, 'packages/persistence/src'),
+  resolve(REPO_ROOT, 'packages/projections/src'),
+  resolve(REPO_ROOT, 'apps/api/src'),
 ];
 const FIXTURE_DIR_PATTERN = /^__fixture-\d+__$/;
 
@@ -108,6 +142,23 @@ const domainFiles: Readonly<Record<string, string>> = {
   'import-pg.ts': "import { Pool } from 'pg';\nexport type _P = Pool;\n",
   'import-fastify.ts': "import fastify from 'fastify';\nexport const _f = fastify;\n",
   'import-llm.ts': `import { Anthropic } from '${LLM_PACKAGE}';\nexport type _A = Anthropic;\n`,
+  // B-2 (blocker, раунд 3 верификации I00): запрет ловил только глобал (`crypto.randomUUID()`),
+  // а не форму импорта того же источника (`import { randomUUID } from 'node:crypto'`) — идиоматичнее
+  // и именно её пишет implementer по умолчанию. Каждый вход из правки ADR-003 обязан иметь
+  // фикстуру, иначе правило считается несуществующим.
+  'import-node-crypto.ts': "import { randomUUID } from 'node:crypto';\nexport const bad = randomUUID;\n",
+  'import-node-perf-hooks.ts':
+    "import { performance as ph } from 'node:perf_hooks';\nexport const bad = (): number => ph.now();\n",
+  // Голая форма с подпутём (fs/promises) — до фикса были закрыты node:fs/node:fs/* и bare fs, но не bare fs/*.
+  'import-bare-fs-subpath.ts': "import { readFile } from 'fs/promises';\nexport const bad = readFile;\n",
+  'import-node-tls.ts': "import { connect } from 'node:tls';\nexport const bad = connect;\n",
+  'import-node-dgram.ts': "import { createSocket } from 'node:dgram';\nexport const bad = createSocket;\n",
+  'import-node-http2.ts':
+    "import { connect as connectH2 } from 'node:http2';\nexport const bad = connectH2;\n",
+  'import-node-dns.ts': "import { lookup } from 'node:dns';\nexport const bad = lookup;\n",
+  'import-node-os.ts': "import { hostname } from 'node:os';\nexport const bad = hostname;\n",
+  'import-node-worker-threads.ts':
+    "import { Worker } from 'node:worker_threads';\nexport const bad = Worker;\n",
   // Депкрузовые фикстуры живут здесь же — им нужен реальный путь внутри packages/domain/src.
   'domain-to-tools.ts': "import '@zona/agent-harness';\nexport const marker = true;\n",
   'domain-to-scripts.ts':
@@ -118,11 +169,57 @@ const domainFiles: Readonly<Record<string, string>> = {
 
 const simulationFiles: Readonly<Record<string, string>> = {
   'sim-to-pg.ts': "import { Pool } from 'pg';\nexport type _P = Pool;\n",
+  // no-unresolvable/no-circular не прогоняются через eslint (только depcruise видит SIMULATION_DIR
+  // как аргумент CLI ниже, а eslint — только DOMAIN_DIR), поэтому размещены здесь: нет риска, что
+  // typed-linting споткнётся на несуществующем модуле или цикле импортов.
+  'sim-unresolvable-import.ts':
+    "import { missing } from './does-not-exist.ts';\nexport const marker = missing;\n",
+  'sim-circular-a.ts': "import './sim-circular-b.ts';\nexport const marker = true;\n",
+  'sim-circular-b.ts': "import './sim-circular-a.ts';\nexport const marker = true;\n",
 };
 
 const representationFiles: Readonly<Record<string, string>> = {
   'rep-to-domain.ts':
     "import { PACKAGE_NAME } from '@zona/domain';\nexport const _x = PACKAGE_NAME;\n",
+};
+
+/** minor 7: contracts-are-leaf не имел фикстуры. */
+const contractsFiles: Readonly<Record<string, string>> = {
+  'contracts-to-domain.ts':
+    "import { PACKAGE_NAME } from '@zona/domain';\nexport const _x = PACKAGE_NAME;\n",
+};
+
+/** minor 7: content-is-data-only не имел фикстуры. */
+const contentFiles: Readonly<Record<string, string>> = {
+  'content-to-domain.ts':
+    "import { PACKAGE_NAME } from '@zona/domain';\nexport const _x = PACKAGE_NAME;\n",
+};
+
+/** minor 7: persistence-does-not-import-simulation не имел фикстуры. */
+const persistenceFiles: Readonly<Record<string, string>> = {
+  'persistence-to-simulation.ts':
+    "import { PACKAGE_NAME } from '@zona/simulation';\nexport const _x = PACKAGE_NAME;\n",
+};
+
+/**
+ * Промежуточное звено для транзитивной фикстуры observer-api-does-not-reach-persistence
+ * (M-1, `reachable: true`): реальный edge packages/projections -> packages/persistence, которого
+ * сегодня в продукте нет, но который правило обязано ловить, если появится.
+ */
+const projectionsFiles: Readonly<Record<string, string>> = {
+  'projections-to-persistence.ts':
+    "import type { Database } from '@zona/persistence';\nexport type _D = Database;\n",
+};
+
+/** M-1: apps/** не был ограничен ничем, кроме прямого ребра к persistence. */
+const apiFiles: Readonly<Record<string, string>> = {
+  'api-to-tools.ts': "import '@zona/agent-harness';\nexport const marker = true;\n",
+  'api-to-scripts.ts':
+    "import '../../../../scripts/boundaries/check-workspace-graph.ts';\nexport const marker = true;\n",
+  // Прямого импорта @zona/persistence из api достаточно, чтобы поймать прямое ребро, но M-1
+  // требует транзитивности: api не должен зависеть от чего-либо, что зависит от persistence.
+  'api-to-projections-persistence.ts':
+    `import '../../../../packages/projections/src/__${SUFFIX}__/projections-to-persistence.ts';\nexport const marker = true;\n`,
 };
 
 type EslintMessage = { readonly ruleId: string | null; readonly message: string };
@@ -164,6 +261,23 @@ beforeAll(() => {
     for (const [name, content] of Object.entries(representationFiles)) {
       writeFileSync(resolve(REPRESENTATION_DIR, name), content);
     }
+    for (const [name, content] of Object.entries(contractsFiles)) {
+      writeFileSync(resolve(CONTRACTS_DIR, name), content);
+    }
+    for (const [name, content] of Object.entries(contentFiles)) {
+      writeFileSync(resolve(CONTENT_DIR, name), content);
+    }
+    for (const [name, content] of Object.entries(persistenceFiles)) {
+      writeFileSync(resolve(PERSISTENCE_DIR, name), content);
+    }
+    // Порядок важен: api-to-projections-persistence.ts (ниже) ссылается на файл, материализуемый
+    // здесь, относительным путём — он обязан существовать до вызова depcruise.
+    for (const [name, content] of Object.entries(projectionsFiles)) {
+      writeFileSync(resolve(PROJECTIONS_DIR, name), content);
+    }
+    for (const [name, content] of Object.entries(apiFiles)) {
+      writeFileSync(resolve(API_DIR, name), content);
+    }
 
     const eslintRaw = runCapture('pnpm', ['exec', 'eslint', '--format', 'json', DOMAIN_DIR]);
     eslintResults = JSON.parse(eslintRaw) as readonly EslintFileResult[];
@@ -178,6 +292,11 @@ beforeAll(() => {
       DOMAIN_DIR,
       SIMULATION_DIR,
       REPRESENTATION_DIR,
+      CONTRACTS_DIR,
+      CONTENT_DIR,
+      PERSISTENCE_DIR,
+      PROJECTIONS_DIR,
+      API_DIR,
     ]);
     const depcruiseParsed = JSON.parse(depcruiseRaw) as {
       readonly summary: { readonly violations: readonly DepcruiseViolation[] };
@@ -234,6 +353,20 @@ describe('boundary fixtures — eslint (A2, DEV-02, SIM-01)', () => {
     ['import-pg.ts', 'no-restricted-imports', "'pg' import is restricted"],
     ['import-fastify.ts', 'no-restricted-imports', "'fastify' import is restricted"],
     ['import-llm.ts', 'no-restricted-imports', `'${LLM_PACKAGE}' import is restricted`],
+    // B-2: форма импорта того же источника недетерминизма, а не только глобал.
+    ['import-node-crypto.ts', 'no-restricted-imports', "'node:crypto' import is restricted"],
+    ['import-node-perf-hooks.ts', 'no-restricted-imports', "'node:perf_hooks' import is restricted"],
+    ['import-bare-fs-subpath.ts', 'no-restricted-imports', "'fs/promises' import is restricted"],
+    ['import-node-tls.ts', 'no-restricted-imports', "'node:tls' import is restricted"],
+    ['import-node-dgram.ts', 'no-restricted-imports', "'node:dgram' import is restricted"],
+    ['import-node-http2.ts', 'no-restricted-imports', "'node:http2' import is restricted"],
+    ['import-node-dns.ts', 'no-restricted-imports', "'node:dns' import is restricted"],
+    ['import-node-os.ts', 'no-restricted-imports', "'node:os' import is restricted"],
+    [
+      'import-node-worker-threads.ts',
+      'no-restricted-imports',
+      "'node:worker_threads' import is restricted",
+    ],
   ] as const)('%s -> %s срабатывает и указывает на нужное правило', (file, ruleId, fragment) => {
     expect(hasEslintMessage(file, ruleId, fragment)).toBe(true);
   });
@@ -261,6 +394,22 @@ describe('boundary fixtures — dependency-cruiser (A2, ADR-002/003/006)', () =>
     expect(hasDepViolation('sim-to-pg.ts', 'core-has-no-adapter-dependencies')).toBe(true);
   });
 
+  // B-2: node:crypto/node:perf_hooks/bare fs-подпуть в форме импорта — тот же regex, что и для
+  // no-restricted-imports выше, должен независимо ловить это в dependency-cruiser.
+  it.each([
+    ['import-node-crypto.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-perf-hooks.ts', 'core-has-no-adapter-dependencies'],
+    ['import-bare-fs-subpath.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-tls.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-dgram.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-http2.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-dns.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-os.ts', 'core-has-no-adapter-dependencies'],
+    ['import-node-worker-threads.ts', 'core-has-no-adapter-dependencies'],
+  ] as const)('%s -> %s срабатывает в depcruise', (file, ruleName) => {
+    expect(hasDepViolation(file, ruleName)).toBe(true);
+  });
+
   it('LLM-пакет где угодно: no-runtime-llm-anywhere', () => {
     expect(hasDepViolation('import-llm.ts', 'no-runtime-llm-anywhere')).toBe(true);
   });
@@ -270,5 +419,58 @@ describe('boundary fixtures — dependency-cruiser (A2, ADR-002/003/006)', () =>
       v.from.endsWith('domain-to-contracts-legal.ts'),
     );
     expect(anyViolation).toBe(false);
+  });
+
+  // M-1 (major, раунд 3 верификации I00): apps/** не был ограничен ничем, кроме прямого ребра
+  // к persistence. Симметричные правила и транзитивная форма observer-api-does-not-reach-persistence.
+  it('apps/api -> tools/**: apps-do-not-depend-on-tools', () => {
+    expect(hasDepViolation('api-to-tools.ts', 'apps-do-not-depend-on-tools')).toBe(true);
+  });
+
+  it('apps/api -> scripts/**: apps-do-not-depend-on-scripts-or-tests', () => {
+    expect(hasDepViolation('api-to-scripts.ts', 'apps-do-not-depend-on-scripts-or-tests')).toBe(
+      true,
+    );
+  });
+
+  it('apps/api -> packages/projections -> packages/persistence (транзитивно): observer-api-does-not-reach-persistence', () => {
+    expect(
+      hasDepViolation(
+        'api-to-projections-persistence.ts',
+        'observer-api-does-not-reach-persistence',
+      ),
+    ).toBe(true);
+  });
+
+  // minor 7 (раунд 3 верификации I00): контроли без фикстур, найденные независимой проверкой.
+  it('packages/contracts -> packages/domain: contracts-are-leaf', () => {
+    expect(hasDepViolation('contracts-to-domain.ts', 'contracts-are-leaf')).toBe(true);
+  });
+
+  it('packages/content -> packages/domain: content-is-data-only', () => {
+    expect(hasDepViolation('content-to-domain.ts', 'content-is-data-only')).toBe(true);
+  });
+
+  it('packages/persistence -> packages/simulation: persistence-does-not-import-simulation', () => {
+    expect(
+      hasDepViolation('persistence-to-simulation.ts', 'persistence-does-not-import-simulation'),
+    ).toBe(true);
+  });
+
+  it('нерезолвимый импорт: no-unresolvable', () => {
+    expect(hasDepViolation('sim-unresolvable-import.ts', 'no-unresolvable')).toBe(true);
+  });
+
+  it('взаимный импорт двух модулей: no-circular', () => {
+    // depcruise репортит цикл один раз, от модуля, с которого начался обход графа (a -> b),
+    // а не оба направления по отдельности — проверяем ребро целиком, а не только `from`.
+    expect(
+      depcruiseViolations.some(
+        (v) =>
+          v.rule.name === 'no-circular' &&
+          v.from.endsWith('sim-circular-a.ts') &&
+          v.to.endsWith('sim-circular-b.ts'),
+      ),
+    ).toBe(true);
   });
 });

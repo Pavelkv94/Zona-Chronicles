@@ -96,31 +96,29 @@ acceptance-критерии исполняемы, тест наблюдался 
 случайности/сети/env в домене нет, документация/ADR обновлены, полный gate зелёный, независимый
 reviewer не нашёл blocker, diff ограничен заявленным scope.
 
-## Непрерывность при пятичасовом usage window (DEV-01)
+## Исчерпание usage window
 
-Исчерпание окна — техническая пауза, а не `complete`, `blocked` или повод сократить scope.
+Исчерпание пятичасового окна — техническая пауза, а не `complete`, `blocked` или повод
+сократить scope. Но обрабатывают её человек и внешний runner: **репозиторий не обещает
+автопродолжения** и не содержит механики checkpoint/resume.
 
-```text
-remaining > 2%  -> обычная работа
-remaining <= 2% -> checkpoint_only: не начинать новый task/merge/долгий test
-remaining <= 1% -> waiting_for_usage_reset: только атомарный checkpoint и безопасная остановка
-usage reset     -> validating_resume -> in_progress
+Требование DEV-01 снято 2026-08-21 решением владельца (ADR-009): адаптеров usage telemetry,
+persisted wake и session resume нет и в этой среде быть не может, а их разработка — это
+инфраструктура без отношения к продукту. Не восстанавливайте протокол как декларацию: если
+автономная работа через окно понадобится, требование вводится заново вместе с адаптерами.
+
+## Профиль для unattended-прогонов
+
+`.claude/settings.autonomous.json` ужесточает права (sandbox с `failIfUnavailable`, запрет
+установки зависимостей и операций интеграции истории, сетевой allowlist). Он **не применяется
+автоматически** — только при явном запуске:
+
+```sh
+claude --settings .claude/settings.autonomous.json
 ```
 
-Порог определяется только provider telemetry пятичасового окна (не context window и не оценка
-токенов). При `<= 2%` создаётся/обновляется `.claude/checkpoints/<task-id>.md` со всеми
-обязательными полями. При `<= 1%` запрещены новый model call, subagent, установка зависимостей,
-merge/rebase/push, скрытый stash, destructive reset, обновление golden и ослабление gate.
-Ожидание и возобновление выполняет внешний runner по `reported_reset_at + safety_margin`.
-Если telemetry, persisted wake или session resume недоступны — записать
-`LIMIT_AUTOCONTINUE_UNAVAILABLE` и вернуть управление orchestrator-у, не обещая автопродолжение.
-
-**Текущее состояние репозитория:** реальных адаптеров нет, `pnpm continuity:capability-check`
-отвечает `LIMIT_AUTOCONTINUE_UNAVAILABLE` и завершается кодом 1. Механика checkpoint/resume
-доказана только на инъектированных фикстурах (`pnpm continuity:dry-run`). Автопродолжение
-обещать нельзя.
-
-Протокол и acceptance: §9 `08_TDD_AND_AGENT_WORKFLOW`, I00 в `10_ITERATION_MASTER_PLAN`.
+Основные контроли от него не зависят: границы, владение путями и security-проверки исполняются
+hook-ами, lint-ом и CI в каждом прогоне (ADR-008).
 
 ## Что читать перед изменением scope
 
