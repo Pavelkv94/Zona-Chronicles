@@ -1,6 +1,6 @@
 {
-  "task_id": "I01-F1",
-  "owner_role": "domain-implementer",
-  "write_paths": ["packages/domain/**"],
-  "allow_protected_paths": []
+  "task_id": "I01-F2",
+  "owner_role": "contract-steward",
+  "write_paths": ["packages/contracts/**", "apps/cli/**"],
+  "allow_protected_paths": ["packages/contracts/**"]
 }
