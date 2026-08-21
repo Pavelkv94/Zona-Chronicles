@@ -7,3 +7,5 @@ pnpm-lock.yaml
 docs/
 # Dockerfile не имеет parser-а у Prettier.
 ops/Dockerfile
+# Машинно-локальный файл Claude Code: его наличие не должно делать gate красным.
+.claude/settings.local.json
