@@ -13,9 +13,9 @@
  */
 import {
   RUNTIME_ID_PREFIXES,
-  addMinutes,
   isInstantError,
   parseCanonicalInstant,
+  requireAddMinutes,
   type Command,
   type CommandRejectionCode,
   type Instant,
@@ -120,7 +120,14 @@ function decideJourneyStart(
   }
 
   const worldTime = context.clock.now();
-  const expectedArrival = addMinutes(worldTime, route.travelMinutes);
+  // `requireAddMinutes`, а не `addMinutes`: с M1 сдвиг возвращает `Instant | InstantError`, а
+  // нецелое `travelMinutes` из контента обязано быть громким отказом, а не тихим округлением.
+  // Обработать его здесь нечем — это дефект bundle-а, не отказ по доменному правилу.
+  const expectedArrival = requireAddMinutes(
+    worldTime,
+    route.travelMinutes,
+    `travelMinutes маршрута ${route.id}`,
+  );
   const versions = context.ruleset.versions;
 
   const event: Omit<JourneyStartedEvent, 'recorded_at'> = {

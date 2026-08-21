@@ -90,10 +90,26 @@ export const SnapshotBundlesSchema = Type.Object(
  * Node.js/ICU/timezone. Обновление любого из них требует прогона compatibility suite, поэтому
  * значения обязаны быть записаны в самом snapshot, а не подразумеваться средой запуска.
  */
+/**
+ * Версия ОБЛАСТИ snapshot checksum.
+ *
+ * Отдельная от `CANONICAL_SERIALIZATION_VERSION` величина, потому что это две разные
+ * договорённости: первая отвечает на вопрос «как значение превращается в байты», вторая — «над
+ * каким подмножеством снимка эти байты считаются». Изменить можно любую из них по отдельности,
+ * и checksum разойдётся в обоих случаях, поэтому потребитель обязан видеть обе.
+ *
+ * `/1` — первая редакция I01: checksum считался над всем снимком, кроме поля `checksum`.
+ * `/2` — текущая: только над содержимым, которое воспроизводит replay (B2, §9).
+ */
+export const SNAPSHOT_CHECKSUM_SCOPE_VERSION = 'snapshot-checksum/2';
+
 export const DeterministicRuntimeProfileSchema = Type.Object(
   {
     canonical_serialization_version: Type.Literal(CANONICAL_SERIALIZATION_VERSION, {
       description: 'Версия алгоритма канонической сериализации, которой посчитан checksum.',
+    }),
+    snapshot_checksum_scope_version: Type.Literal(SNAPSHOT_CHECKSUM_SCOPE_VERSION, {
+      description: 'Версия области snapshot checksum: над каким подмножеством снимка он считан.',
     }),
     prng_version: Type.String({ minLength: 1, description: 'Версия PRNG как зависимости мира.' }),
     numeric_rounding_policy_version: Type.String({
@@ -109,6 +125,8 @@ export const DeterministicRuntimeProfileSchema = Type.Object(
   },
   { additionalProperties: false, description: 'Deterministic runtime profile (§9).' },
 );
+
+export type DeterministicRuntimeProfile = Static<typeof DeterministicRuntimeProfileSchema>;
 
 export const SnapshotSchema = Type.Object(
   {
@@ -132,6 +150,11 @@ export const SnapshotSchema = Type.Object(
       DrawIndexSchema,
       {
         description: 'Позиции PRNG-потоков по stable stream key (§7, §9).',
+        // Обязателен, иначе объявленный pattern ключа декоративен: `Type.Record` порождает
+        // `patternProperties`, а JSON Schema разрешает всё, что шаблону НЕ соответствует, если
+        // `additionalProperties` не запрещены. Без этой строки ключи `"NOT A KEY!!"`, `""` и
+        // `"../../etc/passwd"` принимались как валидные stream key.
+        additionalProperties: false,
       },
     ),
     canonical_state: Type.Unknown({
@@ -179,36 +202,137 @@ export function verifyBundleRef(content: unknown, ref: BundleRef): ValidationRes
 }
 
 /**
- * Checksum снимка.
+ * Поля, ВХОДЯЩИЕ в checksum: ровно то содержимое, которое воспроизводит replay (§9, B2).
+ *
+ * §9 требует одновременно двух вещей: `created_at` — «wall clock только как metadata», и
+ * снимок валиден, если replay событий после `last_sequence` даёт тот же checksum, что полный
+ * replay. Два прогона, выполненные в разное время, неизбежно получат разный `created_at`;
+ * совместимы оба требования только тогда, когда `created_at` вне checksum.
+ *
+ * `deterministic_runtime_profile` исключён по более сильной причине. Профиль хоста внутри
+ * checksum делает НАСТОЯЩУЮ cross-host регрессию детерминизма неотличимой от ожидаемой разницы
+ * профиля: когда в ядро просочится ICU- или ordering-зависимое поведение, checksum разойдётся
+ * между macOS и Linux, и объяснение «checksum различается между хостами, это ожидаемо» закроет
+ * дефект как ожидаемый. Вне checksum равенство между хостами снова становится сигналом, а сам
+ * профиль проверяется отдельно — `verifyRuntimeProfileCompatibility`, совместимостью, а не
+ * равенством.
+ */
+export const SNAPSHOT_CHECKSUM_FIELDS = [
+  'world_id',
+  'last_sequence',
+  'world_time',
+  'bundles',
+  'prng_stream_positions',
+  'canonical_state',
+] as const;
+
+/**
+ * Поля, СОЗНАТЕЛЬНО исключённые из checksum. Список существует не для документации: contract
+ * test сверяет объединение двух списков с полями `SnapshotSchema`, поэтому новое поле снимка
+ * невозможно добавить, молча оставив его вне checksum, — придётся объявить, к какой половине
+ * оно относится. Контроль того же класса, что исчерпывающий union событий (A8).
+ */
+export const SNAPSHOT_CHECKSUM_EXCLUDED_FIELDS = [
+  'checksum',
+  'created_at',
+  'deterministic_runtime_profile',
+] as const;
+
+/**
+ * Checksum снимка над областью `SNAPSHOT_CHECKSUM_FIELDS`.
  *
  * Два правила, и оба обязательны, иначе значение перестаёт быть функцией состояния:
  *
  * 1. Поле `checksum` в расчёт НЕ входит — иначе значение было бы самоссылочным.
- * 2. Моменты времени сначала приводятся к канонической форме. `…T20:20:00+02:00` и
+ * 2. `world_time` сначала приводится к канонической форме. `…T20:20:00+02:00` и
  *    `…T18:20:00.000Z` — один момент мира; если бы checksum считался по тексту как есть,
  *    один и тот же снимок давал бы разный checksum в зависимости от того, в каком смещении
  *    его записал источник. Ровно это ловит A3.
  */
 export function snapshotChecksum(snapshot: Omit<Snapshot, 'checksum'>): string {
-  const { checksum: _self, ...rest } = snapshot as Snapshot;
-  return requireChecksum(normalizeInstantFields(rest), 'snapshot');
-}
+  const source = snapshot as unknown as Record<string, unknown>;
+  const scoped: Record<string, unknown> = {};
+  for (const field of SNAPSHOT_CHECKSUM_FIELDS) {
+    scoped[field] = source[field];
+  }
 
-/** Приводит моменты снимка к канонической форме; невалидный момент — ошибка вызывающего. */
-function normalizeInstantFields(snapshot: Record<string, unknown>): Record<string, unknown> {
-  const normalized: Record<string, unknown> = { ...snapshot };
-  for (const field of ['world_time', 'created_at'] as const) {
-    const value = snapshot[field];
-    if (typeof value !== 'string') {
-      continue;
-    }
-    const result = normalizeInstantField(`/${field}`, value);
+  const worldTime = scoped['world_time'];
+  if (typeof worldTime === 'string') {
+    const result = normalizeInstantField('/world_time', worldTime);
     if (isValidationIssue(result)) {
       throw new Error(`невозможно посчитать checksum снимка: ${result.path} ${result.message}`);
     }
-    normalized[field] = result.iso;
+    scoped['world_time'] = result.iso;
   }
-  return normalized;
+
+  return requireChecksum(scoped, 'snapshot');
+}
+
+/**
+ * Поля профиля, которые обязаны совпадать ТОЧНО: каждое из них — часть определения
+ * канонического результата, а не свойство машины. Разные значения означают, что два checksum
+ * посчитаны по разным правилам и несопоставимы в принципе.
+ */
+export const EXACT_MATCH_PROFILE_FIELDS = [
+  'canonical_serialization_version',
+  'snapshot_checksum_scope_version',
+  'prng_version',
+  'numeric_rounding_policy_version',
+  'icu_version',
+  'timezone',
+] as const;
+
+/**
+ * Поля, у которых §7 квалифицирует major/minor profile: patch-версия Node.js в квалификацию не
+ * входит, поэтому её расхождение — не повод объявлять профиль несовместимым. Записывается при
+ * этом точное значение: усечь запись означало бы потерять то, чего уже не восстановить.
+ */
+export const MAJOR_MINOR_PROFILE_FIELDS = ['node_version'] as const;
+
+function majorMinor(version: string): string {
+  return version.split('.').slice(0, 2).join('.');
+}
+
+/**
+ * Совместимость профиля выполнения (§7, §9, B2).
+ *
+ * Не равенство: checksum больше не накрывает профиль, поэтому расхождение профиля обязано быть
+ * ОТДЕЛЬНЫМ, названным отказом, а не подмешиваться в расхождение checksum. §7: «обновление
+ * runtime не принимается, пока compatibility suite не сравнит replay и resimulation regression
+ * bank на старом и новом profile» — значит несовместимость это «пока не квалифицировано», а не
+ * «сломано».
+ */
+export function verifyRuntimeProfileCompatibility(
+  qualified: DeterministicRuntimeProfile,
+  candidate: DeterministicRuntimeProfile,
+): ValidationResult<DeterministicRuntimeProfile> {
+  const issues: ValidationIssue[] = [];
+
+  for (const field of EXACT_MATCH_PROFILE_FIELDS) {
+    if (qualified[field] !== candidate[field]) {
+      issues.push({
+        path: `/${field}`,
+        message:
+          `профиль несовместим по ${field}: квалифицирован ${JSON.stringify(qualified[field])}, ` +
+          `предъявлен ${JSON.stringify(candidate[field])}; это часть определения канонического ` +
+          'результата, поэтому два checksum несопоставимы',
+      });
+    }
+  }
+
+  for (const field of MAJOR_MINOR_PROFILE_FIELDS) {
+    if (majorMinor(qualified[field]) !== majorMinor(candidate[field])) {
+      issues.push({
+        path: `/${field}`,
+        message:
+          `профиль несовместим по ${field}: квалифицирован major/minor ` +
+          `${majorMinor(qualified[field])}, предъявлен ${majorMinor(candidate[field])}; ` +
+          '§7 требует прогона compatibility suite до принятия нового runtime',
+      });
+    }
+  }
+
+  return issues.length > 0 ? { errors: issues } : { value: candidate };
 }
 
 export function verifySnapshotChecksum(snapshot: Snapshot): ValidationResult<Snapshot> {

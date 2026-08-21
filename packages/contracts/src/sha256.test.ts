@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { SHA256_MAX_INPUT_BYTES, messageLengthBitWords, sha256Hex } from './sha256.ts';
+import {
+  SHA256_MAX_INPUT_BYTES,
+  messageLengthBitWords,
+  sha256Hex,
+  sha256HexOfBytes,
+  sha256PaddedLength,
+} from './sha256.ts';
 
 /**
  * Векторы FIPS 180-4 плюс границы длины блока и многобайтовый UTF-8.
@@ -95,5 +101,44 @@ describe('messageLengthBitWords — граница 2^32 бит', () => {
     // неверную длину сообщения. Тихий неверный хеш хуже отказа: он выглядит как
     // расхождение состояния мира.
     expect(() => messageLengthBitWords(byteLength)).toThrow(/предел|длин/i);
+  });
+});
+
+/**
+ * Minor 3 верификации I01: `SHA256_MAX_INPUT_BYTES` был недостижим. Padding считался
+ * 32-битными сдвигами (`(((len + 8) >> 6) + 1) << 6`), поэтому при длине от 2³¹−8 выражение
+ * переполнялось в отрицательное число и `new Uint8Array(...)` бросал безымянный
+ * `RangeError: Invalid array length` — вместо документированной названной ошибки, до которой
+ * управление уже не доходило.
+ */
+describe('padding: арифметика длины не переполняется на 32 битах', () => {
+  it.each([
+    [0, 64],
+    [55, 64],
+    [56, 128],
+    [63, 128],
+    [64, 128],
+    [119, 128],
+    [120, 192],
+  ])('для %i байт даёт %i байт дополненного сообщения', (byteLength, expected) => {
+    expect(sha256PaddedLength(byteLength)).toBe(expected);
+  });
+
+  it.each([2 ** 31 - 9, 2 ** 31 - 8, 2 ** 31, 2 ** 32, 2 ** 40, SHA256_MAX_INPUT_BYTES])(
+    'для %i байт даёт положительную длину, кратную 64 и вмещающую сообщение с padding',
+    (byteLength) => {
+      const padded = sha256PaddedLength(byteLength);
+      expect(padded % 64).toBe(0);
+      expect(padded).toBeGreaterThanOrEqual(byteLength + 9);
+      expect(padded).toBeLessThan(byteLength + 9 + 64);
+    },
+  );
+
+  it('длина сверх предела отвергается НАЗВАННОЙ ошибкой до выделения памяти', () => {
+    // Проверка обязана стоять до `new Uint8Array`: иначе первым сработает платформенный
+    // RangeError, и документированный предел не будет достигнут никогда.
+    const oversized = { length: 2 ** 50 } as unknown as Uint8Array;
+    expect(() => sha256HexOfBytes(oversized)).toThrow(/предел|длин/i);
+    expect(() => sha256HexOfBytes(oversized)).not.toThrow(/Invalid array length/);
   });
 });

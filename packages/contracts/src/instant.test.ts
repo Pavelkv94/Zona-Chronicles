@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
-  addMinutes,
+  type Instant,
   compareInstants,
   isInstantError,
   parseInstant,
   requireInstant,
   STRICT_ISO_8601_INSTANT_PATTERN,
 } from './instant.ts';
+// `addMinutes` живёт в `canonical-instant.ts`, а не здесь: его результат обязан быть
+// КАНОНИЧЕСКОЙ строкой, то есть форматироваться `formatCanonicalInstant` (M1). Обратный импорт
+// из `instant.ts` создал бы цикл модулей, запрещённый `no-circular`. Тесты остались в этом
+// файле, чтобы история assertions не потерялась при переносе.
+import { addMinutes, requireAddMinutes } from './canonical-instant.ts';
 
 /** 2026-08-20T12:00:00.000Z. */
 const EPOCH_2026_08_20_T12Z = 1_787_227_200_000;
@@ -123,16 +128,99 @@ describe('compareInstants', () => {
 });
 
 describe('addMinutes', () => {
+  function shifted(base: Instant, minutes: number): Instant {
+    const result = addMinutes(base, minutes);
+    if (isInstantError(result)) {
+      throw new Error(`ожидался момент, получена ошибка: ${result.error}`);
+    }
+    return result;
+  }
+
   it('сдвигает epochMs и выдаёт корректный ISO без RangeError', () => {
     const base = requireInstant('2026-08-20T12:00:00.000Z', 'test');
-    const shifted = addMinutes(base, 5);
-    expect(shifted.iso).toBe('2026-08-20T12:05:00.000Z');
-    expect(shifted.epochMs).toBe(base.epochMs + 5 * 60_000);
+    const result = shifted(base, 5);
+    expect(result.iso).toBe('2026-08-20T12:05:00.000Z');
+    expect(result.epochMs).toBe(base.epochMs + 5 * 60_000);
   });
 
   it('не бросает RangeError на границе — арифметика работает над уже валидированным epochMs', () => {
     const base = requireInstant('2026-08-20T12:00:00.000Z', 'test');
     expect(() => addMinutes(base, 0)).not.toThrow();
+  });
+});
+
+/**
+ * M1. Прежняя редакция считала `epochMs + minutes * 60_000` и форматировала результат через
+ * `new Date(epochMs).toISOString()`. Три следствия, каждое из которых запрещено решением 2 и
+ * критерием A5, проверяются здесь по отдельности.
+ */
+describe('M1: addMinutes не округляет молча', () => {
+  const BASE = requireInstant('2028-05-17T06:00:00.000Z', 'test');
+
+  function errorOf(minutes: number): string {
+    const result = addMinutes(BASE, minutes);
+    if (!isInstantError(result)) {
+      throw new Error(
+        `ожидался отказ, получен момент ${result.iso} (epochMs ${String(result.epochMs)})`,
+      );
+    }
+    return result.error;
+  }
+
+  it('дробные минуты отвергаются, а не усекаются: iso и epochMs больше не могут разойтись', () => {
+    // Прежнее поведение: { iso: '…06:00:30.000Z', epochMs: 1840341630000.006 } — текст утверждал
+    // одно, число другое, и checksum факта зависел от того, какое из двух прочитал потребитель.
+    expect(errorOf(0.5000001)).toMatch(/цел/i);
+    expect(errorOf(0.5)).toMatch(/цел/i);
+    expect(errorOf(1 / 3)).toMatch(/цел/i);
+  });
+
+  it('нецелое число минут названо в сообщении: причина отказа проверяема, а не угадывается', () => {
+    expect(errorOf(0.5000001)).toContain('0.5000001');
+  });
+
+  it.each([
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['-Infinity', Number.NEGATIVE_INFINITY],
+  ])('отвергает %s минут (A5)', (_label, minutes) => {
+    expect(errorOf(minutes)).toMatch(/цел|конечн/i);
+  });
+
+  it('сдвиг за пределы четырёхзначного года отвергается, а не печатает +201895-07-13', () => {
+    // Прежнее поведение: iso '+201895-07-13T06:00:00.000Z' — строка, которую parseInstant
+    // тут же отверг бы, то есть момент, невыразимый в собственном контракте момента.
+    const error = errorOf(200_000 * 365 * 24 * 60);
+    expect(error).toMatch(/диапазон/i);
+    expect(error).not.toContain('+201895');
+  });
+
+  it('сдвиг на 1e14 минут даёт названную ошибку, а не RangeError: Invalid time value', () => {
+    expect(() => addMinutes(BASE, 1e14)).not.toThrow();
+    expect(errorOf(1e14)).toMatch(/диапазон|цел/i);
+  });
+
+  it('результат канонический и разбирается обратно тем же контрактом момента', () => {
+    for (const minutes of [-1_000_000, -1, 0, 1, 1_000_000]) {
+      const result = addMinutes(BASE, minutes);
+      expect(isInstantError(result), String(minutes)).toBe(false);
+      if (isInstantError(result)) continue;
+      expect(result.iso).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      const reparsed = parseInstant(result.iso);
+      expect(isInstantError(reparsed)).toBe(false);
+      if (isInstantError(reparsed)) continue;
+      expect(reparsed.epochMs).toBe(result.epochMs);
+    }
+  });
+
+  it('requireAddMinutes бросает названную ошибку с меткой источника', () => {
+    expect(() => requireAddMinutes(BASE, 0.5, 'travelMinutes маршрута')).toThrow(
+      /travelMinutes маршрута/,
+    );
+    expect(() => requireAddMinutes(BASE, 0.5, 'travelMinutes маршрута')).toThrow(/цел/i);
+    expect(requireAddMinutes(BASE, 90, 'travelMinutes маршрута').iso).toBe(
+      '2028-05-17T07:30:00.000Z',
+    );
   });
 });
 

@@ -330,8 +330,27 @@ export function decodeWorldEvent(input: unknown): ValidationResult<WorldEvent> {
   return { value: normalized as unknown as WorldEvent };
 }
 
-/** Каноническая сериализация события: один и тот же текст на любой машине (SIM-01). */
+/**
+ * Каноническая сериализация события: один и тот же текст на любой машине (SIM-01).
+ *
+ * Инварианты множеств id проверяются и ЗДЕСЬ, а не только в `decodeWorldEvent`. Прежде
+ * проверка была односторонней: продюсер, который строит событие сам и сразу считает над ним
+ * checksum, канонизировал «что дали» и получал другой checksum того же факта — расхождение
+ * всплывало у потребителя, далеко от места, где его создали (minor 4 верификации I01).
+ *
+ * Бросает, а не возвращает ошибку: несортированное множество на выходе продюсера — дефект кода,
+ * а не входные данные, ровно как неканонизируемое значение в `requireCanonical`.
+ */
 export function encodeWorldEvent(event: WorldEvent): string {
+  const issues = [
+    ...idSetIsSorted('/actor_ids', event.actor_ids),
+    ...idSetIsSorted('/subject_ids', event.subject_ids),
+    ...idSetIsSorted('/caused_by', event.caused_by),
+  ];
+  if (issues.length > 0) {
+    const detail = issues.map((issue) => `${issue.path} ${issue.message}`).join('; ');
+    throw new Error(`невозможно сериализовать world event ${event.type}: ${detail}`);
+  }
   return requireCanonical(event, `world event ${event.type}`);
 }
 

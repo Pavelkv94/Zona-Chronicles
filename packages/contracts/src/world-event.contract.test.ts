@@ -84,6 +84,25 @@ describe('world event envelope v1 (§3)', () => {
     expect(encodeWorldEvent(decoded(shuffled))).toBe(encodeWorldEvent(decoded(VALID_EVENT)));
   });
 
+  it('encodeWorldEvent отвергает несортированное множество id, а не канонизирует что дали', () => {
+    // Инвариант "множество id отсортировано" исполнялся только в decodeWorldEvent, то есть был
+    // односторонним: продюсер, который строит событие сам и сразу считает checksum, получал
+    // ДРУГОЙ checksum того же факта и узнавал об этом только у потребителя.
+    const event = decoded(VALID_EVENT);
+    for (const field of ['actor_ids', 'subject_ids', 'caused_by'] as const) {
+      const unsorted = { ...event, [field]: ['agent:rook', 'agent:kite'] };
+      expect(() => encodeWorldEvent(unsorted), field).toThrow(/отсортирован/);
+    }
+  });
+
+  it('encodeWorldEvent принимает отсортированное множество id', () => {
+    const sorted = {
+      ...decoded(VALID_EVENT),
+      actor_ids: ['agent:kite', 'agent:rook'],
+    } as WorldEvent;
+    expect(() => encodeWorldEvent(sorted)).not.toThrow();
+  });
+
   it('нормализует смещения обоих моментов к UTC', () => {
     const event = decoded({
       ...VALID_EVENT,

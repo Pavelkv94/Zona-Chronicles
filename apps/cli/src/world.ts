@@ -20,12 +20,11 @@
 import {
   type Snapshot,
   CANONICAL_SERIALIZATION_VERSION,
-  CommandSchema,
-  SnapshotSchema,
-  WorldEventSchema,
+  SNAPSHOT_CHECKSUM_SCOPE_VERSION,
   bundleRefFor,
   isInstantError,
   parseCanonicalInstant,
+  schemaBundleRef,
   snapshotChecksum,
 } from '@zona/contracts';
 import {
@@ -34,13 +33,10 @@ import {
   testRulesetVersions,
   type AgentState,
   type RouteDefinition as DomainRouteDefinition,
+  type RulesetVersions,
   type WorldState,
 } from '@zona/domain';
 import { CONTENT_VERSION, PROTOTYPE_WORLD, type WorldDefinition } from '@zona/content';
-
-/** Schema bundle version: `SemanticVersionSchema` требует MAJOR.MINOR.PATCH; совпадает с
- *  `ENVELOPE_SCHEMA_VERSION` контракта (§4), записанным как major=1. */
-const SCHEMA_BUNDLE_VERSION = '1.0.0';
 
 /** Наш PRNG — не самостоятельный источник истины (это `@zona/domain`); версия здесь описывает
  *  сам алгоритм для deterministic runtime profile (§9), см. `random-source.ts` в domain. */
@@ -51,6 +47,43 @@ const NUMERIC_ROUNDING_POLICY_VERSION = 'numeric-units/1';
 /** Каноническое время мира всегда UTC независимо от `TZ` хоста (A3) — это НЕ профиль хоста, а
  *  фиксированное свойство канонического ядра, поэтому литерал, а не чтение окружения. */
 const CANONICAL_TIMEZONE = 'UTC';
+
+/**
+ * Профиль ХОСТА: единственная часть deterministic runtime profile, которая описывает машину, а
+ * не канонические правила. Инъектируется, а не читается напрямую, ровно по одной причине: после
+ * B2 профиль не входит в snapshot checksum, и это свойство обязано быть ПРОВЕРЯЕМЫМ — тест
+ * подставляет чужой хост и убеждается, что checksum не сдвинулся. Без инъекции такая проверка
+ * потребовала бы второй машины, то есть не выполнялась бы никогда.
+ */
+export interface HostRuntimeProfile {
+  readonly nodeVersion: string;
+  readonly icuVersion: string;
+}
+
+/** Профиль текущего процесса. Node/ICU одинаковы в рамках хоста независимо от TZ/LC_ALL (A3). */
+export function currentHostRuntimeProfile(): HostRuntimeProfile {
+  return {
+    nodeVersion: process.version.replace(/^v/, ''),
+    icuVersion: process.versions['icu'] ?? 'unavailable',
+  };
+}
+
+/**
+ * Содержимое rules bundle — фактический ruleset, а не заглушка `{}` (M3).
+ *
+ * Прежняя редакция хешировала пустой объект, и checksum равнялся `sha256("{}")`: любое
+ * изменение правил при неизменной версии было необнаружимо, то есть A9 для этого bundle не
+ * выполнялся. Хешируется объект версий целиком, а не перечисленные вручную поля: поле,
+ * добавленное в `RulesetVersions`, попадает в checksum само, без правки этого места.
+ *
+ * Когда у `Ruleset` появятся коэффициенты (§7), они добавляются сюда вместе с итерацией,
+ * которая их вводит — иначе checksum снова начнёт лгать о содержимом.
+ */
+export function rulesBundleContent(
+  versions: RulesetVersions = testRulesetVersions(),
+): Record<string, unknown> {
+  return { versions: { ...versions } };
+}
 
 function canonicalInstant(iso: string, label: string): string {
   const parsed = parseCanonicalInstant(iso);
@@ -126,7 +159,10 @@ export interface SeededWorld {
  * побайтово тот же `snapshot` в любом процессе (A1); разный seed даёт другой, но валидный мир
  * (A2), потому что различается ТОЛЬКО распределение агентов по локациям.
  */
-export function seedWorld(seed: number): SeededWorld {
+export function seedWorld(
+  seed: number,
+  host: HostRuntimeProfile = currentHostRuntimeProfile(),
+): SeededWorld {
   if (!Number.isSafeInteger(seed)) {
     throw new Error(`world: seed обязан быть безопасным целым, получено ${String(seed)}`);
   }
@@ -157,26 +193,21 @@ export function seedWorld(seed: number): SeededWorld {
     // created_at делит момент с world_time, а не притворяется настоящими часами.
     created_at: worldTime,
     bundles: {
-      // I01: у Ruleset пока нет коэффициентов (`packages/domain/src/ports/ruleset.ts`), поэтому
-      // содержимое rules bundle пусто — версия всё равно берётся из общего источника версий,
-      // чтобы не разойтись с тем, что реально проставил бы `decide` в событие.
-      rules: bundleRefFor(rulesetVersions.rulesVersion, {}),
+      rules: bundleRefFor(rulesetVersions.rulesVersion, rulesBundleContent(rulesetVersions)),
       content: bundleRefFor(CONTENT_VERSION, content),
-      schema: bundleRefFor(SCHEMA_BUNDLE_VERSION, {
-        command: CommandSchema.$id,
-        world_event: WorldEventSchema.$id,
-        snapshot: SnapshotSchema.$id,
-      }),
+      // Содержимое — сами JSON Schema документы, версия и состав принадлежат контрактам
+      // (`schema-bundle.ts`): bundle схем — их артефакт, а не CLI (M3, A9).
+      schema: schemaBundleRef(),
     },
     deterministic_runtime_profile: {
       canonical_serialization_version: CANONICAL_SERIALIZATION_VERSION,
+      snapshot_checksum_scope_version: SNAPSHOT_CHECKSUM_SCOPE_VERSION,
       prng_version: PRNG_VERSION,
       numeric_rounding_policy_version: NUMERIC_ROUNDING_POLICY_VERSION,
-      // Node/ICU: реальный профиль процесса — он одинаков в рамках одного хоста независимо от
-      // TZ/LC_ALL (A3 меняет именно их, не сборку Node), поэтому чтение здесь не рискует
-      // детерминизмом между прогонами одного и того же CI/хоста.
-      node_version: process.version.replace(/^v/, ''),
-      icu_version: process.versions['icu'] ?? 'unavailable',
+      // Node/ICU — профиль машины, а не канонических правил: он записывается в снимок, но в
+      // checksum не входит (B2) и проверяется `verifyRuntimeProfileCompatibility`.
+      node_version: host.nodeVersion,
+      icu_version: host.icuVersion,
       // В отличие от node/icu — это НЕ чтение окружения хоста, а фиксированное свойство
       // канонического мира (world time всегда UTC); литерал, а не `Intl`/`process.env.TZ`.
       timezone: CANONICAL_TIMEZONE,

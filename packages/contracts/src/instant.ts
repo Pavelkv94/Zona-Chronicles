@@ -195,7 +195,10 @@ export function compareInstants(a: Instant, b: Instant): number {
   return a.epochMs - b.epochMs;
 }
 
-export function addMinutes(instant: Instant, minutes: number): Instant {
-  const epochMs = instant.epochMs + minutes * 60_000;
-  return { iso: new Date(epochMs).toISOString(), epochMs };
-}
+/**
+ * Арифметика над моментом (`addMinutes`, `requireAddMinutes`) живёт в `canonical-instant.ts`.
+ *
+ * Не «так исторически сложилось»: её результат обязан быть КАНОНИЧЕСКОЙ строкой, а значит
+ * форматироваться `formatCanonicalInstant`. Импорт из `instant.ts` в обратную сторону создал бы
+ * цикл модулей, запрещённый правилом `no-circular` (ADR-002).
+ */

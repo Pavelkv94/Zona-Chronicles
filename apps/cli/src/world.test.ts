@@ -1,7 +1,14 @@
-import { decodeSnapshot, isValidationFailure } from '@zona/contracts';
+import {
+  decodeSnapshot,
+  isValidationFailure,
+  schemaBundleContent,
+  schemaBundleRef,
+  verifyBundleRef,
+  verifyRuntimeProfileCompatibility,
+} from '@zona/contracts';
 import { PROTOTYPE_WORLD } from '@zona/content';
 import { describe, expect, it } from 'vitest';
-import { seedWorld } from './world.ts';
+import { rulesBundleContent, seedWorld } from './world.ts';
 
 function decodedSnapshot(seed: number) {
   const { snapshot } = seedWorld(seed);
@@ -72,6 +79,68 @@ describe('seedWorld', () => {
     expect(a.world_time).toBe(b.world_time);
     expect(a.created_at).toBe(b.created_at);
     expect(a.world_time).toBe(a.created_at);
+  });
+
+  it('cross-host (B2): профиль хоста не входит в checksum, поэтому его равенство остаётся сигналом', () => {
+    // Пока профиль был внутри checksum, расхождение между macOS и Linux объяснялось "другая
+    // node/ICU" — и настоящая регрессия детерминизма закрылась бы этим же объяснением.
+    const macos = seedWorld(42, { nodeVersion: '24.14.0', icuVersion: '77.1' });
+    const linux = seedWorld(42, { nodeVersion: '26.3.9', icuVersion: '80.4' });
+
+    expect(linux.snapshot.deterministic_runtime_profile).not.toEqual(
+      macos.snapshot.deterministic_runtime_profile,
+    );
+    expect(linux.snapshot.checksum).toBe(macos.snapshot.checksum);
+
+    // При этом сам профиль не "прощён": несовместимость объявлена отдельно и названа.
+    const compatibility = verifyRuntimeProfileCompatibility(
+      macos.snapshot.deterministic_runtime_profile,
+      linux.snapshot.deterministic_runtime_profile,
+    );
+    expect(isValidationFailure(compatibility)).toBe(true);
+    if (isValidationFailure(compatibility)) {
+      expect(compatibility.errors.map((issue) => issue.path).sort()).toEqual([
+        '/icu_version',
+        '/node_version',
+      ]);
+    }
+  });
+
+  it('cross-host: разное каноническое состояние при разных seed видно и на разных хостах', () => {
+    const macos = seedWorld(42, { nodeVersion: '24.14.0', icuVersion: '77.1' });
+    const linux = seedWorld(43, { nodeVersion: '26.3.9', icuVersion: '80.4' });
+    expect(linux.snapshot.checksum).not.toBe(macos.snapshot.checksum);
+  });
+
+  it('M3: checksum rules bundle считается от содержимого ruleset, а не от пустого объекта', () => {
+    const { snapshot } = seedWorld(42);
+    // Прежнее значение: sha256("{}") — изменение любого коэффициента при той же версии было
+    // необнаружимо, потому что содержимым считался пустой объект.
+    expect(snapshot.bundles.rules.checksum).not.toBe(
+      'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
+    );
+    expect(isValidationFailure(verifyBundleRef(rulesBundleContent(), snapshot.bundles.rules))).toBe(
+      false,
+    );
+
+    const tampered = JSON.parse(JSON.stringify(rulesBundleContent())) as Record<string, unknown>;
+    (tampered['versions'] as Record<string, unknown>)['contentVersion'] = '0.1.1';
+    expect(isValidationFailure(verifyBundleRef(tampered, snapshot.bundles.rules))).toBe(true);
+  });
+
+  it('M3: checksum schema bundle считается от самих схем, а не от трёх строк $id', () => {
+    const { snapshot } = seedWorld(42);
+    expect(snapshot.bundles.schema.checksum).not.toBe(
+      'sha256:de92dd4564e825e0a9eaf3b35c5078166880bf92a75aad6baa9fdd7eeaa77124',
+    );
+    expect(snapshot.bundles.schema).toEqual(schemaBundleRef());
+    expect(
+      isValidationFailure(verifyBundleRef(schemaBundleContent(), snapshot.bundles.schema)),
+    ).toBe(false);
+
+    const tampered = JSON.parse(JSON.stringify(schemaBundleContent())) as Record<string, unknown>;
+    delete (tampered['zona:snapshot/1'] as Record<string, unknown>)['additionalProperties'];
+    expect(isValidationFailure(verifyBundleRef(tampered, snapshot.bundles.schema))).toBe(true);
   });
 
   it('отвергает небезопасный (нецелый) seed', () => {

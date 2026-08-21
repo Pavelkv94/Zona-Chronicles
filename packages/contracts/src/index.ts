@@ -24,14 +24,15 @@ export {
   parseInstant,
   requireInstant,
   compareInstants,
-  addMinutes,
 } from './instant.ts';
 
 export {
   CANONICAL_INSTANT_PATTERN,
+  addMinutes,
   formatCanonicalInstant,
   isCanonicalInstant,
   parseCanonicalInstant,
+  requireAddMinutes,
 } from './canonical-instant.ts';
 
 export {
@@ -64,7 +65,12 @@ export {
   requireCanonical,
 } from './canonical-json.ts';
 
-export { SHA256_MAX_INPUT_BYTES, sha256Hex, sha256HexOfBytes } from './sha256.ts';
+export {
+  SHA256_MAX_INPUT_BYTES,
+  sha256Hex,
+  sha256HexOfBytes,
+  sha256PaddedLength,
+} from './sha256.ts';
 
 export {
   type CanonicalChecksum,
@@ -148,10 +154,23 @@ export {
 } from './world-event.ts';
 
 export {
+  PUBLIC_SCHEMA_IDS,
+  SCHEMA_BUNDLE_VERSION,
+  schemaBundleContent,
+  schemaBundleRef,
+} from './schema-bundle.ts';
+
+export {
   type BundleRef,
+  type DeterministicRuntimeProfile,
   type Snapshot,
   BundleRefSchema,
   DeterministicRuntimeProfileSchema,
+  EXACT_MATCH_PROFILE_FIELDS,
+  MAJOR_MINOR_PROFILE_FIELDS,
+  SNAPSHOT_CHECKSUM_EXCLUDED_FIELDS,
+  SNAPSHOT_CHECKSUM_FIELDS,
+  SNAPSHOT_CHECKSUM_SCOPE_VERSION,
   SNAPSHOT_SEQUENCE_UNIT,
   SnapshotBundlesSchema,
   SnapshotSchema,
@@ -159,5 +178,6 @@ export {
   decodeSnapshot,
   snapshotChecksum,
   verifyBundleRef,
+  verifyRuntimeProfileCompatibility,
   verifySnapshotChecksum,
 } from './snapshot.ts';

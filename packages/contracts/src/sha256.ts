@@ -92,17 +92,34 @@ export function sha256Hex(input: string): string {
   return sha256HexOfBytes(utf8Encoder.encode(input));
 }
 
+/**
+ * Длина дополненного сообщения: 0x80, нули до 56 mod 64 и 64-битная длина в битах.
+ *
+ * Обычной арифметикой, а не сдвигами. Прежняя редакция считала `(((len + 8) >> 6) + 1) << 6`;
+ * `>>` и `<<` работают на 32 битах со знаком, поэтому начиная с 2³¹−8 байт результат
+ * переполнялся в отрицательное число, и первым срабатывал платформенный
+ * `RangeError: Invalid array length` из `new Uint8Array(...)`. Документированный предел
+ * `SHA256_MAX_INPUT_BYTES` при этом был недостижим: до него управление не доходило (minor 3
+ * верификации I01).
+ */
+export function sha256PaddedLength(byteLength: number): number {
+  return (Math.floor((byteLength + 8) / 64) + 1) * 64;
+}
+
 /** SHA-256 над готовыми байтами — точка входа для не-строковых входов. */
 export function sha256HexOfBytes(bytes: Uint8Array): string {
+  // Проверка предела ДО выделения памяти: иначе названную ошибку опередил бы платформенный
+  // RangeError, и потребитель увидел бы "Invalid array length" вместо причины.
+  const [highLengthWord, lowLengthWord] = messageLengthBitWords(bytes.length);
+
   // Padding: 0x80, затем нули до 56 mod 64, затем 64-битная длина в битах (big-endian).
-  const paddedLength = (((bytes.length + 8) >> 6) + 1) << 6;
+  const paddedLength = sha256PaddedLength(bytes.length);
   const padded = new Uint8Array(paddedLength);
   padded.set(bytes);
   padded[bytes.length] = 0x80;
 
   // Длина пишется как 64 бита; разбор на слова — в `messageLengthBitWords`.
   const view = new DataView(padded.buffer);
-  const [highLengthWord, lowLengthWord] = messageLengthBitWords(bytes.length);
   view.setUint32(paddedLength - 8, highLengthWord, false);
   view.setUint32(paddedLength - 4, lowLengthWord, false);
 

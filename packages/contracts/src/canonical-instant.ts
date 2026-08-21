@@ -125,3 +125,67 @@ export function formatCanonicalInstant(epochMs: number): string {
 function failFormat(epochMs: number, reason: string): never {
   throw new Error(`невозможно отформатировать момент ${String(epochMs)}: ${reason}`);
 }
+
+const MS_PER_MINUTE = 60_000;
+
+/**
+ * Сдвиг момента на целое число минут (M1).
+ *
+ * Прежняя редакция жила в `instant.ts` и считала `epochMs + minutes * 60_000`, форматируя
+ * результат через `new Date(epochMs).toISOString()`. Три следствия, каждое из которых
+ * запрещено решением 2 и критерием A5:
+ *
+ * 1. `addMinutes(base, 0.5000001)` давал `{ iso: '…06:00:30.000Z', epochMs: 1842156030000.006 }` —
+ *    текст утверждал одно, число другое, и checksum факта зависел от того, какое из двух
+ *    прочитал потребитель. Это и есть «молчаливое округление»;
+ * 2. большой сдвиг давал `iso: '+201895-08-03T06:00:00.000Z'` — момент, который тут же
+ *    отвергает `parseInstant`, то есть невыразимый в собственном контракте момента;
+ * 3. `addMinutes(base, 1e14)` бросал `RangeError: Invalid time value` — безымянную ошибку
+ *    платформы вместо названной причины.
+ *
+ * Поэтому: минуты обязаны быть безопасным ЦЕЛЫМ (`travelMinutes` — величина в минутах, а не
+ * безразмерное число; дробная минута — это недокументированная единица, а не точность),
+ * результат обязан попадать в диапазон `MILLISECOND_UNIT`, а форматирует его
+ * `formatCanonicalInstant`, который уже умеет говорить, что именно не так.
+ *
+ * Возвращает `InstantError`, а не бросает: невалидная длительность приходит из контента и
+ * является данными, а не дефектом кода. Вызывающему, которому отказ невозможно обработать
+ * осмысленно, доступен `requireAddMinutes`.
+ */
+export function addMinutes(instant: Instant, minutes: number): Instant | InstantError {
+  if (!Number.isSafeInteger(minutes)) {
+    return {
+      error:
+        `сдвиг обязан быть безопасным целым числом минут, получено ${String(minutes)}: ` +
+        'дробная или неточная минута молча округлилась бы, и iso разошёлся бы с epochMs',
+    };
+  }
+
+  const epochMs = instant.epochMs + minutes * MS_PER_MINUTE;
+  if (
+    !Number.isSafeInteger(epochMs) ||
+    epochMs < MILLISECOND_UNIT.min ||
+    epochMs > MILLISECOND_UNIT.max
+  ) {
+    return {
+      error:
+        `сдвиг на ${String(minutes)} минут выводит момент за диапазон единицы ` +
+        `${MILLISECOND_UNIT.id} [${MILLISECOND_UNIT.min}, ${MILLISECOND_UNIT.max}]: ` +
+        'год перестал бы помещаться в четыре знака, и результат не разобрал бы parseInstant',
+    };
+  }
+
+  return { iso: formatCanonicalInstant(epochMs), epochMs };
+}
+
+/**
+ * Тот же сдвиг, но с меткой источника и `Error` вместо `{ error }` — для границ, где отказ
+ * обработать нечем и он обязан быть громким (тот же контракт, что `requireInstant`).
+ */
+export function requireAddMinutes(instant: Instant, minutes: number, sourceLabel: string): Instant {
+  const result = addMinutes(instant, minutes);
+  if (isInstantError(result)) {
+    throw new Error(`невозможно сдвинуть момент из "${sourceLabel}" — ${result.error}`);
+  }
+  return result;
+}

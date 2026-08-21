@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { addMinutes, compareInstants, isInstantError, parseInstant } from './instant.ts';
+import { type Instant, compareInstants, isInstantError, parseInstant } from './instant.ts';
+import { addMinutes } from './canonical-instant.ts';
 
 /**
  * Инварианты контракта момента времени (SIM-01).
@@ -100,6 +101,21 @@ const isoInstant = fc
     );
   });
 
+/**
+ * Сдвиг момента обязан дать одно из двух: валидный момент либо НАЗВАННЫЙ отказ по диапазону.
+ * Молчаливого третьего результата не существует (M1), поэтому отказ здесь не «пропускается», а
+ * проверяется на причину: иначе property молча превратился бы в проверку пустого множества у
+ * границы 9999 года.
+ */
+function shiftOrRangeRefusal(instant: Instant, minutes: number): Instant | null {
+  const result = addMinutes(instant, minutes);
+  if (isInstantError(result)) {
+    expect(result.error).toMatch(/диапазон/);
+    return null;
+  }
+  return result;
+}
+
 describe('Instant: инварианты', () => {
   it('round-trip: iso -> epochMs -> iso сохраняет метку', () => {
     fc.assert(
@@ -124,9 +140,12 @@ describe('Instant: инварианты', () => {
       fc.property(isoInstant, fc.integer({ min: -100_000, max: 100_000 }), (iso, minutes) => {
         const parsed = parseInstant(iso);
         if (isInstantError(parsed)) return;
-        const there = addMinutes(parsed, minutes);
-        const back = addMinutes(there, -minutes);
-        expect(back.epochMs).toBe(parsed.epochMs);
+        const there = shiftOrRangeRefusal(parsed, minutes);
+        if (there === null) return;
+        const back = shiftOrRangeRefusal(there, -minutes);
+        // Обратный сдвиг возвращает в уже валидный момент, поэтому отказ здесь недопустим.
+        expect(back).not.toBeNull();
+        expect(back?.epochMs).toBe(parsed.epochMs);
       }),
       { numRuns: 500 },
     );
@@ -137,8 +156,44 @@ describe('Instant: инварианты', () => {
       fc.property(isoInstant, fc.integer({ min: 1, max: 100_000 }), (iso, minutes) => {
         const parsed = parseInstant(iso);
         if (isInstantError(parsed)) return;
-        expect(compareInstants(addMinutes(parsed, minutes), parsed)).toBeGreaterThan(0);
+        const shifted = shiftOrRangeRefusal(parsed, minutes);
+        if (shifted === null) return;
+        expect(compareInstants(shifted, parsed)).toBeGreaterThan(0);
       }),
+      { numRuns: 500 },
+    );
+  });
+
+  it('addMinutes: iso и epochMs результата никогда не расходятся (M1)', () => {
+    fc.assert(
+      fc.property(isoInstant, fc.integer({ min: -100_000, max: 100_000 }), (iso, minutes) => {
+        const parsed = parseInstant(iso);
+        if (isInstantError(parsed)) return;
+        const shifted = shiftOrRangeRefusal(parsed, minutes);
+        if (shifted === null) return;
+        const reparsed = parseInstant(shifted.iso);
+        expect(isInstantError(reparsed)).toBe(false);
+        if (isInstantError(reparsed)) return;
+        expect(reparsed.epochMs).toBe(shifted.epochMs);
+      }),
+      { numRuns: 500 },
+    );
+  });
+
+  it('addMinutes: нецелое число минут отвергается всегда, а не округляется (M1, A5)', () => {
+    fc.assert(
+      fc.property(
+        isoInstant,
+        fc.double({ min: -100_000, max: 100_000, noNaN: true }).filter((v) => !Number.isInteger(v)),
+        (iso, minutes) => {
+          const parsed = parseInstant(iso);
+          if (isInstantError(parsed)) return;
+          const result = addMinutes(parsed, minutes);
+          expect(isInstantError(result)).toBe(true);
+          if (!isInstantError(result)) return;
+          expect(result.error).toMatch(/цел/i);
+        },
+      ),
       { numRuns: 500 },
     );
   });
@@ -186,7 +241,8 @@ describe('Instant: инварианты', () => {
       fc.property(isoInstant, (iso) => {
         const parsed = parseInstant(iso);
         if (isInstantError(parsed)) return;
-        const shifted = addMinutes(parsed, 60);
+        const shifted = shiftOrRangeRefusal(parsed, 60);
+        if (shifted === null) return;
         const hourBefore = Number(parsed.iso.slice(11, 13));
         const hourAfter = Number(shifted.iso.slice(11, 13));
         expect(hourAfter).toBe((hourBefore + 1) % 24);

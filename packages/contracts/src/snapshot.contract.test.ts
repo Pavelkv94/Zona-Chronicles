@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
   BundleRefSchema,
+  DeterministicRuntimeProfileSchema,
+  EXACT_MATCH_PROFILE_FIELDS,
+  MAJOR_MINOR_PROFILE_FIELDS,
+  SNAPSHOT_CHECKSUM_EXCLUDED_FIELDS,
+  SNAPSHOT_CHECKSUM_FIELDS,
+  SNAPSHOT_CHECKSUM_SCOPE_VERSION,
   SNAPSHOT_SEQUENCE_UNIT,
   SnapshotSchema,
   type Snapshot,
@@ -8,6 +14,7 @@ import {
   decodeSnapshot,
   snapshotChecksum,
   verifyBundleRef,
+  verifyRuntimeProfileCompatibility,
   verifySnapshotChecksum,
 } from './snapshot.ts';
 import { isValidationFailure } from './validation.ts';
@@ -29,6 +36,7 @@ const BASE_SNAPSHOT = {
   },
   deterministic_runtime_profile: {
     canonical_serialization_version: CANONICAL_SERIALIZATION_VERSION,
+    snapshot_checksum_scope_version: SNAPSHOT_CHECKSUM_SCOPE_VERSION,
     prng_version: 'xoshiro256++/1',
     numeric_rounding_policy_version: 'numeric-units/1',
     node_version: '24.14.0',
@@ -120,6 +128,7 @@ describe('snapshot ссылается на bundles по версии И checksum
 describe('deterministic runtime profile (§9)', () => {
   it.each([
     'canonical_serialization_version',
+    'snapshot_checksum_scope_version',
     'prng_version',
     'numeric_rounding_policy_version',
     'node_version',
@@ -173,6 +182,160 @@ describe('snapshot checksum (§9)', () => {
   it('не включает собственное поле checksum: иначе значение было бы самоссылочным', () => {
     const snapshot = withChecksum(BASE_SNAPSHOT);
     expect(snapshotChecksum(snapshot as never)).toBe(snapshot['checksum']);
+  });
+
+  it('меняется при изменении world_id, last_sequence, world_time и bundles', () => {
+    const base = snapshotChecksum(BASE_SNAPSHOT);
+    const variants: readonly Record<string, unknown>[] = [
+      { ...BASE_SNAPSHOT, world_id: 'world:other' },
+      { ...BASE_SNAPSHOT, last_sequence: 1 },
+      { ...BASE_SNAPSHOT, world_time: '2034-05-17T18:20:00.001Z' },
+      {
+        ...BASE_SNAPSHOT,
+        bundles: {
+          ...BASE_SNAPSHOT.bundles,
+          rules: bundleRefFor('0.1.0', { ...RULES_BUNDLE, travel: { base_minutes: 31 } }),
+        },
+      },
+    ];
+    for (const variant of variants) {
+      expect(snapshotChecksum(variant as never), JSON.stringify(Object.keys(variant))).not.toBe(
+        base,
+      );
+    }
+  });
+});
+
+describe('B2: область checksum — только то, что воспроизводит replay (§9)', () => {
+  it('created_at вне checksum: wall clock — метаданные, иначе критерий валидности снимка невычислим', () => {
+    // §9 требует одновременно, чтобы created_at был "wall clock только как metadata" и чтобы
+    // replay событий после last_sequence давал ТОТ ЖЕ checksum, что полный replay. Два прогона
+    // в разное время неизбежно дают разный created_at; совместимо это только вне checksum.
+    const later = { ...BASE_SNAPSHOT, created_at: '2026-09-01T03:04:05.678Z' };
+    expect(snapshotChecksum(later as never)).toBe(snapshotChecksum(BASE_SNAPSHOT as never));
+  });
+
+  it('профиль хоста вне checksum: равенство checksum между хостами обязано остаться сигналом', () => {
+    // Профиль внутри checksum делает НАСТОЯЩУЮ cross-host регрессию детерминизма неотличимой
+    // от ожидаемой разницы профиля: расхождение объясняется "другой node/ICU" и дефект
+    // закрывается как ожидаемый.
+    const otherHost = {
+      ...BASE_SNAPSHOT,
+      deterministic_runtime_profile: {
+        ...BASE_SNAPSHOT.deterministic_runtime_profile,
+        node_version: '24.20.1',
+        icu_version: '78.2',
+      },
+    };
+    expect(snapshotChecksum(otherHost as never)).toBe(snapshotChecksum(BASE_SNAPSHOT as never));
+  });
+
+  it('cross-host: одинаковое содержимое на разных хостах даёт равный checksum, разное — разный', () => {
+    const macos = {
+      ...BASE_SNAPSHOT,
+      created_at: '2026-08-20T12:01:02.000Z',
+      deterministic_runtime_profile: {
+        ...BASE_SNAPSHOT.deterministic_runtime_profile,
+        node_version: '24.14.0',
+        icu_version: '77.1',
+      },
+    };
+    const linux = {
+      ...BASE_SNAPSHOT,
+      created_at: '2026-08-20T19:44:31.005Z',
+      deterministic_runtime_profile: {
+        ...BASE_SNAPSHOT.deterministic_runtime_profile,
+        node_version: '24.14.2',
+        icu_version: '78.2',
+      },
+    };
+    expect(snapshotChecksum(linux as never)).toBe(snapshotChecksum(macos as never));
+
+    // И обратное: если на одном из хостов ядро посчитало другое состояние, это видно.
+    const linuxDrifted = { ...linux, canonical_state: { agents: [] } };
+    expect(snapshotChecksum(linuxDrifted as never)).not.toBe(snapshotChecksum(macos as never));
+  });
+
+  it('область checksum объявлена исчерпывающе: новое поле схемы обязано быть классифицировано', () => {
+    // Контроль того же класса, что A8: pick-реализация молча оставила бы новое поле снимка вне
+    // checksum. Добавление поля в SnapshotSchema обязано ронять этот тест, а не проходить.
+    const schemaFields = Object.keys(SnapshotSchema.properties).sort();
+    const classified = [...SNAPSHOT_CHECKSUM_FIELDS, ...SNAPSHOT_CHECKSUM_EXCLUDED_FIELDS].sort();
+    expect(classified).toEqual(schemaFields);
+    expect(SNAPSHOT_CHECKSUM_EXCLUDED_FIELDS).toEqual([
+      'checksum',
+      'created_at',
+      'deterministic_runtime_profile',
+    ]);
+  });
+
+  it('версия области checksum записана в снимке: смена области — смена алгоритма', () => {
+    expect(SNAPSHOT_CHECKSUM_SCOPE_VERSION).toBe('snapshot-checksum/2');
+    expect(
+      decoded(withChecksum(BASE_SNAPSHOT)).deterministic_runtime_profile
+        .snapshot_checksum_scope_version,
+    ).toBe(SNAPSHOT_CHECKSUM_SCOPE_VERSION);
+  });
+
+  it('снимок прежней области checksum отвергается, а не перепроверяется по новым правилам', () => {
+    const profile: Record<string, unknown> = {
+      ...BASE_SNAPSHOT.deterministic_runtime_profile,
+      snapshot_checksum_scope_version: 'snapshot-checksum/1',
+    };
+    expect(
+      issues(withChecksum({ ...BASE_SNAPSHOT, deterministic_runtime_profile: profile })),
+    ).toMatch(/snapshot_checksum_scope_version/);
+  });
+});
+
+describe('B2: профиль runtime проверяется совместимостью, а не равенством (§7)', () => {
+  const PROFILE = BASE_SNAPSHOT.deterministic_runtime_profile;
+
+  function compatibility(overrides: Record<string, unknown>): string {
+    const result = verifyRuntimeProfileCompatibility(PROFILE, {
+      ...PROFILE,
+      ...overrides,
+    });
+    if (!isValidationFailure(result)) {
+      return '';
+    }
+    return result.errors.map((issue) => `${issue.path} ${issue.message}`).join('\n');
+  }
+
+  it('идентичные профили совместимы', () => {
+    expect(compatibility({})).toBe('');
+  });
+
+  it('другой patch Node.js совместим: §7 квалифицирует major/minor profile', () => {
+    expect(compatibility({ node_version: '24.14.99' })).toBe('');
+  });
+
+  it.each([
+    ['node_version', '25.0.0'],
+    ['icu_version', '78.2'],
+    ['timezone', 'Europe/Minsk'],
+    ['prng_version', 'xoshiro256++/2'],
+    ['numeric_rounding_policy_version', 'numeric-units/2'],
+    ['canonical_serialization_version', 'canonical-json/2'],
+    ['snapshot_checksum_scope_version', 'snapshot-checksum/1'],
+  ])('%s = %s несовместим до прогона compatibility suite', (field, value) => {
+    expect(compatibility({ [field]: value })).toMatch(new RegExp(field));
+  });
+
+  it('политика совместимости исчерпывающа: новое поле профиля обязано быть классифицировано', () => {
+    const profileFields = Object.keys(DeterministicRuntimeProfileSchema.properties).sort();
+    expect([...EXACT_MATCH_PROFILE_FIELDS, ...MAJOR_MINOR_PROFILE_FIELDS].sort()).toEqual(
+      profileFields,
+    );
+  });
+
+  it('несовместимость профиля — отдельный отказ, а не расхождение checksum', () => {
+    const otherHost = {
+      ...BASE_SNAPSHOT,
+      deterministic_runtime_profile: { ...PROFILE, icu_version: '78.2' },
+    };
+    expect(snapshotChecksum(otherHost as never)).toBe(snapshotChecksum(BASE_SNAPSHOT as never));
+    expect(compatibility({ icu_version: '78.2' })).toMatch(/icu_version/);
   });
 
   it('verifySnapshotChecksum принимает согласованный snapshot', () => {
@@ -254,6 +417,31 @@ describe('snapshot: остальные поля (§9)', () => {
         ),
       ),
     ).toBe(true);
+  });
+
+  it.each([['NOT A KEY!!'], [''], ['../../etc/passwd'], ['Agent:Rook'], ['agent rook']])(
+    'отвергает ключ PRNG-потока %j: объявленный pattern обязан исполняться, а не украшать схему',
+    (key) => {
+      // `Type.Record` порождает `patternProperties` БЕЗ `additionalProperties: false`, и тогда
+      // JSON Schema разрешает любой ключ, не совпавший с шаблоном: объявление ключа как
+      // namespaced id было декоративным.
+      expect(
+        isValidationFailure(
+          decodeSnapshot(withChecksum({ ...BASE_SNAPSHOT, prng_stream_positions: { [key]: 1 } })),
+        ),
+        key,
+      ).toBe(true);
+    },
+  );
+
+  it('принимает корректный stream key рядом с отвергаемым', () => {
+    expect(
+      isValidationFailure(
+        decodeSnapshot(
+          withChecksum({ ...BASE_SNAPSHOT, prng_stream_positions: { 'agent:rook-2': 7 } }),
+        ),
+      ),
+    ).toBe(false);
   });
 
   it('отвергает лишнее поле на верхнем уровне', () => {

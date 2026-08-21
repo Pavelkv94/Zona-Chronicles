@@ -95,7 +95,14 @@ describe('числа: только безопасные целые (A5, SIM-01)'
     ['Infinity', Number.POSITIVE_INFINITY],
     ['-Infinity', Number.NEGATIVE_INFINITY],
   ])('отвергает %s на границе, а не превращает в null', (_label, value) => {
-    expect(failure(value).error).toMatch(/конечн|NaN|Infinity/i);
+    // Проверка структурная, а не по подстроке со значением: сообщение интерполирует само
+    // значение ("нефинитное число (NaN)"), поэтому /NaN|Infinity/ находилось бы независимо от
+    // того, распознана ли ПРИЧИНА отказа, — прежняя редакция была тавтологией (minor test
+    // reviewer-а). Проверяется, что причина названа нефинитностью и НЕ спутана с соседними
+    // категориями отказа (дробное, вне безопасного диапазона).
+    const withoutValue = failure(value).error.replace(String(value), '<значение>');
+    expect(withoutValue).toMatch(/нефинитн/i);
+    expect(withoutValue).not.toMatch(/дробн|безопасн/i);
   });
 
   it.each([
