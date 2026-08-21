@@ -1,6 +1,6 @@
 {
-  "task_id": "I01-T1",
-  "owner_role": "contract-steward",
-  "write_paths": ["packages/contracts/**"],
-  "allow_protected_paths": ["packages/contracts/**"]
+  "task_id": "I01-T2",
+  "owner_role": "acceptance-author",
+  "write_paths": ["tests/acceptance/**"],
+  "allow_protected_paths": ["tests/acceptance/**"]
 }
