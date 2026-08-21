@@ -50,8 +50,16 @@ describe('loadTaskDeclarations', () => {
     const result = loadTaskDeclarations(d);
     expect(result.kind).toBe('loaded');
     if (result.kind === 'loaded') {
+      // iteration_id файла проставляется в каждую его задачу (finding раунда I00-F5, живой прогон:
+      // нужно для того, чтобы checkOwnership отличал конфликт внутри итерации от повторной правки
+      // того же пути в следующей итерации — см. task-ownership.ts).
       expect(result.tasks).toEqual([
-        { task_id: 'I00-T02', owner_role: 'tooling-implementer', write_paths: ['tools/a/**'] },
+        {
+          task_id: 'I00-T02',
+          owner_role: 'tooling-implementer',
+          write_paths: ['tools/a/**'],
+          iteration_id: 'I00',
+        },
       ]);
       expect(result.leadPaths).toEqual(['docs/**']);
     }

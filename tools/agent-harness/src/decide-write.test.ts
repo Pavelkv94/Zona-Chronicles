@@ -108,6 +108,24 @@ describe('decideWrite — запрещённые операции', () => {
     expect(decide('/repo/tools/usage-continuity/../../pnpm-lock.yaml').decision).toBe('deny');
   });
 
+  describe('M-7 (review, третий раунд): owner_role: "reviewer" — write_paths пуст, запись запрещена целиком', () => {
+    const reviewerWriteSet: WriteSetLoadResult = {
+      kind: 'task',
+      writeSet: { task_id: 'I00-F5-R1', owner_role: 'reviewer', write_paths: [] },
+    };
+
+    it('запрещает запись в любой обычный путь (нет ни одного write path)', () => {
+      const result = decide('/repo/tools/agent-harness/src/a.ts', reviewerWriteSet);
+      expect(result.decision).toBe('deny');
+      expect(result.reason).toContain('вне declared write set');
+    });
+
+    it('запрещает protected path тоже (allow_protected_paths не выдан)', () => {
+      const result = decide('/repo/pnpm-lock.yaml', reviewerWriteSet);
+      expect(result.decision).toBe('deny');
+    });
+  });
+
   describe('B2: task-сессия без declared write set — fail-closed', () => {
     it('deny, если writeset.json никогда не был объявлен (kind: lead)', () => {
       const result = decide('/repo/tools/usage-continuity/src/a.ts', { kind: 'lead' }, 'task');

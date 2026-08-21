@@ -10,6 +10,15 @@ import { readGitBlob, resolveCommit } from './git-source.ts';
  * неподделываемый признак роли — hook payload (`agent_id`/`agent_type`), см.
  * `classifySession` в `session-role.ts`. Вызывающий код обязан комбинировать оба сигнала:
  * task-сессия с `kind: 'lead'` здесь обязана получить deny (fail-closed), а не allow.
+ *
+ * M-7 (review, третий раунд): `owner_role: "reviewer"` — единственная роль, допускающая пустой
+ * `write_paths`. До фикса `write_paths` не мог быть пустым ни для кого, из-за чего read-only
+ * reviewer-сессии приходилось кодировать «ноль прав» путём вне корня репозитория — тот путь
+ * никогда не совпадает ни с одним `write_paths`, но выглядит как «задача владеет чем-то», хотя
+ * реально не владеет ничем; ADR-008 (правка от 2026-08-21) прямо запрещает такое кодирование.
+ * Явно пустой `write_paths` при `owner_role: "reviewer"` означает буквально то же самое —
+ * `decideWrite`/`findDiffViolations`/`checkOwnership` уже трактуют пустой список как «ничего не
+ * разрешено» (`matchesAnyGlob(path, [])` всегда `false`) без дополнительных изменений в них.
  */
 export type WriteSet = {
   readonly task_id: string;
@@ -45,10 +54,19 @@ export const parseWriteSet = (raw: string): WriteSetLoadResult => {
   if (typeof candidate['owner_role'] !== 'string' || candidate['owner_role'].length === 0) {
     return { kind: 'invalid', reason: 'writeset.json: обязательное поле owner_role' };
   }
-  if (!isStringArray(candidate['write_paths']) || candidate['write_paths'].length === 0) {
+  // M-7 (review, третий раунд): reviewer — единственная роль, для которой нулевые права записи
+  // выражаются явно пустым write_paths, а не кодированием несовпадающим путём (ADR-008, правка от
+  // 2026-08-21). Любая другая роль обязана иметь хотя бы один write path, как и раньше.
+  const isReviewer = candidate['owner_role'] === 'reviewer';
+  if (
+    !isStringArray(candidate['write_paths']) ||
+    (!isReviewer && candidate['write_paths'].length === 0)
+  ) {
     return {
       kind: 'invalid',
-      reason: 'writeset.json: write_paths обязателен и не может быть пустым',
+      reason: isReviewer
+        ? 'writeset.json: write_paths обязателен и должен быть списком строк (может быть пустым для owner_role: reviewer)'
+        : 'writeset.json: write_paths обязателен и не может быть пустым',
     };
   }
   const allowProtected = candidate['allow_protected_paths'];

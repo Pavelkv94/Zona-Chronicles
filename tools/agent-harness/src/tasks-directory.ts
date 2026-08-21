@@ -74,7 +74,18 @@ const parseTasksFileContent = (raw: string, label: string): ParsedTasksFile => {
     leadPaths.push(...(file.lead_paths as readonly string[]));
   }
 
-  return { kind: 'ok', tasks: file.tasks, leadPaths };
+  // Finding раунда I00-F5 (живой прогон): `iteration_id` файла проставляется в каждую его задачу,
+  // чтобы `checkOwnership` мог отличить «две задачи ОДНОЙ итерации делят путь» (реальный конфликт)
+  // от «путь снова правится в СЛЕДУЮЩЕЙ итерации» (норма) при объединении нескольких карт
+  // (`loadTaskDeclarations(FromGit)` ниже). Поле самого JSON-объекта задачи не читается — источник
+  // истины один, на уровне файла, а не дублируется в каждой задаче вручную.
+  const iterationId = typeof file.iteration_id === 'string' ? file.iteration_id : undefined;
+  const tasks = file.tasks.map((task) => ({
+    ...task,
+    ...(iterationId === undefined ? {} : { iteration_id: iterationId }),
+  }));
+
+  return { kind: 'ok', tasks, leadPaths };
 };
 
 /** Читает и объединяет все `.claude/tasks/*.json`. Отсутствие каталога/файлов — `'absent'`. */

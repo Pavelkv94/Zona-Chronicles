@@ -33,6 +33,30 @@ describe('parseWriteSet', () => {
     ).toBe('invalid');
   });
 
+  describe('M-7 (review, третий раунд): owner_role: "reviewer" допускает пустой write_paths', () => {
+    it('принимает пустой write_paths для owner_role: reviewer', () => {
+      const result = parseWriteSet(
+        JSON.stringify({ task_id: 'I00-F5-R1', owner_role: 'reviewer', write_paths: [] }),
+      );
+      expect(result.kind).toBe('task');
+      if (result.kind === 'task') expect(result.writeSet.write_paths).toEqual([]);
+    });
+
+    it('пустой write_paths остаётся invalid для любой другой роли (регрессия)', () => {
+      const result = parseWriteSet(
+        JSON.stringify({ task_id: 'x', owner_role: 'tooling-implementer', write_paths: [] }),
+      );
+      expect(result.kind).toBe('invalid');
+    });
+
+    it('write_paths обязан быть списком строк даже для reviewer (не просто «falsy»)', () => {
+      const result = parseWriteSet(
+        JSON.stringify({ task_id: 'x', owner_role: 'reviewer', write_paths: 'nope' }),
+      );
+      expect(result.kind).toBe('invalid');
+    });
+  });
+
   it('отклоняет allow_protected_paths неверного типа', () => {
     const result = parseWriteSet(
       JSON.stringify({

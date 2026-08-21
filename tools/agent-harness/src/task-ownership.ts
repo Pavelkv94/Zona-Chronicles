@@ -14,6 +14,17 @@ export type TaskDeclaration = {
   readonly owner_role: string;
   readonly write_paths: readonly string[];
   readonly allow_protected_paths?: readonly string[];
+  /**
+   * Итерация, к которой принадлежит задача (finding раунда фиксов I00-F5, найден на живом
+   * прогоне: каталожный `ownership:check .claude/tasks <base>` объединяет ВСЕ `.claude/tasks/*.json`
+   * без учёта времени — `I00-T04` и `I00-F5-T4` заявляют один и тот же путь в РАЗНЫХ итерациях,
+   * разнесённых во времени, и до фикса это читалось как `overlap`, хотя конфликта нет: во второй
+   * итерации путь просто правится снова, это ожидаемо). Заполняется из `iteration_id` файла карты
+   * задач (`tasks-directory.ts`), не из самого JSON-объекта задачи. `undefined` — карта без
+   * `iteration_id` (более старый формат); такие задачи трактуются как принадлежащие одному общему
+   * «безымянному» bucket-у для обратной совместимости с уже существующими тестами/фикстурами.
+   */
+  readonly iteration_id?: string;
 };
 
 export type OwnershipProblem =
@@ -76,6 +87,44 @@ export const checkOwnership = (
         continue;
       }
       problems.push({ kind: 'unowned', path });
+      continue;
+    }
+
+    // Пересечение — конфликт только ВНУТРИ одной итерации: параллельные задачи одной итерации не
+    // вправе делить путь. Между итерациями — норма (тот же путь правится снова позже), поэтому
+    // задачи из РАЗНЫХ `iteration_id` здесь не считаются конфликтующими друг с другом (finding
+    // раунда I00-F5, живой прогон каталожного `ownership:check`). Задачи без `iteration_id`
+    // (`undefined`) остаются одним общим bucket-ом — сохраняет прежнее поведение для карт без
+    // этого поля.
+    const owningIterationIds = new Set(owners.map((task) => task.iteration_id ?? ''));
+    if (owningIterationIds.size > 1) {
+      const byIteration = new Map<string, TaskDeclaration[]>();
+      for (const task of owners) {
+        const key = task.iteration_id ?? '';
+        const bucket = byIteration.get(key) ?? [];
+        bucket.push(task);
+        byIteration.set(key, bucket);
+      }
+      const sameIterationOverlap = [...byIteration.values()].find((bucket) => bucket.length > 1);
+      if (sameIterationOverlap !== undefined) {
+        problems.push({
+          kind: 'overlap',
+          path,
+          taskIds: sameIterationOverlap.map((task) => task.task_id),
+        });
+        continue;
+      }
+      // Ровно один владелец на итерацию, итераций несколько: не конфликт. Детерминированный
+      // (не смысловой, только для отчёта `ownedBy`) выбор — последняя по порядку `tasks`
+      // (соответствует порядку файлов карты, `tasks-directory.ts` сортирует их по имени, то есть
+      // обычно совпадает с более новой итерацией при обычных именах вида `I00.json`/`I00-F5.json`).
+      const chosen = owners[owners.length - 1] as TaskDeclaration;
+      const allowedProtectedChosen = chosen.allow_protected_paths ?? [];
+      if (matchesAnyGlob(path, PROTECTED_PATHS) && !matchesAnyGlob(path, allowedProtectedChosen)) {
+        problems.push({ kind: 'protected', path, taskId: chosen.task_id });
+        continue;
+      }
+      ownedBy[path] = chosen.task_id;
       continue;
     }
     if (owners.length > 1) {

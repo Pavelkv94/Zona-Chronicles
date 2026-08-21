@@ -29,7 +29,7 @@ const main = async (): Promise<void> => {
   const projectRoot =
     typeof input['cwd'] === 'string' && input['cwd'].length > 0 ? input['cwd'] : process.cwd();
   const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
-  const decision = decideBashForSession({ command, sessionRole, writeSet });
+  const decision = decideBashForSession({ command, projectRoot, sessionRole, writeSet });
 
   if (decision.decision === 'deny') {
     process.stdout.write(

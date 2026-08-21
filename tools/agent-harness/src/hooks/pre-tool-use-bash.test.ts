@@ -116,6 +116,51 @@ describe('pre-tool-use-bash.ts (real process)', () => {
     );
   });
 
+  it('M-8: cp/mv на .claude/ ВНЕ корня репозитория (cwd) не запрещён (регрессия ложного отказа)', () => {
+    const root = makeProjectRoot();
+    writeWriteSet(root, {
+      task_id: 'I00-R1',
+      owner_role: 'tooling-implementer',
+      write_paths: ['tools/agent-harness/**'],
+    });
+    const result = runHook({
+      cwd: root,
+      agent_id: 'agent-1',
+      agent_type: 'tooling-implementer',
+      tool_name: 'Bash',
+      tool_input: { command: 'cp -R /tmp/fixture-a /tmp/fixture-b/.claude/' },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('');
+  });
+
+  it('M-7: reviewer-роль — git commit запрещён, обычная команда разрешена', () => {
+    const root = makeProjectRoot();
+    writeWriteSet(root, { task_id: 'I00-F5-R1', owner_role: 'reviewer', write_paths: [] });
+
+    const readOnly = runHook({
+      cwd: root,
+      agent_id: 'agent-1',
+      agent_type: 'reviewer',
+      tool_name: 'Bash',
+      tool_input: { command: 'git log --oneline -5' },
+    });
+    expect(readOnly.status).toBe(0);
+    expect(readOnly.stdout).toBe('');
+
+    const commitAttempt = runHook({
+      cwd: root,
+      agent_id: 'agent-1',
+      agent_type: 'reviewer',
+      tool_name: 'Bash',
+      tool_input: { command: 'git commit -m "x"' },
+    });
+    const parsed = JSON.parse(commitAttempt.stdout) as {
+      hookSpecificOutput: { permissionDecision: string };
+    };
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe('deny');
+  });
+
   it('B2: task-сессия после rm -f .claude/writeset.json — deny (не открывается)', () => {
     const root = makeProjectRoot();
     writeWriteSet(root, {

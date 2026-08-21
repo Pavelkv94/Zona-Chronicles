@@ -102,6 +102,94 @@ describe('checkOwnership', () => {
     ]);
   });
 
+  describe('cross-iteration (finding раунда I00-F5, живой прогон): overlap только внутри одной итерации', () => {
+    it('НЕ считает пересечением, если путь заявлен задачами разных итераций', () => {
+      // Точное воспроизведение из отчёта: I00-T04 (итерация I00) и I00-F5-T4 (итерация I00-F5)
+      // объявляют один и тот же путь в РАЗНЫХ итерациях, разнесённых во времени — это не конфликт
+      // (путь просто правится снова), а не одновременное владение.
+      const crossIteration: readonly TaskDeclaration[] = [
+        {
+          task_id: 'I00-T04',
+          owner_role: 'persistence-implementer',
+          write_paths: ['packages/persistence/**'],
+          iteration_id: 'I00',
+        },
+        {
+          task_id: 'I00-F5-T4',
+          owner_role: 'persistence-implementer',
+          write_paths: ['packages/persistence/**'],
+          iteration_id: 'I00-F5',
+        },
+      ];
+      const report = checkOwnership(
+        ['packages/persistence/src/migration-ledger.ts'],
+        crossIteration,
+      );
+      expect(report.problems).toEqual([]);
+      // Детерминированный выбор для отчёта — последняя по порядку задача (не смысловой факт).
+      expect(report.ownedBy['packages/persistence/src/migration-ledger.ts']).toBe('I00-F5-T4');
+    });
+
+    it('всё ещё считает пересечением два владельца ОДНОЙ итерации (регрессия)', () => {
+      const sameIteration: readonly TaskDeclaration[] = [
+        {
+          task_id: 'A',
+          owner_role: 'r',
+          write_paths: ['apps/**'],
+          iteration_id: 'I00-F5',
+        },
+        {
+          task_id: 'B',
+          owner_role: 'r',
+          write_paths: ['apps/api/**'],
+          iteration_id: 'I00-F5',
+        },
+      ];
+      const report = checkOwnership(['apps/api/src/a.ts'], sameIteration);
+      expect(report.problems).toEqual([
+        { kind: 'overlap', path: 'apps/api/src/a.ts', taskIds: ['A', 'B'] },
+      ]);
+    });
+
+    it('три итерации, две из которых конфликтуют — конфликт виден, третья не мешает', () => {
+      const mixed: readonly TaskDeclaration[] = [
+        { task_id: 'OLD', owner_role: 'r', write_paths: ['apps/**'], iteration_id: 'I00' },
+        { task_id: 'A', owner_role: 'r', write_paths: ['apps/api/**'], iteration_id: 'I00-F5' },
+        { task_id: 'B', owner_role: 'r', write_paths: ['apps/api/**'], iteration_id: 'I00-F5' },
+      ];
+      const report = checkOwnership(['apps/api/src/a.ts'], mixed);
+      expect(report.problems).toEqual([
+        { kind: 'overlap', path: 'apps/api/src/a.ts', taskIds: ['A', 'B'] },
+      ]);
+    });
+
+    it('protected path всё ещё проверяется для выбранного кросс-итерационного владельца', () => {
+      const crossIteration: readonly TaskDeclaration[] = [
+        {
+          task_id: 'I00-T04',
+          owner_role: 'persistence-implementer',
+          write_paths: ['packages/persistence/**'],
+          iteration_id: 'I00',
+        },
+        {
+          task_id: 'I00-F5-T4',
+          owner_role: 'persistence-implementer',
+          write_paths: ['packages/persistence/**'],
+          iteration_id: 'I00-F5',
+          // Нет allow_protected_paths для migrations/** — путь ниже обязан остаться protected.
+        },
+      ];
+      const report = checkOwnership(['packages/persistence/src/migrations/001.ts'], crossIteration);
+      expect(report.problems).toEqual([
+        {
+          kind: 'protected',
+          path: 'packages/persistence/src/migrations/001.ts',
+          taskId: 'I00-F5-T4',
+        },
+      ]);
+    });
+  });
+
   it('запрещает protected path даже владельцу без явного разрешения', () => {
     const report = checkOwnership(['packages/persistence/src/migrations/001.ts'], tasks);
     expect(report.problems).toEqual([
