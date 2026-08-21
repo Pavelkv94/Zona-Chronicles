@@ -1,10 +1,24 @@
 /**
- * @zona/domain — скелет пакета, созданный в I00.
- *
- * decide/evolve, сущности и инварианты появляются в I01.
- * Границы пакета исполняются `pnpm boundaries:check` (ADR-002), а не соглашением.
+ * @zona/domain — decide/evolve и порты канонического ядра (I01, `09_EVENT_AND_COMMAND_CONTRACTS`
+ * §11). Границы пакета исполняются `pnpm boundaries:check`/`pnpm lint` (ADR-002, ADR-003), а не
+ * соглашением: только `@zona/contracts`, ни часов, ни случайности, ни сети, ни файловой системы.
  */
-export const PACKAGE_NAME = '@zona/domain' as const;
 
-/** Итерация `10_ITERATION_MASTER_PLAN`, вводящая содержимое пакета. */
-export const OWNING_ITERATION = 'I01' as const;
+export type { Clock } from './ports/clock.ts';
+export { FixedClock } from './ports/clock.ts';
+
+export type { RandomDraw, RandomSource } from './ports/random-source.ts';
+export { DeterministicRandomSource } from './ports/random-source.ts';
+
+export type { IdFactory } from './ports/id-factory.ts';
+export { SequentialIdFactory } from './ports/id-factory.ts';
+
+export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
+export { FixedRuleset, testRulesetVersions } from './ports/ruleset.ts';
+
+export type { AgentState, AgentStatus, RouteDefinition, WorldState } from './state.ts';
+
+export type { DecideContext, DecideRejection, DecideResult, DraftWorldEvent } from './decide.ts';
+export { decide } from './decide.ts';
+
+export { evolve } from './evolve.ts';

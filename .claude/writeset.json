@@ -1,6 +1,6 @@
 {
-  "task_id": "I01-T3",
+  "task_id": "I01-T4",
   "owner_role": "domain-implementer",
-  "write_paths": ["packages/domain/**"],
+  "write_paths": ["packages/content/**", "apps/cli/**"],
   "allow_protected_paths": []
 }
