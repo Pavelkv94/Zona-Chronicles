@@ -11,20 +11,46 @@
  * `RandomAudit` контракта (`stream_key`, `first_draw_index`, `draw_count` — последнее считает
  * сам потребитель по числу draw, которые он сделал).
  *
+ * ## Найденный и исправленный дефект: сдвиговая связь между потоками (I01 review, blocker B1)
+ *
+ * Прежняя реализация продвигала состояние потока чистым Mulberry32: `state' = state + 0x6d2b79f5
+ * (mod 2^32)`. Хеш `streamKey` участвовал ТОЛЬКО в начальном состоянии потока — сам шаг
+ * продвижения от него не зависел. Это аффинная рекуррента с постоянным нечётным (значит,
+ * обратимым mod 2^32) шагом C, поэтому для ЛЮБОЙ пары потоков A, B существовал целый сдвиг
+ * `w = (initial_A − initial_B)·C⁻¹ mod 2^32`, при котором `state_B(i + w) = state_A(i)` для
+ * всех i — а значит и `value_B(i + w) = value_A(i)`, потому что значение вычисляется одной и той
+ * же чистой функцией состояния. Формально это разные последовательности (не совпадают
+ * поэлементно), но зависимые: одна — сдвинутое окно другой. При росте числа одновременных
+ * потоков (агентов) минимальный такой сдвиг быстро сокращается (пары дней рождения): при seed 42
+ * наблюдался минимальный сдвиг 705 draw на 1000 потоках и 11 draw на 10 000 — то есть в мире с
+ * тысячами агентов два потока НА ПРАКТИКЕ воспроизводят друг друга в пределах одной игровой
+ * сессии. Это ровно то коррелированное поведение, которое A7 требует исключить.
+ *
+ * Исправление меняет саму конструкцию, а не понижает вероятность: значение draw больше не шаг
+ * общей для всех потоков аффинной рекурренты, а ЧИСТАЯ функция тройки `(seed, streamKey,
+ * drawIndex)`, пересчитываемая заново на каждый draw (`deriveDrawValue`). Хеш `streamKey`
+ * подмешивается в вычисление НА КАЖДОМ раунде перемешивания, а не только в начальное состояние.
+ * У потоков в принципе нет общей рекурренты, которую можно решить относительно сдвига — поэтому
+ * сдвиговая связь исключена конструкцией, а не статистически маловероятна (см.
+ * `random-source.property.test.ts` — точный, не статистический тест на этот класс дефекта,
+ * плюс конструктивный тест на буквальных парах ключей из этого разбора, плюс тест на отсутствие
+ * общего мутируемого состояния между потоками).
+ *
  * ## Почему PRNG устроен именно так
  *
  * `crypto` запрещён в домене, поэтому генератор — некриптографический, но с двумя свойствами,
- * которые здесь и нужны: детерминизм (то же состояние → тот же выход) и хорошее перемешивание
- * (маленькая разница входа → совсем другое состояние, иначе потоки оказались бы похожи).
+ * которые здесь и нужны: детерминизм (тот же вход → тот же выход) и хорошее перемешивание
+ * (маленькая разница входа → совсем другой выход, иначе потоки/draw оказались бы похожи).
+ * Counter-based-конструкция (без цепочки состояний) выбрана по этой же причине в `IdFactory`
+ * (`id-factory.ts`) — оба порта производят выход как хеш `(seed, ключ, счётчик)`.
  *
- * 1. Seed конкретного потока выводится из (`seed`, `streamKey`) через FNV-1a (хеш ключа) и два
- *    прохода SplitMix32 (`internal/deterministic-hash.ts`) — оба шага имеют сильный
- *    avalanche-эффект, поэтому близкие `streamKey` ("agent:rook" и "agent:rook") дают никак не
- *    связанные состояния, а не соседние точки одной последовательности.
- * 2. Сам поток продвигается Mulberry32 — маленьким PRNG с известными и достаточными для игровой
- *    механики статистическими свойствами; состояние явно хранится по каждому `streamKey`
- *    отдельно, поэтому потоки не делят один счётчик и не могут стать сдвинутыми копиями друг
- *    друга «по построению».
+ * ## Формат несовместим с прежней версией — как и формат id
+ *
+ * Смена конструкции PRNG после первого записанного события невозможна без миграции: сохранённые
+ * события содержат `random_audit` (`stream_key`, `draw index`), и воспроизведение по ним
+ * зависит от точного алгоритма draw. Сейчас цена нулевая — durable-журнала ещё нет; после
+ * появления durable-хранилища (I02A) любое изменение `deriveDrawValue` требует migration-плана,
+ * так же как изменение формата id в `id-factory.ts`.
  */
 import { fnv1a32, splitmix32Next } from '../internal/deterministic-hash.ts';
 
@@ -40,35 +66,34 @@ export interface RandomSource {
   draw(streamKey: string): RandomDraw;
 }
 
-function deriveStreamState(seed: number, streamKey: string): number {
-  const keyHash = fnv1a32(streamKey);
-  // XOR с seed, домноженным на нечётную константу, а не простое сложение: нужно, чтобы разница
-  // в один бит streamKey не давала соседний seed соседнего потока.
-  const mixed = ((seed >>> 0) ^ Math.imul(keyHash, 0x2545f491)) >>> 0;
-  return splitmix32Next(splitmix32Next(mixed));
-}
-
-/** Один шаг Mulberry32. `state` — то, что персистентно хранится между draw одного потока. */
-function mulberry32Step(state: number): { readonly state: number; readonly value: number } {
-  const nextState = (state + 0x6d2b79f5) | 0;
-  let t = Math.imul(nextState ^ (nextState >>> 15), nextState | 1);
-  t = (t + Math.imul(t ^ (t >>> 7), t | 61)) | 0;
-  const value = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  return { state: nextState, value };
-}
-
-interface StreamCursor {
-  readonly state: number;
-  readonly drawIndex: number;
+/**
+ * Значение draw — чистая функция `(seed, keyHash, drawIndex)`, БЕЗ цепочки мутируемого
+ * состояния между draw. `keyHash` подмешивается в каждый раунд (после первого и после третьего
+ * шага SplitMix32), `drawIndex` — тоже дважды, разными константами-множителями: ни один из трёх
+ * входов не сводится к аддитивному смещению общего для всех потоков состояния, поэтому у
+ * потоков нет структурной аффинной связи, которую можно решить относительно сдвига (см. разбор
+ * дефекта в docstring файла).
+ */
+function deriveDrawValue(seed: number, keyHash: number, drawIndex: number): number {
+  const indexBits = drawIndex >>> 0;
+  let state = ((seed >>> 0) ^ Math.imul(keyHash, 0x2545f491)) >>> 0;
+  state = splitmix32Next(state);
+  state = splitmix32Next(state ^ Math.imul(indexBits, 0x9e3779b1));
+  state = splitmix32Next(state ^ keyHash);
+  state = splitmix32Next(state ^ Math.imul(indexBits, 0x85ebca77));
+  return state / 4294967296;
 }
 
 /**
- * Детерминированная реализация порта. Один seed на инстанс; потоки создаются лениво при первом
- * `draw(streamKey)` и живут независимо друг от друга до конца жизни инстанса.
+ * Детерминированная реализация порта. Один seed на инстанс; per-`streamKey` хранится ТОЛЬКО
+ * следующий `drawIndex` (простая бухгалтерия счётчика) — самого значения предыдущего draw не
+ * существует как состояния, оно каждый раз пересчитывается заново из
+ * `(seed, streamKey, drawIndex)`. Потоки поэтому не могут делить состояние даже случайно: у
+ * каждого потока нет ничего, кроме собственного счётчика.
  */
 export class DeterministicRandomSource implements RandomSource {
   private readonly seed: number;
-  private readonly streams = new Map<string, StreamCursor>();
+  private readonly nextDrawIndex = new Map<string, number>();
 
   constructor(seed: number) {
     if (!Number.isSafeInteger(seed)) {
@@ -78,12 +103,9 @@ export class DeterministicRandomSource implements RandomSource {
   }
 
   draw(streamKey: string): RandomDraw {
-    const cursor = this.streams.get(streamKey) ?? {
-      state: deriveStreamState(this.seed, streamKey),
-      drawIndex: 0,
-    };
-    const stepped = mulberry32Step(cursor.state);
-    this.streams.set(streamKey, { state: stepped.state, drawIndex: cursor.drawIndex + 1 });
-    return { value: stepped.value, streamKey, drawIndex: cursor.drawIndex };
+    const drawIndex = this.nextDrawIndex.get(streamKey) ?? 0;
+    this.nextDrawIndex.set(streamKey, drawIndex + 1);
+    const value = deriveDrawValue(this.seed, fnv1a32(streamKey), drawIndex);
+    return { value, streamKey, drawIndex };
   }
 }
