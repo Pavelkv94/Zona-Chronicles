@@ -37,12 +37,21 @@ function seedWorldProcess(seed: number) {
   return spawnWorldCliDirect(['world', 'seed', '--seed', String(seed)]);
 }
 
+/**
+ * GO-критерий I01 в `10_ITERATION_MASTER_PLAN` требует «100 повторов на **нескольких** seed»,
+ * тогда как A1 в `ACCEPTANCE.md` называет один фиксированный seed. Прогон ведётся по всем
+ * перечисленным здесь seed: строже из двух документов — мастер-план.
+ *
+ * Разные по характеру: степень двойки, соседнее нечётное, ноль (граница), большое значение.
+ * Один seed не отличил бы детерминизм от совпадения на удачном входе.
+ */
+const DETERMINISM_SEEDS = [42, 43, 0, 987654321] as const;
+
 describe('I01 A1 — same seed, byte-identical world across 100 separate OS processes', () => {
-  it(
-    `produces identical canonical JSON and checksum across ${RUN_COUNT} process spawns (seed=42)`,
+  it.each(DETERMINISM_SEEDS)(
+    `produces identical canonical JSON and checksum across ${RUN_COUNT} process spawns (seed=%i)`,
     { timeout: Math.max(120_000, RUN_COUNT * 2_000) },
-    () => {
-      const seed = 42;
+    (seed: number) => {
       const outputs: string[] = [];
 
       for (let run = 0; run < RUN_COUNT; run += 1) {
