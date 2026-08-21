@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -195,6 +195,30 @@ describe('runNoLlmScan (io integration: M-5 review finding)', () => {
     // "exists but unreadable", not "absent". Deterministic and root-safe (unlike
     // chmod-based permission denial).
     mkdirSync(join(dir, 'pnpm-lock.yaml'));
+
+    const outcome = runNoLlmScan(dir);
+
+    expect(outcome.kind).toBe('config-error');
+  });
+
+  /**
+   * Lead review (mutation testing on M-5's fix): `collectInput` has TWO guards —
+   * the lockfile-read guard covered above, and a SECOND, separate aggregate
+   * guard over `packageJsonResult.unreadablePaths` /
+   * `trackedFilesForEnvResult.unreadablePaths` / `sourceResult.unreadablePaths`.
+   * Disabling only the aggregate guard (`if (false as boolean)`) left
+   * `scan-no-llm.test.ts` at 12/12 green — the lockfile test above cannot see
+   * this guard at all, because it never makes the lockfile unreadable. This
+   * test targets the aggregate guard specifically: a fully readable lockfile,
+   * but an unreadable path elsewhere in the collected input.
+   */
+  it('returns config-error, not pass, when the lockfile is readable but a source file under a SCAN_ROOT cannot be read (positive: M-5 review finding — the aggregate unreadablePaths guard, distinct from the lockfile guard above)', () => {
+    const dir = buildFixtureRepo();
+    writeFileSync(join(dir, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n', 'utf8');
+    mkdirSync(join(dir, 'apps', 'api', 'src'), { recursive: true });
+    // Self-referential symlink -> ELOOP on read, "exists but unreadable" (not
+    // "absent") — same deterministic, root-safe trick as source-files.test.ts.
+    symlinkSync('loop.ts', join(dir, 'apps', 'api', 'src', 'loop.ts'));
 
     const outcome = runNoLlmScan(dir);
 

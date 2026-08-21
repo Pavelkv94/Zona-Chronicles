@@ -146,13 +146,16 @@ const domainFiles: Readonly<Record<string, string>> = {
   // а не форму импорта того же источника (`import { randomUUID } from 'node:crypto'`) — идиоматичнее
   // и именно её пишет implementer по умолчанию. Каждый вход из правки ADR-003 обязан иметь
   // фикстуру, иначе правило считается несуществующим.
-  'import-node-crypto.ts': "import { randomUUID } from 'node:crypto';\nexport const bad = randomUUID;\n",
+  'import-node-crypto.ts':
+    "import { randomUUID } from 'node:crypto';\nexport const bad = randomUUID;\n",
   'import-node-perf-hooks.ts':
     "import { performance as ph } from 'node:perf_hooks';\nexport const bad = (): number => ph.now();\n",
   // Голая форма с подпутём (fs/promises) — до фикса были закрыты node:fs/node:fs/* и bare fs, но не bare fs/*.
-  'import-bare-fs-subpath.ts': "import { readFile } from 'fs/promises';\nexport const bad = readFile;\n",
+  'import-bare-fs-subpath.ts':
+    "import { readFile } from 'fs/promises';\nexport const bad = readFile;\n",
   'import-node-tls.ts': "import { connect } from 'node:tls';\nexport const bad = connect;\n",
-  'import-node-dgram.ts': "import { createSocket } from 'node:dgram';\nexport const bad = createSocket;\n",
+  'import-node-dgram.ts':
+    "import { createSocket } from 'node:dgram';\nexport const bad = createSocket;\n",
   'import-node-http2.ts':
     "import { connect as connectH2 } from 'node:http2';\nexport const bad = connectH2;\n",
   'import-node-dns.ts': "import { lookup } from 'node:dns';\nexport const bad = lookup;\n",
@@ -218,8 +221,7 @@ const apiFiles: Readonly<Record<string, string>> = {
     "import '../../../../scripts/boundaries/check-workspace-graph.ts';\nexport const marker = true;\n",
   // Прямого импорта @zona/persistence из api достаточно, чтобы поймать прямое ребро, но M-1
   // требует транзитивности: api не должен зависеть от чего-либо, что зависит от persistence.
-  'api-to-projections-persistence.ts':
-    `import '../../../../packages/projections/src/__${SUFFIX}__/projections-to-persistence.ts';\nexport const marker = true;\n`,
+  'api-to-projections-persistence.ts': `import '../../../../packages/projections/src/__${SUFFIX}__/projections-to-persistence.ts';\nexport const marker = true;\n`,
 };
 
 type EslintMessage = { readonly ruleId: string | null; readonly message: string };
@@ -355,7 +357,11 @@ describe('boundary fixtures — eslint (A2, DEV-02, SIM-01)', () => {
     ['import-llm.ts', 'no-restricted-imports', `'${LLM_PACKAGE}' import is restricted`],
     // B-2: форма импорта того же источника недетерминизма, а не только глобал.
     ['import-node-crypto.ts', 'no-restricted-imports', "'node:crypto' import is restricted"],
-    ['import-node-perf-hooks.ts', 'no-restricted-imports', "'node:perf_hooks' import is restricted"],
+    [
+      'import-node-perf-hooks.ts',
+      'no-restricted-imports',
+      "'node:perf_hooks' import is restricted",
+    ],
     ['import-bare-fs-subpath.ts', 'no-restricted-imports', "'fs/promises' import is restricted"],
     ['import-node-tls.ts', 'no-restricted-imports', "'node:tls' import is restricted"],
     ['import-node-dgram.ts', 'no-restricted-imports', "'node:dgram' import is restricted"],
