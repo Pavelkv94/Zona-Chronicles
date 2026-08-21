@@ -115,7 +115,7 @@ export function parseInstant(value: string): Instant | InstantError {
     if (overprecise !== null) {
       return {
         error:
-          `метка времени точнее миллисекунды (${overprecise[1]!.length} знаков дробной части ` +
+          `метка времени точнее миллисекунды (знаков дробной части: ${overprecise[1]!.length} ` +
           `при допустимых ${MAX_FRACTION_DIGITS}): ${JSON.stringify(value)}; ` +
           'усечение изменило бы текст, но не момент, и один факт получил бы два checksum',
       };
