@@ -131,6 +131,12 @@ const domainFiles: Readonly<Record<string, string>> = {
   'math-random.ts': 'export const bad = (): number => Math.random();\n',
   'process-env.ts': "export const bad = (): string | undefined => process.env['X'];\n",
   'crypto-random-uuid.ts': 'export const bad = (): string => crypto.randomUUID();\n',
+  // M2 верификации I01: computed-доступ и globalThis обходили прежние селекторы —
+  // проверено исполнением, файл с этими формами давал eslint exit 0.
+  'computed-date-now.ts': "export const bad = (): number => Date['now']();\n",
+  'computed-math-random.ts': "export const bad = (): number => Math['random']();\n",
+  'global-this-random.ts': 'export const bad = (): number => globalThis.Math.random();\n',
+  'global-this-process.ts': 'export const bad = (): string => globalThis.process.version;\n',
   'fetch-call.ts': `export const bad = (): Promise<Response> => fetch('${SAMPLE_URL}');\n`,
   'intl-usage.ts': "export const bad = (): Intl.NumberFormat => new Intl.NumberFormat('en-US');\n",
   'to-locale-string.ts': 'export const bad = (n: number): string => n.toLocaleString();\n',
@@ -344,6 +350,10 @@ describe('boundary fixtures — eslint (A2, DEV-02, SIM-01)', () => {
     ['math-random.ts', 'no-restricted-syntax', 'RandomSource'],
     ['process-env.ts', 'no-restricted-syntax', 'домен не обращается к process'],
     ['crypto-random-uuid.ts', 'no-restricted-syntax', 'randomUUID/getRandomValues'],
+    ['computed-date-now.ts', 'no-restricted-syntax', 'computed-доступ к Date'],
+    ['computed-math-random.ts', 'no-restricted-syntax', 'computed-доступ к Math.random'],
+    ['global-this-random.ts', 'no-restricted-syntax', 'globalThis'],
+    ['global-this-process.ts', 'no-restricted-syntax', 'globalThis'],
     ['fetch-call.ts', 'no-restricted-syntax', 'глобал и не ловится'],
     ['intl-usage.ts', 'no-restricted-syntax', 'locale-зависимое поведение'],
     ['to-locale-string.ts', 'no-restricted-syntax', 'locale-зависимые форматирование'],

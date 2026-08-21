@@ -8,7 +8,32 @@ import globals from 'globals';
  * Запрещённые конструкции ядра симуляции (SIM-01, ADR-003).
  * Домен получает время, случайность и конфигурацию только через инъектированные порты.
  */
+/**
+ * M2 верификации I01. Прежние селекторы были завязаны на `object.name` + `property.name`,
+ * поэтому мимо них проходили: computed-доступ (`Date['now']()`), обращение через
+ * `globalThis.*` и алиас (`const D = Date; D.now()`). Проверено исполнением: файл с этими
+ * тремя формами давал `eslint` exit 0 и `boundaries:check` без нарушений.
+ *
+ * Закрыты первые две формы. **Алиасинг остаётся известным пределом контроля**: поймать
+ * `const D = Date` можно только type-aware правилом, которого здесь нет. Это записано в
+ * ADR-003 как предел, а не подразумевается закрытым — недоказанное абсолютное правило хуже
+ * задокументированного частичного.
+ */
 const nondeterminismRestrictions = [
+  {
+    selector:
+      "MemberExpression[computed=true][object.name='Date'][property.value=/^(now|parse|UTC)$/]",
+    message: 'SIM-01: computed-доступ к Date.now/parse/UTC запрещён так же, как обычный.',
+  },
+  {
+    selector: "MemberExpression[computed=true][object.name='Math'][property.value='random']",
+    message: 'SIM-01: computed-доступ к Math.random запрещён так же, как обычный.',
+  },
+  {
+    selector: "MemberExpression[object.name='globalThis']",
+    message:
+      'SIM-01/ADR-003: обращение к globalThis в каноническом ядре запрещено — оно обходит запреты на Date, Math.random, crypto и process.',
+  },
   {
     selector: "MemberExpression[object.name='Date'][property.name=/^(now|parse|UTC)$/]",
     message: 'SIM-01: используйте инъектированный Clock port вместо Date.now/Date.parse/Date.UTC.',
