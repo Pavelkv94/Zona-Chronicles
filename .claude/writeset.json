@@ -1,6 +1,6 @@
 {
-  "task_id": "I01-T2",
-  "owner_role": "acceptance-author",
-  "write_paths": ["tests/acceptance/**"],
-  "allow_protected_paths": ["tests/acceptance/**"]
+  "task_id": "I01-T3",
+  "owner_role": "domain-implementer",
+  "write_paths": ["packages/domain/**"],
+  "allow_protected_paths": []
 }
