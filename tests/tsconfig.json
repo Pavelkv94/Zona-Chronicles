@@ -5,16 +5,15 @@
     "noEmit": true,
     "composite": false,
     "types": ["node"],
-    "baseUrl": "..",
     "paths": {
-      "@zona/contracts": ["packages/contracts/src/index.ts"],
-      "@zona/domain": ["packages/domain/src/index.ts"],
-      "@zona/simulation": ["packages/simulation/src/index.ts"],
-      "@zona/persistence": ["packages/persistence/src/index.ts"],
-      "@zona/projections": ["packages/projections/src/index.ts"],
-      "@zona/representation": ["packages/representation/src/index.ts"],
-      "@zona/content": ["packages/content/src/index.ts"],
-      "@zona/testkit": ["packages/testkit/src/index.ts"]
+      "@zona/contracts": ["../packages/contracts/src/index.ts"],
+      "@zona/domain": ["../packages/domain/src/index.ts"],
+      "@zona/simulation": ["../packages/simulation/src/index.ts"],
+      "@zona/persistence": ["../packages/persistence/src/index.ts"],
+      "@zona/projections": ["../packages/projections/src/index.ts"],
+      "@zona/representation": ["../packages/representation/src/index.ts"],
+      "@zona/content": ["../packages/content/src/index.ts"],
+      "@zona/testkit": ["../packages/testkit/src/index.ts"]
     }
   },
   "include": ["**/*.ts"]

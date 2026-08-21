@@ -79,6 +79,20 @@ export default defineConfig({
       {
         resolve: { alias },
         test: {
+          // Acceptance-набор итерации. Отдельный проект, а не часть `unit`: он порождает
+          // настоящие процессы (A1 — 100 запусков CLI), поэтому не должен идти в быстром
+          // цикле Red/Green. Намеренно НЕ входит в `pnpm verify` — см. `test:acceptance`.
+          name: 'acceptance',
+          include: ['tests/acceptance/**/*.test.ts'],
+          exclude: COMMON_EXCLUDE,
+          environment: 'node',
+          testTimeout: 300_000,
+          hookTimeout: 300_000,
+        },
+      },
+      {
+        resolve: { alias },
+        test: {
           name: 'replay',
           include: ['tests/replay/**/*.test.ts'],
           exclude: COMMON_EXCLUDE,
