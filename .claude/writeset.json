@@ -1,7 +1,6 @@
 {
-  "task_id": "I01-F2",
-  "owner_role": "contract-steward",
-  "//": "Расширено на packages/domain/src/decide.ts (только этот файл, не весь пакет): смена сигнатуры addMinutes на Instant | InstantError ломает единственную строку вызова в домене, и без неё typecheck красный.",
-  "write_paths": ["packages/contracts/**", "apps/cli/**", "packages/domain/src/decide.ts"],
-  "allow_protected_paths": ["packages/contracts/**"]
+  "task_id": "I01-VERIFY-2",
+  "owner_role": "reviewer",
+  "write_paths": [],
+  "allow_protected_paths": []
 }
