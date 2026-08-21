@@ -1,0 +1,82 @@
+{
+  "iteration_id": "I00-F5",
+  "base_commit": "daf148c",
+  "//": "Раунд фиксов по findings раунда 3 верификации. Карта закоммичена на contract-freeze ДО запуска implementer-ов: ownership:check и SubagentStop читают её из git-объекта base-коммита, поэтому поздняя декларация прав не даёт.",
+  "lead_paths": [
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "ops/**",
+    "tests/**",
+    "scripts/boundaries/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "tsconfig.depcruise.json",
+    "vitest.config.ts",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".gitignore",
+    ".nvmrc",
+    ".tool-versions",
+    ".dockerignore",
+    "docker-compose.yml",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "packages/contracts/**",
+    "tools/usage-continuity/**"
+  ],
+  "tasks": [
+    {
+      "task_id": "I00-F5-T1",
+      "owner_role": "tooling-implementer",
+      "//": "B-1 (база сверки = base_commit), M-2 (канарейка роли), M-7 (роль reviewer), M-8 (резолв пути), minor 5 (git() глотает ошибку).",
+      "write_paths": [
+        "tools/agent-harness/src/hooks/**",
+        "tools/agent-harness/src/decide-bash.ts",
+        "tools/agent-harness/src/decide-bash.test.ts",
+        "tools/agent-harness/src/decide-write.ts",
+        "tools/agent-harness/src/decide-write.test.ts",
+        "tools/agent-harness/src/session-role.ts",
+        "tools/agent-harness/src/session-role.test.ts",
+        "tools/agent-harness/src/writeset.ts",
+        "tools/agent-harness/src/writeset.test.ts",
+        "tools/agent-harness/src/tasks-directory.ts",
+        "tools/agent-harness/src/tasks-directory.test.ts",
+        "tools/agent-harness/src/task-ownership.ts",
+        "tools/agent-harness/src/task-ownership.test.ts",
+        "tools/agent-harness/src/protected-paths.ts",
+        "tools/agent-harness/src/protected-paths.test.ts",
+        "tools/agent-harness/src/cli/**"
+      ]
+    },
+    {
+      "task_id": "I00-F5-T2",
+      "owner_role": "tooling-implementer",
+      "//": "B-2 (поверхность SIM-01 в форме импорта), M-1 (apps/** как источник, транзитивность), minor 7 (фикстуры на непокрытые правила).",
+      "write_paths": [
+        "eslint.config.mjs",
+        ".dependency-cruiser.cjs",
+        "tools/agent-harness/src/boundary-fixtures.test.ts"
+      ],
+      "allow_protected_paths": ["eslint.config.mjs", ".dependency-cruiser.cjs"]
+    },
+    {
+      "task_id": "I00-F5-T3",
+      "owner_role": "tooling-implementer",
+      "//": "M-5 (scan-no-llm fail-open при недоступном lockfile) и тот же класс в source-files/git.",
+      "write_paths": ["tools/security-scan/**", "scripts/security/**", "security/**"]
+    },
+    {
+      "task_id": "I00-F5-T4",
+      "owner_role": "persistence-implementer",
+      "//": "minor 2 (collate C), minor 3 (checksum не покрывает phase).",
+      "write_paths": ["packages/persistence/**"],
+      "allow_protected_paths": ["packages/persistence/src/migrations/**"]
+    }
+  ]
+}
