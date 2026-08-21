@@ -143,14 +143,38 @@ export const JourneyStartedPayloadSchema = Type.Object(
 /**
  * `journey.completed`: агент дошёл (§11).
  *
- * Момента прибытия в payload нет намеренно: он и есть `world_time` события, а §4 запрещает
- * дублировать поля envelope в payload.
+ * Payload намеренно состоит из одного поля, и это не недосказанность — всё остальное уже есть
+ * в envelope, а §4 запрещает дублирование:
+ *
+ * - момент прибытия — это `world_time` события;
+ * - дошедший агент — `actor_ids`;
+ * - место прибытия — `location_id`. Событие происходит в точке назначения, поэтому отдельного
+ *   `arrival_location_id` не нужно. Это ПРОЧТЕНИЕ §3, а не цитата: документ определяет
+ *   `location_id` как место факта и не разбирает случай завершённого пути отдельно;
+ * - опоздание считается как `world_time` минус `expected_arrival` из `journey.started`,
+ *   связанного через `correlation_id`;
+ * - `journey.interrupted` — отдельный тип события (`07_MVP_MECHANICS_SPEC` §20), а не флаг
+ *   внутри этого. Поэтому §12 «событие не заменяет state machine одним успешным флагом» здесь
+ *   соблюдено разделением типов, а не полем `success`.
+ *
+ * ОТКРЫТЫЙ ВОПРОС К I02B, зафиксирован как расхождение, а не решён здесь. §6 требует, чтобы
+ * повторное завершение предотвращалось «unique link с resulting command/event batch», но не
+ * говорит, на какой стороне живёт эта связь. Если она принадлежит строке scheduled action
+ * (action → полученный batch), envelope менять не нужно. Если же ссылка обязана лежать на
+ * событии, envelope нуждается в поле вида `scheduled_action_id` — и это breaking change для
+ * ВСЕХ типов событий, а не только для этого, потому что поле общее. Решать до I02B: цена
+ * ошибки — мажорная версия envelope, а не payload.
  */
 export const JourneyCompletedPayloadSchema = Type.Object(
   {
     route_id: NamespacedIdSchema,
   },
-  { additionalProperties: false, description: 'Пройденный маршрут.' },
+  {
+    additionalProperties: false,
+    description:
+      'Пройденный маршрут. Момент прибытия — world_time, место прибытия — location_id, ' +
+      'агент — actor_ids: §4 запрещает дублировать их в payload.',
+  },
 );
 
 /**

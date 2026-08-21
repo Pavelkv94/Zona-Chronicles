@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { messageLengthBitWords, sha256Hex } from './sha256.ts';
+import { SHA256_MAX_INPUT_BYTES, messageLengthBitWords, sha256Hex } from './sha256.ts';
 
 /**
  * Векторы FIPS 180-4 плюс границы длины блока и многобайтовый UTF-8.
@@ -75,5 +75,25 @@ describe('messageLengthBitWords — граница 2^32 бит', () => {
     [536_870_913, [1, 8]],
   ])('для %i байт даёт слова %j', (byteLength, expected) => {
     expect(messageLengthBitWords(byteLength)).toEqual(expected);
+  });
+
+  it('документированный предел — наибольшая длина, чья длина в битах ещё точна', () => {
+    expect(SHA256_MAX_INPUT_BYTES).toBe(2 ** 50 - 1);
+    expect(Number.isSafeInteger(SHA256_MAX_INPUT_BYTES * 8)).toBe(true);
+    expect(Number.isSafeInteger((SHA256_MAX_INPUT_BYTES + 1) * 8)).toBe(false);
+  });
+
+  it('принимает граничную длину', () => {
+    expect(messageLengthBitWords(SHA256_MAX_INPUT_BYTES)).toEqual([2_097_151, 4_294_967_288]);
+  });
+
+  it.each([
+    ['ровно на единицу выше предела', 2 ** 50],
+    ['заметно выше предела', 2 ** 53],
+  ])('отвергает длину %s, а не считает неверный хеш молча', (_label, byteLength) => {
+    // За этим пределом `byteLength * 8` перестаёт быть точным, и padding получил бы
+    // неверную длину сообщения. Тихий неверный хеш хуже отказа: он выглядит как
+    // расхождение состояния мира.
+    expect(() => messageLengthBitWords(byteLength)).toThrow(/предел|длин/i);
   });
 });

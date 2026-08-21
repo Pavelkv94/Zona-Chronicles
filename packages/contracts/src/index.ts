@@ -64,7 +64,7 @@ export {
   requireCanonical,
 } from './canonical-json.ts';
 
-export { sha256Hex, sha256HexOfBytes } from './sha256.ts';
+export { SHA256_MAX_INPUT_BYTES, sha256Hex, sha256HexOfBytes } from './sha256.ts';
 
 export {
   type CanonicalChecksum,
