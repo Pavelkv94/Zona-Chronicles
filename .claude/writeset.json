@@ -1,0 +1,8 @@
+{
+  "task_id": "I00-R3-VERIFY",
+  "owner_role": "reviewer",
+  "write_paths": [
+    "/private/tmp/claude-501/-Users-pavelkazlou-PET-Zona-Chronicles/f8529c0b-ef71-4bb6-a85a-b4a3df2cc781/scratchpad/**"
+  ],
+  "allow_protected_paths": []
+}
