@@ -15,6 +15,9 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "@sinclair/typebox": "catalog:"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",

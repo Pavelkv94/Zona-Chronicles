@@ -125,7 +125,11 @@ importers:
 
   packages/content: {}
 
-  packages/contracts: {}
+  packages/contracts:
+    dependencies:
+      '@sinclair/typebox':
+        specifier: 'catalog:'
+        version: 0.34.52
 
   packages/domain:
     dependencies:
