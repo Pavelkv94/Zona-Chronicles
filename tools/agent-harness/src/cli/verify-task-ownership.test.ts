@@ -67,13 +67,13 @@ describe('verify-task-ownership.ts (real process)', () => {
       '.claude/tasks/I00.json',
       JSON.stringify({
         iteration_id: 'I00',
-        tasks: [{ task_id: 'I00-F1', owner_role: 'r', write_paths: ['tools/agent-harness/**'] }],
+        tasks: [{ task_id: 'I00-F1', owner_role: 'r', write_paths: ['packages/simulation/**'] }],
       }),
     );
     const baseSha = git(['rev-parse', 'HEAD'], root);
 
-    mkdirSync(join(root, 'tools', 'agent-harness'), { recursive: true });
-    writeFileSync(join(root, 'tools', 'agent-harness', 'x.ts'), 'export const x = 1;\n');
+    mkdirSync(join(root, 'packages', 'simulation'), { recursive: true });
+    writeFileSync(join(root, 'packages', 'simulation', 'x.ts'), 'export const x = 1;\n');
     git(['add', '.'], root);
     git(['commit', '-q', '-m', 'work within write set'], root);
 
@@ -89,7 +89,7 @@ describe('verify-task-ownership.ts (real process)', () => {
       '.claude/tasks/I00.json',
       JSON.stringify({
         iteration_id: 'I00',
-        tasks: [{ task_id: 'I00-F1', owner_role: 'r', write_paths: ['tools/agent-harness/**'] }],
+        tasks: [{ task_id: 'I00-F1', owner_role: 'r', write_paths: ['packages/simulation/**'] }],
       }),
     );
     const baseSha = git(['rev-parse', 'HEAD'], root);
@@ -112,7 +112,7 @@ describe('verify-task-ownership.ts (real process)', () => {
       '.claude/tasks/I00.json',
       JSON.stringify({
         iteration_id: 'I00',
-        tasks: [{ task_id: 'I00-F1', owner_role: 'r', write_paths: ['tools/agent-harness/**'] }],
+        tasks: [{ task_id: 'I00-F1', owner_role: 'r', write_paths: ['packages/simulation/**'] }],
       }),
     );
     const baseSha = git(['rev-parse', 'HEAD'], root);

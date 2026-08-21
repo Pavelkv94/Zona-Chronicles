@@ -72,7 +72,7 @@ describe('pre-tool-use-write.ts (real process)', () => {
     writeWriteSet(root, {
       task_id: 'I00-R1',
       owner_role: 'tooling-implementer',
-      write_paths: ['tools/agent-harness/**'],
+      write_paths: ['packages/simulation/**'],
     });
     const result = runHook({
       cwd: root,
@@ -80,7 +80,7 @@ describe('pre-tool-use-write.ts (real process)', () => {
       agent_type: 'tooling-implementer',
       tool_name: 'Edit',
       tool_input: {
-        file_path: `${root}/tools/agent-harness/src/decide-write.ts`,
+        file_path: `${root}/packages/simulation/src/decide-write.ts`,
         old_string: 'a',
         new_string: 'b',
       },
@@ -94,7 +94,7 @@ describe('pre-tool-use-write.ts (real process)', () => {
     writeWriteSet(root, {
       task_id: 'I00-R1',
       owner_role: 'tooling-implementer',
-      write_paths: ['tools/agent-harness/**'],
+      write_paths: ['packages/simulation/**'],
     });
     const result = runHook({
       cwd: root,
@@ -124,7 +124,7 @@ describe('pre-tool-use-write.ts (real process)', () => {
       agent_id: 'agent-1',
       agent_type: 'tooling-implementer',
       tool_name: 'Write',
-      tool_input: { file_path: `${root}/tools/agent-harness/src/x.ts`, content: 'x' },
+      tool_input: { file_path: `${root}/packages/simulation/src/x.ts`, content: 'x' },
     });
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout) as {
@@ -141,14 +141,14 @@ describe('pre-tool-use-write.ts (real process)', () => {
     writeWriteSet(root, {
       task_id: 'I00-R1',
       owner_role: 'tooling-implementer',
-      write_paths: ['tools/agent-harness/**'],
+      write_paths: ['packages/simulation/**'],
     });
     const payload = {
       cwd: root,
       agent_id: 'agent-1',
       agent_type: 'tooling-implementer',
       tool_name: 'Write',
-      tool_input: { file_path: `${root}/tools/agent-harness/src/x.ts`, content: 'x' },
+      tool_input: { file_path: `${root}/packages/simulation/src/x.ts`, content: 'x' },
     };
 
     // До удаления: разрешено (путь входит в write set).

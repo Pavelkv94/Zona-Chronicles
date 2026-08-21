@@ -19,8 +19,8 @@ const makeRepo = (): string => {
   git(['init', '-q'], dir);
   git(['config', 'user.email', 'test@example.com'], dir);
   git(['config', 'user.name', 'Test'], dir);
-  mkdirSync(join(dir, 'tools', 'agent-harness'), { recursive: true });
-  writeFileSync(join(dir, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 1;\n');
+  mkdirSync(join(dir, 'packages', 'simulation'), { recursive: true });
+  writeFileSync(join(dir, 'packages', 'simulation', 'seed.ts'), 'export const seed = 1;\n');
   writeFileSync(join(dir, 'README.md'), '# repo\n');
   git(['add', '.'], dir);
   git(['commit', '-q', '-m', 'seed'], dir);
@@ -84,9 +84,9 @@ describe('subagent-stop-writeset.ts (real process)', () => {
     writeWriteSet(root, {
       task_id: 'I00-R1',
       owner_role: 'tooling-implementer',
-      write_paths: ['tools/agent-harness/**'],
+      write_paths: ['packages/simulation/**'],
     });
-    writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 2;\n');
+    writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 2;\n');
     const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
@@ -97,7 +97,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
     writeWriteSet(root, {
       task_id: 'I00-R1',
       owner_role: 'tooling-implementer',
-      write_paths: ['tools/agent-harness/**'],
+      write_paths: ['packages/simulation/**'],
     });
     writeFileSync(join(root, 'README.md'), 'изменено задачей вне write set\n');
     const result = runHook(root, { agent_id: 'agent-1' });
@@ -115,11 +115,11 @@ describe('subagent-stop-writeset.ts (real process)', () => {
         {
           task_id: 'I00-R1',
           owner_role: 'tooling-implementer',
-          write_paths: ['tools/agent-harness/**'],
+          write_paths: ['packages/simulation/**'],
         },
       ],
     });
-    writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 3;\n');
+    writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 3;\n');
     const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe('');
@@ -131,15 +131,15 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       iteration_id: 'I00',
       tasks: [{ task_id: 'I00-R2', owner_role: 'r', write_paths: ['packages/domain/**'] }],
     });
-    writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 4;\n');
+    writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 4;\n');
     const result = runHook(root, { agent_id: 'agent-1' });
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('tools/agent-harness/seed.ts');
+    expect(result.stderr).toContain('packages/simulation/seed.ts');
   });
 
   it('B2: task-сессия без writeset.json и без .claude/tasks — код 2, явная причина', () => {
     const root = makeRepo();
-    writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 5;\n');
+    writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 5;\n');
     const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('.claude/writeset.json');
@@ -151,9 +151,9 @@ describe('subagent-stop-writeset.ts (real process)', () => {
     writeWriteSet(root, {
       task_id: 'I00-R1',
       owner_role: 'tooling-implementer',
-      write_paths: ['tools/agent-harness/**'],
+      write_paths: ['packages/simulation/**'],
     });
-    writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 6;\n');
+    writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 6;\n');
 
     // До удаления: diff внутри write set — прошло бы.
     const before = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
@@ -190,7 +190,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeTasksFile(root, 'I00.json', {
         iteration_id: 'I00',
@@ -199,7 +199,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
           {
             task_id: 'I00-F1',
             owner_role: 'tooling-implementer',
-            write_paths: ['tools/agent-harness/**'],
+            write_paths: ['packages/simulation/**'],
           },
         ],
       });
@@ -225,7 +225,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'CLAUDE.md'), 'изменено вне declared write set\n');
 
@@ -250,9 +250,9 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
-      writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 7;\n');
+      writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 7;\n');
       const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
       expect(result.status).toBe(0);
       expect(result.stderr).toBe('');
@@ -268,7 +268,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'forbidden.txt'), 'запись вне write set\n');
       git(['add', 'forbidden.txt'], root);
@@ -289,7 +289,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
           {
             task_id: 'I00-R2',
             owner_role: 'tooling-implementer',
-            write_paths: ['tools/agent-harness/**'],
+            write_paths: ['packages/simulation/**'],
           },
         ],
       });
@@ -307,10 +307,10 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
-      writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 8;\n');
-      git(['add', 'tools/agent-harness/seed.ts'], root);
+      writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 8;\n');
+      git(['add', 'packages/simulation/seed.ts'], root);
       git(['commit', '-q', '-m', 'task-сессия коммитит легитимную работу'], root);
 
       const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
@@ -330,7 +330,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
         writeWriteSet(root, {
           task_id: 'I00-F1',
           owner_role: 'tooling-implementer',
-          write_paths: ['tools/agent-harness/**'],
+          write_paths: ['packages/simulation/**'],
         });
         // Task-сессия ничего не меняла — только что объявлен write set.
         const result = runHook(root, { agent_id: 'agent-1', agent_type: 'tooling-implementer' });
@@ -346,7 +346,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       // Файл вне write set: до фикса эта комбинация («payload похож на lead») пропускала бы
       // проверку целиком (ранний return на sessionRole === 'lead').
@@ -391,7 +391,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F1',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, '.git', 'index'), 'not-a-real-index');
 
@@ -410,7 +410,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'README.md'), 'изменил lead, не эта сессия\n');
       const payload = {
@@ -435,7 +435,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'README.md'), 'x\n');
       const payload = {
@@ -455,7 +455,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'README.md'), 'x\n');
 
@@ -480,7 +480,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       const payload = {
         agent_id: 'agent-1',
@@ -507,7 +507,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'README.md'), 'x\n');
       const payload = { agent_id: 'agent-1', agent_type: 'tooling-implementer' }; // нет session_id
@@ -523,7 +523,7 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
       writeFileSync(join(root, 'README.md'), 'x\n');
       const result = runHook(root, {
@@ -542,9 +542,9 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       writeWriteSet(root, {
         task_id: 'I00-F5-T2',
         owner_role: 'tooling-implementer',
-        write_paths: ['tools/agent-harness/**'],
+        write_paths: ['packages/simulation/**'],
       });
-      writeFileSync(join(root, 'tools', 'agent-harness', 'seed.ts'), 'export const seed = 9;\n');
+      writeFileSync(join(root, 'packages', 'simulation', 'seed.ts'), 'export const seed = 9;\n');
       const result = runHook(root, {
         agent_id: 'agent-1',
         agent_type: 'tooling-implementer',

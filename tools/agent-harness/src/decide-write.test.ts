@@ -115,7 +115,7 @@ describe('decideWrite — запрещённые операции', () => {
     };
 
     it('запрещает запись в любой обычный путь (нет ни одного write path)', () => {
-      const result = decide('/repo/tools/agent-harness/src/a.ts', reviewerWriteSet);
+      const result = decide('/repo/packages/domain/src/a.ts', reviewerWriteSet);
       expect(result.decision).toBe('deny');
       expect(result.reason).toContain('вне declared write set');
     });
