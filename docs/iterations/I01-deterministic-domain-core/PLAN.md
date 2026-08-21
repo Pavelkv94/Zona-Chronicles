@@ -63,7 +63,7 @@ canonical JSON и одинаковый checksum. Изменение seed даё�
 ## 6. Frozen contracts итерации
 
 Замораживаются `packages/contracts/**` после задачи I01-T1 и до старта остальных.
-Contract freeze commit: **`c2a6c04`**.
+Contract freeze commit: **`b7bc7d2`**.
 
 Решения lead-а, принятые при заморозке (расхождения найдены contract-steward-ом и вынесены как
 вопросы, а не закрыты молча):
