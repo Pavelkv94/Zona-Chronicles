@@ -220,57 +220,23 @@ docs/
 
 Hook не должен парсить свободный текст команды хрупкой регуляркой, если тот же контроль можно выразить deny rule, allowlisted command wrapper или сравнением фактического `git diff`. Изменение settings/hooks проходит review как production tooling и имеет tests с allowed/denied fixtures.
 
-### Непрерывность при пятичасовом usage window
+### Исчерпание пятичасового usage window
 
-Это обязательное правило `CLAUDE.md` и agent harness, а не пожелание отдельному session. Исчерпание пятичасового лимита Anthropic означает техническую паузу, но не `complete`, `blocked`, сокращение scope или отмену текущей итерации.
+Требование DEV-01 — автоматический checkpoint, ожидание reset и продолжение того же task —
+**снято 2026-08-21** решением владельца (ADR-009). Адаптеров usage telemetry, persisted wake и
+session resume нет и в этой среде быть не может, а их разработка является инфраструктурой без
+отношения к продукту.
 
-Порог определяется только provider/platform telemetry именно пятичасового usage window. Context-window percentage, token estimate и догадка по времени не заменяют telemetry.
+Что остаётся в силе:
 
-```text
-remaining > 2%   -> normal work
-remaining <= 2% -> checkpoint_only: не начинать новый task/merge/долгий test
-remaining <= 1% -> waiting_for_usage_reset
-usage reset      -> validating_resume -> in_progress
-```
+- исчерпание окна — техническая пауза, а не `complete`, `blocked` и не повод сократить scope,
+  ослабить gate или обновить golden;
+- обрабатывают паузу человек и внешний runner, а не репозиторий;
+- **автопродолжение не обещается ни в каком виде.** Утверждение об автономной работе через
+  окно является ложным независимо от того, кто его делает.
 
-При `<= 2%` orchestrator создаёт/обновляет `.claude/checkpoints/<task-id>.md`:
-
-```yaml
-task_id:
-iteration_id:
-objective:
-plan_status:
-branch:
-worktree:
-base_sha:
-head_sha:
-changed_files: []
-dirty_files: []
-own_commits: []
-last_red:
-last_green:
-unfinished_processes: []
-decisions: []
-risks: []
-next_exact_action:
-usage_window_remaining_percent:
-reported_reset_at:
-checkpointed_at:
-```
-
-При `<= 1%` разрешены только атомарная запись checkpoint и безопасная остановка собственного незавершённого процесса. Запрещены новый model call, новый subagent, dependency install, merge/rebase/push, скрытый stash, destructive reset, обновление golden или ослабление test gate. Нельзя выдавать лимит за завершение задачи.
-
-Ожидание и продолжение реализует внешний orchestrator/runner:
-
-1. Получает `reported_reset_at` из доступной telemetry.
-2. Ставит persisted wake на `reported_reset_at + safety_margin` и завершает текущий model turn; active session не делает busy-wait и не расходует последние проценты polling-ом.
-3. После wake возобновляет тот же task/session, загружает checkpoint и проверяет branch/worktree, base/HEAD, `git diff`, живые процессы и ownership.
-4. Повторяет последний незавершённый test/command либо выполняет `next_exact_action`.
-5. Удаляет/архивирует checkpoint только после нового устойчивого Green или следующего нормального handoff.
-
-Автопродолжение считается поддержанным только после I00 dry-run с искусственными переходами `2% → 1% → reset`: runner должен сохраниться через остановку, не продублировать command/commit и продолжить с ожидаемого шага. Реальные пять часов в тесте не ждут — clock/usage telemetry инъектируются.
-
-Если platform не предоставляет процент, reset timestamp, persisted wake или session resume, агент записывает `LIMIT_AUTOCONTINUE_UNAVAILABLE` и возвращает управление внешнему orchestrator-у. Это blocker для заявленного автономного workflow, а не разрешение обещать несуществующее автоматическое продолжение.
+Не восстанавливайте протокол как декларацию. Если автономная работа через окно понадобится,
+требование вводится заново вместе с реальными адаптерами и собственным acceptance.
 
 ### Model routing
 

@@ -51,19 +51,22 @@
 | Lint | `pnpm lint` | 0 |
 | Границы | `pnpm boundaries:check` | 0 |
 | Типы | `pnpm typecheck` | 0 |
-| Unit + hooks | `pnpm test:unit` | 0 — 443 теста в 40 файлах (из них 195 в проекте `hooks`) |
-| Property | `pnpm test:property` | 0 |
+| Unit + hooks | `pnpm test:unit` | 0 — 495 тестов в 36 файлах |
+| Property | `pnpm test:property` | 0 — 8, контракт момента времени |
 | Contract | `pnpm test:contract` | 0 — 6 |
 | Integration | `pnpm test:integration` | 0 — 4 на настоящем PostGIS |
 | Replay | `pnpm test:replay` | 0 — набор пуст до I02B, флаг стоит в месте вызова |
 | Security ×5 | `pnpm security:*` | 0 |
 | Build | `pnpm build` | 0 |
-| DEV-01 demo | `pnpm continuity:dry-run` | 0 |
-| DEV-01 capability | `pnpm continuity:capability-check` | **1 — так и должно быть** |
-| DEV-02 владение | `pnpm ownership:check .claude/tasks/I00.json 789a8d5` | 0 |
+| DEV-02 владение | `pnpm ownership:check .claude/tasks 0a77b90` | 0 — 70 файлов, нарушений нет |
 | Fail-closed проба | `npm_config_registry=http://127.0.0.1:9/ …scan-dependencies.ts` | 2 |
 
-Объём: 220 файлов, +19 779 строк.
+| Изоляция задачи | `pnpm task:worktree <карта> <task-id>` | 0 — worktree + write set задачи; неизвестная задача даёт 2 |
+| Locale/TZ | `TZ=Pacific/Chatham LC_ALL=tr_TR.UTF-8 pnpm test:unit` | 0 — 474/474 (проверено верификацией) |
+
+DEV-01 отсутствует в таблице намеренно: требование снято (ADR-009), команды удалены вместе
+с `tools/usage-continuity`. Прежняя редакция отчёта перечисляла их как зелёное evidence —
+это была ошибка, найденная верификацией раунда I00-F5 (N-M3).
 
 ## 4. Что увидел человек при demo
 
@@ -72,10 +75,12 @@
 
 ## 5. Отклонения и риски
 
-1. **DEV-01 не обеспечен в этой среде.** Реальных адаптеров usage telemetry, persisted wake
-   и session resume нет; `capability-check` отвечает `LIMIT_AUTOCONTINUE_UNAVAILABLE`.
-   Механика доказана только на инъектированных фикстурах. По `AGENTS.md` это blocker для
-   заявления об автономной работе, поэтому `README.md` и `CLAUDE.md` прямо это фиксируют.
+1. **DEV-01 снят с требований (ADR-009).** Адаптеров usage telemetry, persisted wake и session
+   resume нет и в этой среде быть не может. Механика была доказана только на инъектированных
+   фикстурах, поэтому требование отозвано решением владельца, а не помечено выполненным.
+   Пакет `tools/usage-continuity` удалён целиком (~2900 строк); `README.md`, `CLAUDE.md`,
+   `AGENTS.md`, `00_README.md`, `08_TDD` §9 и критерии A7–A9 приведены в соответствие.
+   Репозиторий не обещает автопродолжения ни в каком виде.
 2. **Раунд 3 верификации дал `FAIL`.** Состоялись три раунда: `FAIL (4 blocker, 10 major)`,
    `FAIL (3 blocker, 9 major)`, затем верификация `789a8d5..3fe7ce3` двумя независимыми
    сессиями — test reviewer `PASS`, architecture reviewer `FAIL (2 blocker, 8 major)`.
@@ -118,16 +123,19 @@
 
 ## 7. Вход следующей итерации
 
-Перед I01: закрыть 2 blocker и 8 major раунда 3 и пройти верификацию заново; решения владельца по пяти
-предложениям ADR из `REVIEW.md` (граница `api → persistence`, license policy по границе
-дистрибуции, семантика `scope` исключений, идентичность агентной сессии, полная поверхность
-SIM-01); решение по DEV-01 — реализовывать адаптеры или зафиксировать
-`LIMIT_AUTOCONTINUE_UNAVAILABLE` как принятое ограничение.
+Решения владельца, принятые по ходу: ADR-003 (поверхность недетерминизма по источнику,
+правило без фикстуры не существует), ADR-008 (база сверки недоступна проверяемой стороне;
+роль read-only reviewer), ADR-009 (снятие DEV-01), закрытие отклонения по worktree.
 
-Готово к использованию в I01: `packages/contracts`/`domain` пустые и ждут TypeBox envelopes и
-`decide/evolve`; порты `Clock`/`RandomSource`/`IdFactory`/`Ruleset` ещё не написаны, но
-строгий контракт `Instant` (ISO-8601 с обязательным смещением) уже есть в
-`tools/usage-continuity` и предназначен к переносу в world time.
+Принятые риски, зафиксированные вместо исправления, — N-B1, N-B2, N-M1, N-M2, N-M4 и миноры
+верификации I00-F5. Формулировки и обоснование — в `REVIEW.md`. Все они требуют, чтобы
+субагент **намеренно** обходил контроль; ни один не срабатывает от ошибки.
+
+Готово к использованию в I01: `packages/contracts` содержит строгий контракт момента времени
+(`parseInstant`, `STRICT_ISO_8601_INSTANT_PATTERN`, целочисленная арифметика без зависимости
+от `Date`) с property-набором, проверенным мутационно. `packages/domain` и
+`packages/simulation` пусты и ждут TypeBox envelopes, портов `Clock`/`RandomSource`/
+`IdFactory`/`Ruleset` и `decide/evolve`. Изоляция задач готова: `pnpm task:worktree`.
 
 ## 8. Model alias и resolved model ID
 
