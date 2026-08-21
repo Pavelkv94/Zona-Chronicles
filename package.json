@@ -29,6 +29,7 @@
     "verify": "pnpm format:check && pnpm lint && pnpm boundaries:check && pnpm typecheck && pnpm test:unit && pnpm test:property && pnpm test:contract && pnpm security:all && pnpm build",
     "verify:full": "pnpm verify && pnpm test:integration && pnpm test:replay",
     "ci:pr": "pnpm verify:full",
+    "task:worktree": "node scripts/worktree/new-task-worktree.ts",
     "ownership:check": "node tools/agent-harness/src/cli/verify-task-ownership.ts"
   },
   "devDependencies": {

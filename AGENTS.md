@@ -54,6 +54,13 @@ Read the relevant product/simulation document as well. If two files conflict, fo
 
 Only I18 after an explicit Gate E **GO** may introduce an optional `narrative` package. It may depend on contracts and read-only projections; core packages must not depend on it. LLM on/off and physical package removal must leave events, snapshots, claims, signals, causal clusters and public IDs unchanged. Failure of I18 means remove/disable the package and keep the template-only product.
 
+## Task isolation
+
+- Every task session runs in its **own git worktree**, created by the lead with `pnpm task:worktree <tasks-map> <task-id>`. The lead installs dependencies there; agents still must not install anything.
+- The worktree's diff **is** that session's work. In a shared tree a diff has no author, so a path-ownership verdict describes the tree rather than the session — an innocent session then receives someone else's violation. See findings F5-1, F5-2 and F5-3 in the I00 `REVIEW.md`.
+- Each worktree carries its own `.claude/writeset.json`, materialised from the iteration's task map. Declaring an unknown task fails closed: no worktree is created.
+- Never edit files that belong to another session's write set, and never revert changes you did not make. Report the conflict to the lead instead — reverting another session's in-flight work destroys it and fixes nothing.
+
 ## Claude five-hour usage window
 
 - Requirement DEV-01 (automatic checkpoint, wait and resume across the window) was **withdrawn** on 2026-08-21 by owner decision — see ADR-009 in `06_ARCHITECTURE_DECISIONS.md`. The repository contains no checkpoint/resume machinery and promises no automatic continuation.

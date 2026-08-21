@@ -82,9 +82,23 @@ Orchestrator/lead владеет: iteration plan, contracts до freeze, root co
 финальным gate. Реализация делегируется subagents из `.claude/agents/` (Sonnet), архитектурные
 и контрактные роли — Opus (ADR-007). Implementer не принимает собственную работу.
 
-Задача субагента объявляет write set в `.claude/writeset.json` (см. `.claude/templates/`).
-Записи вне него и в protected paths блокируются hook-ами; при завершении задачи фактический
-`git diff` сверяется с write set.
+Task-сессия работает в **собственном git worktree**, а не в общем дереве:
+
+```sh
+pnpm task:worktree .claude/tasks/<итерация>.json <task-id>
+```
+
+Скрипт создаёт worktree, ставит зависимости `--frozen-lockfile` (это делает lead — агенту
+установка по-прежнему запрещена) и материализует внутри write set именно этой задачи из карты
+итерации. Неизвестная задача — fail-closed, worktree не создаётся.
+
+Изоляция не удобство, а условие работоспособности контроля: в общем дереве у diff нет автора,
+поэтому вердикт о владении путями относится к дереву, а не к сессии, и невиновная сессия
+получает чужое нарушение. Подробности — F5-1, F5-2, F5-3 в `REVIEW.md` итерации I00.
+
+Записи вне write set и в protected paths блокируются hook-ами; при завершении задачи
+фактический `git diff` сверяется с write set. Роль `reviewer` объявляется явно: `owner_role`
+= `"reviewer"` с пустым `write_paths` даёт read-only Bash и запрещает любую запись.
 
 ## Definition of Done
 
