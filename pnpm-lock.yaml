@@ -195,8 +195,6 @@ importers:
 
   tools/security-scan: {}
 
-  tools/usage-continuity: {}
-
 packages:
 
   '@babel/helper-string-parser@7.29.7':

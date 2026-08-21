@@ -54,10 +54,9 @@ Read the relevant product/simulation document as well. If two files conflict, fo
 
 Only I18 after an explicit Gate E **GO** may introduce an optional `narrative` package. It may depend on contracts and read-only projections; core packages must not depend on it. LLM on/off and physical package removal must leave events, snapshots, claims, signals, causal clusters and public IDs unchanged. Failure of I18 means remove/disable the package and keep the template-only product.
 
-## Claude five-hour usage continuity
+## Claude five-hour usage window
 
-- Follow `CLAUDE.md` and the usage-window protocol in `08_TDD_AND_AGENT_WORKFLOW.md`.
-- At provider-reported five-hour usage remaining `<= 2%`, stop starting new work and persist the full task checkpoint.
-- At `<= 1%`, make no new model calls after the safe checkpoint; the external runner waits until the reported reset and automatically resumes the same task/session.
-- A usage reset is not task completion, a product blocker, or permission to reduce scope/tests.
-- If telemetry, persisted wake, or session resume is unavailable, record `LIMIT_AUTOCONTINUE_UNAVAILABLE`. Do not claim automatic continuation; treat the missing harness capability as I00 REWORK.
+- Requirement DEV-01 (automatic checkpoint, wait and resume across the window) was **withdrawn** on 2026-08-21 by owner decision — see ADR-009 in `06_ARCHITECTURE_DECISIONS.md`. The repository contains no checkpoint/resume machinery and promises no automatic continuation.
+- Running out of the window is a technical pause, not task completion, not a product blocker, and not permission to reduce scope or tests.
+- Handling the pause belongs to the human and the external runner. Do not claim automatic continuation under any circumstance.
+- Do not reintroduce the protocol as a declaration. If autonomous work across the window is needed again, the requirement returns together with real telemetry, wake and resume adapters.

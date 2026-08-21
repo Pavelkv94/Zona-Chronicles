@@ -10,7 +10,5 @@ coverage/
 # Машинно-локальное состояние разрешений Claude Code: не должно зависеть от личного
 # глобального gitignore разработчика и не должно попадать в историю.
 .claude/settings.local.json
-.claude/checkpoints/*.md
-!.claude/checkpoints/.gitkeep
 tmp/
 reports/

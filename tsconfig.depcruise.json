@@ -16,7 +16,6 @@
       "@zona/content": ["packages/content/src/index.ts"],
       "@zona/testkit": ["packages/testkit/src/index.ts"],
       "@zona/agent-harness": ["tools/agent-harness/src/index.ts"],
-      "@zona/usage-continuity": ["tools/usage-continuity/src/index.ts"],
       "@zona/security-scan": ["tools/security-scan/src/index.ts"]
     }
   }

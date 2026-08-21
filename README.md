@@ -36,7 +36,7 @@ pnpm verify:full                     # тот же gate плюс integration и 
 ```text
 apps/       api (Fastify, read-only observer API), worker (канонический scheduler), cli
 packages/   contracts, domain, simulation, persistence, projections, representation, content, testkit
-tools/      dev harness: agent-harness (границы работы агентов), usage-continuity, security-scan
+tools/      dev harness: agent-harness (границы работы агентов), security-scan
 tests/      acceptance, replay, integration, contract, soak, e2e
 docs/       нормативная документация и evidence итераций
 ops/        Dockerfile и эксплуатационные файлы

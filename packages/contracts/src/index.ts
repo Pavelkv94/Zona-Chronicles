@@ -1,10 +1,21 @@
 /**
- * @zona/contracts — скелет пакета, созданный в I00.
+ * Публичные контракты мира. Пакет — leaf: не импортирует внутренние пакеты приложения
+ * (ADR-002).
  *
- * Runtime-схемы и envelopes команд/событий v1 появляются в I01.
- * Границы пакета исполняются `pnpm boundaries:check` (ADR-002), а не соглашением.
+ * Сейчас здесь только контракт момента времени. Он написан строгим намеренно:
+ * `Date.parse` зависит от локали хоста и принимает несуществующие даты, а world time
+ * обязан быть детерминированным (SIM-01). Смещение обязательно — момент без смещения
+ * не является моментом.
+ *
+ * Envelopes команд и событий появятся в I01.
  */
-export const PACKAGE_NAME = '@zona/contracts' as const;
-
-/** Итерация `10_ITERATION_MASTER_PLAN`, вводящая содержимое пакета. */
-export const OWNING_ITERATION = 'I01' as const;
+export {
+  type Instant,
+  type InstantError,
+  isInstantError,
+  STRICT_ISO_8601_INSTANT_PATTERN,
+  parseInstant,
+  requireInstant,
+  compareInstants,
+  addMinutes,
+} from './instant.ts';

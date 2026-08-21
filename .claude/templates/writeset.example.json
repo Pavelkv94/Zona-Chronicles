@@ -1,6 +1,6 @@
 {
-  "task_id": "I00-T02",
+  "task_id": "I00-T05",
   "owner_role": "tooling-implementer",
-  "write_paths": ["tools/usage-continuity/**"],
+  "write_paths": ["tools/security-scan/**"],
   "allow_protected_paths": []
 }

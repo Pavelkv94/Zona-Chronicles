@@ -62,6 +62,33 @@ function daysInMonth(year: number, month: number): number {
   return DAYS_IN_MONTH[month - 1]!;
 }
 
+const MS_PER_DAY = 86_400_000;
+
+/**
+ * Число дней от эпохи Unix до гражданской даты, целочисленной арифметикой (алгоритм
+ * days_from_civil Говарда Хиннанта). Корректен для всего пролептического григорианского
+ * календаря.
+ *
+ * Почему не `Date.UTC`, хотя он тоже детерминирован и не зависит от локали:
+ *
+ * 1. `Date.UTC` отображает годы 0–99 в 1900+year, поэтому `"0099-01-01T00:00:00Z"` проходил
+ *    строгий regex и давал момент 1999 года (minor 1 третьего раунда верификации). Здесь
+ *    год используется как есть;
+ * 2. `packages/contracts` живёт под запретом SIM-01 на `Date.*` (ADR-003). Исключение ради
+ *    одного вызова ослабило бы правило, которое во всём остальном абсолютно. Контракт
+ *    момента времени не должен требовать оговорки — тем более контракт, на котором в I01
+ *    будет стоять world time.
+ */
+function daysFromCivil(year: number, month: number, day: number): number {
+  const shiftedYear = month <= 2 ? year - 1 : year;
+  const era = Math.floor(shiftedYear / 400);
+  const yearOfEra = shiftedYear - era * 400;
+  const dayOfYear = Math.floor((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+  const dayOfEra =
+    yearOfEra * 365 + Math.floor(yearOfEra / 4) - Math.floor(yearOfEra / 100) + dayOfYear;
+  return era * 146_097 + dayOfEra - 719_468;
+}
+
 /** Парсит ISO-8601 метку времени. Никогда не бросает исключение — только `{ error }`. */
 export function parseInstant(value: string): Instant | InstantError {
   const match = STRICT_ISO_8601_INSTANT_PATTERN.exec(value);
@@ -113,7 +140,11 @@ export function parseInstant(value: string): Instant | InstantError {
   }
 
   const epochMs =
-    Date.UTC(year, month - 1, day, hour, minute, second, Math.round(milliseconds)) -
+    daysFromCivil(year, month, day) * MS_PER_DAY +
+    hour * 3_600_000 +
+    minute * 60_000 +
+    second * 1_000 +
+    Math.round(milliseconds) -
     offsetMinutes * 60_000;
 
   return { iso: value, epochMs };
@@ -126,7 +157,7 @@ export function parseInstant(value: string): Instant | InstantError {
 export function requireInstant(value: string, sourceLabel: string): Instant {
   const parsed = parseInstant(value);
   if (isInstantError(parsed)) {
-    throw new Error(`continuity: невалидное время из "${sourceLabel}" — ${parsed.error}`);
+    throw new Error(`невалидное время из "${sourceLabel}" — ${parsed.error}`);
   }
   return parsed;
 }

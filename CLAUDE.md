@@ -18,7 +18,6 @@
 | Типы                | `pnpm typecheck`                                                                                          |
 | Тесты               | `pnpm test:unit`, `pnpm test:property`, `pnpm test:contract`, `pnpm test:integration`, `pnpm test:replay` |
 | Security            | `pnpm security:all`                                                                                       |
-| Continuity dry-run  | `pnpm continuity:dry-run`, `pnpm continuity:capability-check`                                             |
 | Локальная БД        | `docker compose up -d postgres`                                                                           |
 
 Node фиксирован в `.nvmrc` (24.x), package manager — в поле `packageManager`.
