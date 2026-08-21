@@ -5,6 +5,7 @@ import {
   isInstantError,
   parseInstant,
   requireInstant,
+  STRICT_ISO_8601_INSTANT_PATTERN,
 } from './instant.ts';
 
 /** 2026-08-20T12:00:00.000Z. */
@@ -206,5 +207,62 @@ describe('parseInstant: правило високосных столетий (bl
     ]) {
       expect(isInstantError(parseInstant(value)), value).toBe(true);
     }
+  });
+});
+
+/**
+ * Точность выше миллисекунды отвергается, а не усекается (A5, SIM-01).
+ *
+ * Прежнее поведение было внутренне противоречивым: `.1234Z` и `.1236Z` давали ОДИН `epochMs`,
+ * но сохраняли разный `iso`. То есть один и тот же `Instant` нёс два несогласованных
+ * представления одного момента, и канонический checksum зависел бы от того, сколько лишних
+ * разрядов записал источник. Молчаливое усечение — это и есть «неявное округление»,
+ * запрещённое A5.
+ *
+ * Основание для правки: `tools/usage-continuity` удалён вместе с DEV-01 (ADR-009), поэтому
+ * прежний довод «от лениентности зависит continuity harness» больше не действует —
+ * потребителей `parseInstant` вне `packages/contracts` не осталось.
+ */
+describe('A5: точность выше миллисекунды', () => {
+  it.each([
+    '2026-08-20T12:00:00.1234Z',
+    '2026-08-20T12:00:00.123456Z',
+    '2026-08-20T12:00:00.9999Z',
+    '2026-08-20T12:00:00.000000001Z',
+    '2026-08-20T14:00:00.1234+02:00',
+  ])('отвергает %s', (value) => {
+    expect(isInstantError(parseInstant(value))).toBe(true);
+  });
+
+  it('называет причину отказа, а не сообщает «невалидная метка»', () => {
+    const result = parseInstant('2026-08-20T12:00:00.1234Z');
+    if (!isInstantError(result)) {
+      throw new Error('ожидался отказ');
+    }
+    expect(result.error).toMatch(/точнее миллисекунды/i);
+  });
+
+  it.each([
+    ['2026-08-20T12:00:00.1Z', 100],
+    ['2026-08-20T12:00:00.12Z', 120],
+    ['2026-08-20T12:00:00.123Z', 123],
+    ['2026-08-20T12:00:00Z', 0],
+  ])('принимает %s и даёт %i мс', (value, milliseconds) => {
+    const result = parseInstant(value);
+    if (isInstantError(result)) {
+      throw new Error(`ожидался момент: ${result.error}`);
+    }
+    expect(result.epochMs % 1000).toBe(milliseconds);
+  });
+
+  it('две метки, прежде схлопывавшиеся в один epochMs, больше не принимаются обе', () => {
+    // Именно эта пара доказывала противоречивость Instant до правки.
+    expect(isInstantError(parseInstant('2026-08-20T12:00:00.1234Z'))).toBe(true);
+    expect(isInstantError(parseInstant('2026-08-20T12:00:00.1236Z'))).toBe(true);
+  });
+
+  it('шаблон допускает не более трёх знаков дробной части', () => {
+    expect(STRICT_ISO_8601_INSTANT_PATTERN.test('2026-08-20T12:00:00.123Z')).toBe(true);
+    expect(STRICT_ISO_8601_INSTANT_PATTERN.test('2026-08-20T12:00:00.1234Z')).toBe(false);
   });
 });

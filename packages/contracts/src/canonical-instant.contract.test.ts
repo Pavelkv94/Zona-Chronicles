@@ -82,14 +82,19 @@ describe('точность выше миллисекунды отвергает�
     expect(errorOf(input)).toMatch(/точн|миллисекунд/i);
   });
 
-  it('усечение действительно теряло бы информацию — фиксируем поведение общего парсера', () => {
-    const a = parseInstant('2026-08-20T12:00:00.1234Z');
-    const b = parseInstant('2026-08-20T12:00:00.1236Z');
-    if (isInstantError(a) || isInstantError(b)) {
-      throw new Error('оба разбора обязаны быть успешны');
+  /**
+   * Регрессионная защита от прежнего дефекта, а не просто проверка отказа.
+   *
+   * Раньше `parseInstant` принимал обе метки, молча усекал разряды и возвращал ОДИН `epochMs`
+   * при разном `iso` — то есть `Instant` был внутренне противоречив. Дефект закрыт в самом
+   * `parseInstant`; тест переписан вместе с изменившимся поведением, а не удалён, потому что
+   * именно эта пара его и доказывала.
+   */
+  it('пара, прежде схлопывавшаяся в один epochMs, теперь отвергается обеими сторонами', () => {
+    for (const value of ['2026-08-20T12:00:00.1234Z', '2026-08-20T12:00:00.1236Z']) {
+      expect(isInstantError(parseInstant(value))).toBe(true);
+      expect(isInstantError(parseCanonicalInstant(value))).toBe(true);
     }
-    expect(a.epochMs).toBe(b.epochMs);
-    expect(a.iso).not.toBe(b.iso);
   });
 });
 

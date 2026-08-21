@@ -1,3 +1,5 @@
+import { MILLISECOND_UNIT } from './numeric.ts';
+
 /**
  * Валидируемое время на границе портов continuity harness (DEV-01, review finding m3/N7).
  *
@@ -27,6 +29,12 @@
  * дальше арифметика и сравнение работают только над `epochMs`, без повторного `Date.parse`.
  */
 
+/**
+ * Сколько знаков дробной части допускает единица времени. Не «магическая тройка»: величина
+ * приходит из `MILLISECOND_UNIT`, где точность документирована вместе с диапазоном (A5).
+ */
+const MAX_FRACTION_DIGITS = Math.round(Math.log10(MILLISECOND_UNIT.minorUnitsPerMajor));
+
 export interface Instant {
   readonly iso: string;
   readonly epochMs: number;
@@ -45,8 +53,18 @@ export function isInstantError(value: Instant | InstantError): value is InstantE
  * Экспортируется, чтобы будущие потребители контракта (I01 world time) могли переиспользовать
  * ровно это определение, а не заново отгадывать формат.
  */
-export const STRICT_ISO_8601_INSTANT_PATTERN =
-  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
+export const STRICT_ISO_8601_INSTANT_PATTERN = new RegExp(
+  `^(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2}):(\\d{2})` +
+    `(?:\\.(\\d{1,${MAX_FRACTION_DIGITS}}))?(Z|[+-]\\d{2}:\\d{2})$`,
+);
+
+/**
+ * То же самое, но с дробной частью любой длины. Нужен ровно для одного: отличить «мусор» от
+ * «валидной метки, записанной точнее миллисекунды», и дать по второму случаю внятную причину
+ * вместо общего «невалидная ISO-8601 метка».
+ */
+const OVERPRECISE_INSTANT_PATTERN =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.(\d+)(?:Z|[+-]\d{2}:\d{2})$/;
 
 function isLeapYear(year: number): boolean {
   return (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
@@ -93,6 +111,15 @@ function daysFromCivil(year: number, month: number, day: number): number {
 export function parseInstant(value: string): Instant | InstantError {
   const match = STRICT_ISO_8601_INSTANT_PATTERN.exec(value);
   if (match === null) {
+    const overprecise = OVERPRECISE_INSTANT_PATTERN.exec(value);
+    if (overprecise !== null) {
+      return {
+        error:
+          `метка времени точнее миллисекунды (${overprecise[1]!.length} знаков дробной части ` +
+          `при допустимых ${MAX_FRACTION_DIGITS}): ${JSON.stringify(value)}; ` +
+          'усечение изменило бы текст, но не момент, и один факт получил бы два checksum',
+      };
+    }
     return {
       error:
         `невалидная ISO-8601 метка времени (ожидается YYYY-MM-DDTHH:mm:ss[.sss](Z|±HH:MM)): ` +
@@ -123,8 +150,10 @@ export function parseInstant(value: string): Instant | InstantError {
     return { error: `невалидное время суток в ISO-8601 метке: ${JSON.stringify(value)}` };
   }
 
+  // Дробная часть уже ограничена шаблоном тремя знаками, поэтому дополнение нулями справа —
+  // это перевод в миллисекунды без какого-либо округления: ".1" -> 100, ".12" -> 120.
   const milliseconds =
-    fractionStr === undefined ? 0 : Number(`0.${fractionStr}`.slice(0, 5)) * 1000;
+    fractionStr === undefined ? 0 : Number(fractionStr.padEnd(MAX_FRACTION_DIGITS, '0'));
 
   // Смещение обязательно (проверено regex-ом): "Z" -> 0, иначе "+HH:MM"/"-HH:MM".
   const offset = offsetStr!;
@@ -144,7 +173,7 @@ export function parseInstant(value: string): Instant | InstantError {
     hour * 3_600_000 +
     minute * 60_000 +
     second * 1_000 +
-    Math.round(milliseconds) -
+    milliseconds -
     offsetMinutes * 60_000;
 
   return { iso: value, epochMs };

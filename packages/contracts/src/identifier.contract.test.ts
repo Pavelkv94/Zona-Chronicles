@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   NAMESPACED_ID_PATTERN,
+  ULID_ALPHABET,
+  ULID_BODY_LENGTH,
   RUNTIME_ID_PATTERN,
   RUNTIME_ID_PREFIXES,
   isNamespacedId,
@@ -65,11 +67,21 @@ describe('runtime id — сгенерированный IdFactory (§1)', () => 
     });
   });
 
+  it('тело — ULID: ровно 26 символов Crockford base32', () => {
+    expect(ULID_BODY_LENGTH).toBe(26);
+    expect(ULID_ALPHABET).toBe('0123456789ABCDEFGHJKMNPQRSTVWXYZ');
+    // Crockford исключает I, L, O и U — они путаются с 1, 1, 0 и V при чтении.
+    for (const excluded of ['I', 'L', 'O', 'U']) {
+      expect(ULID_ALPHABET).not.toContain(excluded);
+    }
+  });
+
   it.each([
     ['evt_01J8Z4K7Q2R3S4T5V6W7X8Y9Z0', 'evt'],
     ['cmd_01J8Z4K7Q2R3S4T5V6W7X8Y9Z0', 'cmd'],
     ['corr_01J8Z4K7Q2R3S4T5V6W7X8Y9Z0', 'corr'],
-    ['evt_0189d0ba-7a1e-7c4a-9c1e-1a2b3c4d5e6f', 'evt'],
+    ['evt_00000000000000000000000000', 'evt'],
+    ['evt_7ZZZZZZZZZZZZZZZZZZZZZZZZZ', 'evt'],
   ])('принимает %j для префикса %s', (value, prefix) => {
     expect(isRuntimeId(value, prefix)).toBe(true);
   });
@@ -83,12 +95,20 @@ describe('runtime id — сгенерированный IdFactory (§1)', () => 
     ['пробел', 'evt_01J8Z4K7Q2R3S4T5 6W7X8Y9Z0', 'evt'],
     ['двоеточие', 'evt:01J8Z4K7Q2R3S4T5V6W7X8Y9Z0', 'evt'],
     ['пустая строка', '', 'evt'],
+    ['UUIDv7 — решение принято в пользу ULID', 'evt_0189d0ba-7a1e-7c4a-9c1e-1a2b3c4d5e6f', 'evt'],
+    ['UUIDv7 без дефисов', 'evt_0189d0ba7a1e7c4a9c1e1a2b3c4d5e6f', 'evt'],
+    ['нижний регистр', 'evt_01j8z4k7q2r3s4t5v6w7x8y9z0', 'evt'],
   ])('отвергает %s (%j)', (_label, value, prefix) => {
     expect(isRuntimeId(value, prefix)).toBe(false);
   });
 
-  it('отвергает id длиннее допустимого', () => {
-    expect(isRuntimeId(`evt_${'a'.repeat(41)}`, 'evt')).toBe(false);
+  it.each([25, 27])('отвергает тело длиной %i символов', (length) => {
+    expect(isRuntimeId(`evt_${'0'.repeat(length)}`, 'evt')).toBe(false);
+  });
+
+  it.each(['I', 'L', 'O', 'U'])('отвергает букву %s, исключённую из Crockford base32', (letter) => {
+    // 26 символов ровно: длина верна, недопустима именно буква.
+    expect(isRuntimeId(`evt_${letter}${'0'.repeat(25)}`, 'evt')).toBe(false);
   });
 
   it('шаблон якорится: перевод строки не проходит', () => {

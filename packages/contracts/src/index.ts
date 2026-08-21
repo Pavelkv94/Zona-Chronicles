@@ -82,6 +82,8 @@ export {
   NAMESPACED_ID_SOURCE,
   RUNTIME_ID_PATTERN,
   RUNTIME_ID_PREFIXES,
+  ULID_ALPHABET,
+  ULID_BODY_LENGTH,
   isNamespacedId,
   isRuntimeId,
   namespaceOf,

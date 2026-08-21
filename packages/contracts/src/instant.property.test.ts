@@ -221,3 +221,51 @@ describe('Instant: инварианты', () => {
     );
   });
 });
+
+/**
+ * Граница точности (A5).
+ *
+ * Генератор `isoInstant` выше всегда пишет ровно три знака дробной части, поэтому границу
+ * «не точнее миллисекунды» он не достигает НИКОГДА — тот же дефект генератора, из-за которого
+ * в I00 правило високосных столетий оставалось непроверенным (F5). Здесь длина дробной части
+ * генерируется явно, в диапазоне 0–9, и обе стороны границы заведомо возникают.
+ */
+const instantWithFraction = fc
+  .record({
+    fractionDigits: fc.integer({ min: 0, max: 9 }),
+    fraction: fc.integer({ min: 0, max: 999_999_999 }),
+    offset: fc.constantFrom('Z', '+02:00', '-05:00', '+00:00'),
+  })
+  .map(({ fractionDigits, fraction, offset }) => {
+    const digits = String(fraction).padStart(9, '0').slice(0, fractionDigits);
+    const suffix = fractionDigits === 0 ? '' : `.${digits}`;
+    return { iso: `2026-08-20T12:00:00${suffix}${offset}`, fractionDigits };
+  });
+
+describe('Instant: граница точности', () => {
+  it('принимается ровно тогда, когда знаков дробной части не больше трёх', () => {
+    fc.assert(
+      fc.property(instantWithFraction, ({ iso, fractionDigits }) => {
+        expect(isInstantError(parseInstant(iso))).toBe(fractionDigits > 3);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+
+  it('дробная часть переводится в миллисекунды без округления', () => {
+    fc.assert(
+      fc.property(instantWithFraction, ({ iso, fractionDigits }) => {
+        const parsed = parseInstant(iso);
+        if (fractionDigits > 3) return;
+        expect(isInstantError(parsed)).toBe(false);
+        if (isInstantError(parsed)) return;
+        // ".1" -> 100 мс, ".12" -> 120 мс, ".123" -> 123 мс: дополнение нулями справа,
+        // а не деление с потерей разрядов.
+        const digits = iso.includes('.') ? iso.split('.')[1]!.replace(/[Z+-].*$/, '') : '';
+        const expected = digits === '' ? 0 : Number(digits.padEnd(3, '0'));
+        expect(((parsed.epochMs % 1000) + 1000) % 1000).toBe(expected);
+      }),
+      { numRuns: 1000 },
+    );
+  });
+});
