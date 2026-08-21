@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@zona/contracts": "workspace:*",
+    "@zona/content": "workspace:*",
     "@zona/domain": "workspace:*",
     "@zona/simulation": "workspace:*",
     "@zona/persistence": "workspace:*",

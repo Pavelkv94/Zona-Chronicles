@@ -39,6 +39,7 @@ const ALLOWED: Record<string, readonly string[]> = {
     '@zona/simulation',
     '@zona/persistence',
     '@zona/projections',
+    '@zona/content',
   ],
   '@zona/agent-harness': [],
   '@zona/security-scan': [],

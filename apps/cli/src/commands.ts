@@ -10,7 +10,25 @@
  *
  * No implementation is simulated here: every command in I00 is `status: 'planned'` and `runCli`
  * (apps/cli/src/main.ts) reports that honestly with exit code 1 instead of pretending to run.
+ *
+ * I01 lands real implementations for `world seed`/`world inspect` (ACCEPTANCE A1/A2/A3/A10,
+ * `apps/cli/src/world-cli.ts`) — their `status` flips to `'available'` here; `runCli` still
+ * consults this registry for name/iteration lookup and to decide whether an unimplemented
+ * command should say "planned" honestly. `world run`/`world replay`/`world export` stay
+ * `'planned'`: out of scope for I01 (PLAN §5).
  */
+
+/**
+ * Shared result shape for `runCli` (`main.ts`) and every per-command implementation
+ * (`world-cli.ts`, ...). Lives here rather than in `main.ts` so command modules don't need to
+ * import `main.ts` for a type — that import direction would create a real import cycle
+ * (`main.ts` -> `world-cli.ts` -> `main.ts`), caught by `pnpm boundaries:check`
+ * (`no-circular`) even though the import is type-only and erased at runtime.
+ */
+export type CliResult = {
+  readonly stdout: string;
+  readonly exitCode: number;
+};
 
 export type CommandStatus = 'planned' | 'available';
 
@@ -26,7 +44,7 @@ export const COMMANDS: readonly CliCommand[] = [
   {
     name: 'world seed',
     summary: 'Create a new in-memory canonical world from a seed.',
-    status: 'planned',
+    status: 'available',
     iteration: 'I01',
   },
   {
@@ -44,7 +62,7 @@ export const COMMANDS: readonly CliCommand[] = [
   {
     name: 'world inspect',
     summary: 'Print the current canonical state of a world.',
-    status: 'planned',
+    status: 'available',
     iteration: 'I01',
   },
   {

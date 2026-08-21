@@ -4,7 +4,7 @@ import { COMMANDS, renderCommandList } from './commands.ts';
 const KNOWN_ITERATIONS = /^I\d{2}[AB]?$/;
 
 describe('COMMANDS registry', () => {
-  it('lists the five documented world commands, all planned in I00', () => {
+  it('lists the five documented world commands', () => {
     expect(COMMANDS.map((c) => c.name)).toEqual([
       'world seed',
       'world run',
@@ -12,9 +12,15 @@ describe('COMMANDS registry', () => {
       'world inspect',
       'world export',
     ]);
-    for (const command of COMMANDS) {
-      expect(command.status).toBe('planned');
-    }
+  });
+
+  it('flips world seed/inspect to available in I01, leaves the rest planned (PLAN §5 scope)', () => {
+    const byName = Object.fromEntries(COMMANDS.map((c) => [c.name, c.status] as const));
+    expect(byName['world seed']).toBe('available');
+    expect(byName['world inspect']).toBe('available');
+    expect(byName['world run']).toBe('planned');
+    expect(byName['world replay']).toBe('planned');
+    expect(byName['world export']).toBe('planned');
   });
 
   it('gives every command a non-empty summary and a valid iteration id', () => {

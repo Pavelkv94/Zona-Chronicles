@@ -1,16 +1,27 @@
 /**
- * apps/cli — entrypoint (I00 skeleton). `runCli` is a pure function (no process/IO access) so it
- * can be unit-tested without spawning a process. `main()` is the only place that touches
- * `process.argv`/`process.stdout`/`process.exitCode`, and only runs when this file is executed
- * directly (not when imported by `main.test.ts`).
+ * apps/cli — entrypoint (I00 skeleton, I01 real `world seed`/`world inspect`). `runCli` is a
+ * pure function (no process/IO access) so it can be unit-tested without spawning a process.
+ * `main()` is the only place that touches `process.argv`/`process.stdout`/`process.exitCode`,
+ * and only runs when this file is executed directly (not when imported by `main.test.ts`).
+ *
+ * Command names are two tokens (`world seed`, `world inspect`, ...) matching `COMMANDS` in
+ * `commands.ts`; everything after those two tokens is flags for that command (`--seed 42`).
+ * Both acceptance-test invocation shapes land on the SAME argv here on purpose
+ * (`tests/acceptance/support/spawn-world-cli.ts`):
+ *
+ * - `spawnWorldCliDirect` runs `node apps/cli/src/main.ts world seed --seed 42` — `argv` is
+ *   `['world', 'seed', '--seed', '42']` already.
+ * - `spawnWorldCliViaPnpm` runs `pnpm world seed --seed 42`; the root `"world"` script is
+ *   `node apps/cli/src/main.ts world` (re-injecting the literal `world` token pnpm's script
+ *   resolution consumes), so the process again sees `['world', 'seed', '--seed', '42']`. If the
+ *   root script is ever defined without that trailing `world`, this file's parsing and A10 both
+ *   need to change together.
  */
 import { pathToFileURL } from 'node:url';
-import { COMMANDS, renderCommandList } from './commands.ts';
+import { COMMANDS, type CliResult, renderCommandList } from './commands.ts';
+import { runWorldInspectCommand, runWorldSeedCommand } from './world-cli.ts';
 
-export type CliResult = {
-  readonly stdout: string;
-  readonly exitCode: number;
-};
+export type { CliResult } from './commands.ts';
 
 const HELP_FLAGS = new Set(['--help', '-h']);
 
@@ -20,14 +31,26 @@ export function runCli(argv: readonly string[]): CliResult {
     return { stdout: renderCommandList(), exitCode: 0 };
   }
 
-  const requested = argv.join(' ');
-  const command = COMMANDS.find((c) => c.name === requested);
+  const commandName = argv.slice(0, 2).join(' ');
+  const command = COMMANDS.find((c) => c.name === commandName);
 
   if (!command) {
+    const requested = argv.join(' ');
     return {
       stdout: `Unknown command: "${requested}"\n\n${renderCommandList()}`,
       exitCode: 2,
     };
+  }
+
+  const commandArgs = argv.slice(2);
+
+  switch (command.name) {
+    case 'world seed':
+      return runWorldSeedCommand(commandArgs);
+    case 'world inspect':
+      return runWorldInspectCommand(commandArgs);
+    default:
+      break;
   }
 
   if (command.status === 'planned') {
@@ -37,8 +60,8 @@ export function runCli(argv: readonly string[]): CliResult {
     };
   }
 
-  // No 'available' command is registered in I00; reaching here would mean the registry promised
-  // an implementation runCli does not have. Fail honestly instead of pretending to execute it.
+  // Every currently-'available' command is wired above; reaching here would mean the registry
+  // promised an implementation runCli does not have. Fail honestly instead of pretending to run.
   return {
     stdout: `"${command.name}" is registered as available but has no wired execution in this build.\n`,
     exitCode: 1,

@@ -11,6 +11,9 @@
       "path": "../../packages/contracts"
     },
     {
+      "path": "../../packages/content"
+    },
+    {
       "path": "../../packages/domain"
     },
     {

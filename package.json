@@ -27,6 +27,7 @@
     "security:static": "node scripts/security/scan-static.ts",
     "security:no-llm": "node scripts/security/scan-no-llm.ts",
     "security:all": "pnpm security:secrets && pnpm security:dependencies && pnpm security:licenses && pnpm security:static && pnpm security:no-llm",
+    "world": "node apps/cli/src/main.ts world",
     "verify": "pnpm format:check && pnpm lint && pnpm boundaries:check && pnpm typecheck && pnpm test:unit && pnpm test:property && pnpm test:contract && pnpm security:all && pnpm build",
     "verify:full": "pnpm verify && pnpm test:acceptance && pnpm test:integration && pnpm test:replay",
     "ci:pr": "pnpm verify:full",
