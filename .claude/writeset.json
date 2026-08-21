@@ -1,6 +1,6 @@
 {
-  "task_id": "I01-VERIFY",
-  "owner_role": "reviewer",
-  "write_paths": [],
+  "task_id": "I01-F1",
+  "owner_role": "domain-implementer",
+  "write_paths": ["packages/domain/**"],
   "allow_protected_paths": []
 }
