@@ -84,6 +84,8 @@
 | Identity provider, admin roles и session policy | headless/local development | до начала I17 hardening |
 | SLO, RPO/RTO, alert owners и retention тестировщиков | I00–I16 с provisional telemetry | до набора участников I17 |
 | Hosted release builder, signing/provenance mechanism и vulnerability patch SLA | локальные artifacts | до первого внешнего deployment в I17 |
+| Процедура переквалификации `deterministic_runtime_profile` (compatibility suite §7) | локальную работу на одной версии Node | I03: без неё обновление MINOR-версии Node делает существующие снимки нечитаемыми, а средства это исправить нет |
+| Коэффициент скорости мира: сколько мирового времени за секунду реального | headless-разработку через `world tick --advance` | I03, вместе с worker loop; механизм задан решением владельца, число — нет |
 | Performance/capacity budgets для 30–50 агентов | функциональную разработку I00–I14 | конец I15A, до I15B |
 | Sampling/consent/exclusion/analysis plan и достаточный размер I17 проверки | I00–I16 | до набора участников I17 |
 | Нужен ли вообще runtime LLM | весь основной прототип | после отчёта Gate E |

@@ -100,24 +100,61 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
   };
 
   /**
-   * Переписывает `rules_version` события и ПЕРЕСЧИТЫВАЕТ его `event_checksum` — иначе тест ловил
+   * Переписывает версию bundle у события и ПЕРЕСЧИТЫВАЕТ его `event_checksum` — иначе тест ловил
    * бы существующую проверку целостности события, а не отсутствующую проверку bundle-ов.
+   *
+   * Поле — параметр, а не зашитый `rules_version` (MAJOR второго раунда верификации). Первая
+   * редакция умела только `rules_version`, поэтому ветка `content_version` в
+   * `assertSuffixBundlesMatchSnapshot` не была задета ни одним тестом: её удаление оставляло весь
+   * набор зелёным. Формулировка закрытия при этом заявляла обе проверки — заявление шире
+   * доказанного, ровно тот класс, из-за которого этот раунд и проводился.
    */
-  const rewriteEventRulesVersion = async (
+  const rewriteEventBundleVersion = async (
     conn: DatabaseConnection,
     eventId: string,
-    rulesVersion: string,
+    field: 'rules_version' | 'content_version',
+    version: string,
   ): Promise<void> => {
     const events = await loadWorldEvents(conn, FIXTURE_WORLD_ID);
     const original = events.find((event) => event.event_id === eventId);
     if (original === undefined) throw new Error(`тест: событие ${eventId} не найдено`);
-    const patched = { ...original, rules_version: rulesVersion };
+    const patched = { ...original, [field]: version };
+    const checksum = requireChecksum(patched, `event(${eventId})`);
     await sql`
       update world_events
-         set rules_version = ${rulesVersion},
-             event_checksum = ${requireChecksum(patched, `event(${eventId})`)}
+         set rules_version = ${patched.rules_version},
+             content_version = ${patched.content_version},
+             event_checksum = ${checksum}
        where event_id = ${eventId}
     `.execute(conn);
+  };
+
+  /** Готовит мир со снимком на K и одним событием суффикса; возвращает снимок и это событие. */
+  const snapshotAtKWithSuffixEvent = async (): Promise<{
+    readonly snapshot: Snapshot;
+    readonly suffixEventId: string;
+  }> => {
+    await seed();
+    const first = await executeCommand(db, startJourney(FIXTURE_AGENT_ID, 0));
+    expect(first.outcome).toBe('accepted');
+    const stateAtK = await loadWorldState(db, FIXTURE_WORLD_ID);
+    const snapshot = await writeSnapshot(db, {
+      worldId: FIXTURE_WORLD_ID,
+      lastSequence: stateAtK!.sequence,
+      worldTime: stateAtK!.worldTime,
+      bundles: bundles(),
+      deterministicRuntimeProfile: runtimeProfile(),
+      prngStreamPositions: {},
+      canonicalState: stateAtK,
+    });
+
+    const second = await executeCommand(db, startJourney(FIXTURE_OTHER_AGENT_ID, 1));
+    expect(second.outcome).toBe('accepted');
+
+    const journal = await loadWorldEvents(db, FIXTURE_WORLD_ID);
+    const inSuffix = journal.find((event) => event.sequence > snapshot.last_sequence);
+    expect(inSuffix).toBeDefined();
+    return { snapshot, suffixEventId: inSuffix!.event_id };
   };
 
   it('C9: снимок на sequence K плюс суффикс журнала даёт то же состояние и checksum, что непрерывный прогон до N', async () => {
@@ -199,32 +236,29 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
    * непрерывность sequence, ни checksum события этого не видят по построению.
    */
   it('m2: событие суффикса, порождённое другим rules bundle, чем объявляет снимок, — громкий отказ', async () => {
-    await seed();
-    const first = await executeCommand(db, startJourney(FIXTURE_AGENT_ID, 0));
-    expect(first.outcome).toBe('accepted');
-    const stateAtK = await loadWorldState(db, FIXTURE_WORLD_ID);
-    const snapshotAtK = await writeSnapshot(db, {
-      worldId: FIXTURE_WORLD_ID,
-      lastSequence: stateAtK!.sequence,
-      worldTime: stateAtK!.worldTime,
-      bundles: bundles(),
-      deterministicRuntimeProfile: runtimeProfile(),
-      prngStreamPositions: {},
-      canonicalState: stateAtK,
-    });
-
-    const second = await executeCommand(db, startJourney(FIXTURE_OTHER_AGENT_ID, 1));
-    expect(second.outcome).toBe('accepted');
+    const { snapshot, suffixEventId } = await snapshotAtKWithSuffixEvent();
 
     // Правка В ОБХОД писателя, вместе с checksum: событие внутренне непротиворечиво, поэтому
     // проверка `loadWorldEvents` его пропустит — ловить расхождение обязан именно replay.
-    const journal = await loadWorldEvents(db, FIXTURE_WORLD_ID);
-    const inSuffix = journal.find((event) => event.sequence > snapshotAtK.last_sequence);
-    expect(inSuffix).toBeDefined();
-    await rewriteEventRulesVersion(db, inSuffix!.event_id, '9.9.9');
+    await rewriteEventBundleVersion(db, suffixEventId, 'rules_version', '9.9.9');
 
-    await expect(replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshotAtK)).rejects.toThrow(
+    await expect(replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshot)).rejects.toThrow(
       /rules_version/,
+    );
+  });
+
+  /**
+   * Зеркало предыдущего теста для ВТОРОЙ ветки той же проверки (MAJOR второго раунда).
+   * Отдельный тест, а не расширение предыдущего: сообщения об отказе у веток разные, и
+   * объединённый тест проходил бы, поймав любую из них, — то есть снова не различал бы.
+   */
+  it('m2: событие суффикса с чужим content bundle — такой же громкий отказ, а не тихая свёртка', async () => {
+    const { snapshot, suffixEventId } = await snapshotAtKWithSuffixEvent();
+
+    await rewriteEventBundleVersion(db, suffixEventId, 'content_version', '9.9.9');
+
+    await expect(replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshot)).rejects.toThrow(
+      /content_version/,
     );
   });
 
