@@ -1,7 +1,7 @@
 {
   "iteration_id": "I02B",
   "base_commit": "c535aed",
-  "//": "Карта владения путями I02B. Закоммичена ДО запуска исполнителей. Write set-ы задач T1 и T2 не пересекаются НИ ОДНИМ файлом: они работают параллельно в собственных worktree.",
+  "//": "Карта владения путями I02B. Закоммичена ДО запуска исполнителей. Write set-ы задач T1 и T2 не пересекаются НИ ОДНИМ файлом: они работают параллельно в собственных worktree. agent_types обязателен в КАЖДОЙ записи: платформа кладёт в hook payload имя сессии, а не роль, и fallback по owner_role срабатывает не всегда (замечание независимой проверки тестов).",
   "lead_paths": [
     ".claude/**",
     ".github/**",
@@ -41,7 +41,8 @@
       "owner_role": "tooling-implementer",
       "//": "СДАНА И ПРИНЯТА в раунде реализации I02B.",
       "write_paths": ["apps/cli/**", "tests/acceptance/**"],
-      "allow_protected_paths": ["tests/acceptance/**"]
+      "allow_protected_paths": ["tests/acceptance/**"],
+      "agent_types": ["i02b-t1-cli", "tooling-implementer"]
     },
     {
       "task_id": "I02B-T2",
@@ -55,7 +56,8 @@
         "packages/contracts/src/snapshot.ts",
         "packages/contracts/src/snapshot.contract.test.ts"
       ],
-      "allow_protected_paths": []
+      "allow_protected_paths": [],
+      "agent_types": ["i02b-t2-snapshots", "persistence-implementer"]
     },
     {
       "task_id": "I02B-VERIFY",

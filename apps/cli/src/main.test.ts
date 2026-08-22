@@ -26,7 +26,7 @@ describe('runCli', () => {
     expect(result.exitCode).toBe(1);
     expect(result.stdout).toContain('world export');
     expect(result.stdout.toLowerCase()).toMatch(/not implemented|planned/);
-    expect(result.stdout).toContain('I02B');
+    expect(result.stdout).toContain('I03');
   });
 
   it('команда с базой не исполняется синхронным runCli и говорит об этом прямо', () => {

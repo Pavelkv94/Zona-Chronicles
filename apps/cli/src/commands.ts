@@ -122,7 +122,10 @@ export const COMMANDS: readonly CliCommand[] = [
     name: 'world export',
     summary: 'Export a world projection/replay artifact to disk.',
     status: 'planned',
-    iteration: 'I02B',
+    // I03: экспорт — это проекция, а не движок. Метка I02B была ошибкой (замечание
+    // независимой проверки тестов): собственный докстринг этого файла и PLAN §5 говорят I03,
+    // а `--help` печатал I02B.
+    iteration: 'I03',
   },
 ];
 
