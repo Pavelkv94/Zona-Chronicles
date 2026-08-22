@@ -13,12 +13,27 @@
 export interface CliConfig {
   /** `undefined` — переменная не задана; команды без базы обязаны работать и в этом случае. */
   readonly databaseUrl: string | undefined;
+  /**
+   * Подключение под ролью migration owner — только для `world migrate` (BL-2 аудита I02A).
+   *
+   * Рантайм ходит под `zona_worker`, у которого нет DDL и нет `update`/`delete` на
+   * `world_events`; миграции требуют владельца схемы. Разные роли — разные строки подключения,
+   * иначе разделение ролей существует только в миграции и ни в одном работающем пути
+   * (`03_TECHNICAL_DESIGN` §11). Если переменная не задана, `world migrate` падает обратно на
+   * `DATABASE_URL` и ГОВОРИТ об этом: в локальной разработке это удобно, в поставке — заметно.
+   */
+  readonly migrationDatabaseUrl: string | undefined;
 }
+
+const nonEmpty = (value: string | undefined): string | undefined =>
+  value !== undefined && value.length > 0 ? value : undefined;
 
 /** Разбирает окружение в конфиг. Валидацию самой строки делает `parseDatabaseConnectionUrl`. */
 export function parseCliConfig(env: Record<string, string | undefined>): CliConfig {
-  const raw = env['DATABASE_URL'];
-  return { databaseUrl: raw !== undefined && raw.length > 0 ? raw : undefined };
+  return {
+    databaseUrl: nonEmpty(env['DATABASE_URL']),
+    migrationDatabaseUrl: nonEmpty(env['MIGRATION_DATABASE_URL']),
+  };
 }
 
 /** Читает `process.env`. Единственное место в apps/cli, где это допустимо. */

@@ -450,6 +450,51 @@ describe('subagent-stop-writeset.ts (real process)', () => {
       expect(third.status).toBe(0);
     });
 
+    it('изменившаяся причина той же сессии НЕ блокирует повторно (живой прогон I02A)', () => {
+      // Живой прогон I02A: reviewer-сессия с пустым write_paths получила блокировку, а затем
+      // ВТОРУЮ — потому что lead в общем дереве продолжал править файлы, и список нарушений в
+      // тексте причины вырос. Дедуп по точному тексту причины этого не ловит: причина другая,
+      // хеш другой, блокировка снова. Эскалация обязана быть однократной НА СЕССИЮ, а не на
+      // формулировку, иначе в общем дереве она не однократна вовсе — там текст меняется от
+      // каждой чужой правки.
+      const root = makeRepo();
+      writeWriteSet(root, {
+        task_id: 'I02A-VERIFY',
+        owner_role: 'reviewer',
+        write_paths: [],
+      });
+      writeFileSync(join(root, 'README.md'), 'первая чужая правка\n');
+      const payload = {
+        agent_id: 'agent-1',
+        agent_type: 'test-reviewer',
+        session_id: 'sess-i02a-verify',
+      };
+
+      const first = runHook(root, payload);
+      expect(first.status).toBe(2);
+      expect(first.stderr).toContain('README.md');
+
+      // Пока сессия пыталась завершиться, в общем дереве появился ещё один чужой файл.
+      // Это ВТОРАЯ эскалация — намерение F5-1 «новая информация показывается» сохраняется.
+      writeFileSync(join(root, 'CHANGELOG.md'), 'вторая чужая правка\n');
+      const second = runHook(root, payload);
+      expect(second.status).toBe(2);
+      expect(second.stderr).toContain('CHANGELOG.md');
+
+      // Третья чужая правка — лимит исчерпан, сессию обязаны выпустить.
+      writeFileSync(join(root, 'AGENTS.md'), 'третья чужая правка\n');
+      const third = runHook(root, payload);
+      expect(third.status).toBe(0);
+      expect(third.stderr).toContain('F5-1');
+      // Причина обязана быть НАЗВАНА, а не проглочена: сессию выпускают, но повод
+      // остаётся видимым для итоговой сверки.
+      expect(third.stderr).toContain('AGENTS.md');
+
+      // И дальше — тоже выпускают: возврата в блокировку через один раз быть не должно.
+      writeFileSync(join(root, 'README.md'), 'четвёртая чужая правка\n');
+      expect(runHook(root, payload).status).toBe(0);
+    });
+
     it('другая сессия (другой session_id) с той же причиной блокируется заново (код 2)', () => {
       const root = makeRepo();
       writeWriteSet(root, {

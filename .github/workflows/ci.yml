@@ -45,6 +45,14 @@ jobs:
       - run: pnpm lint
       - run: pnpm boundaries:check
       - run: pnpm typecheck
+
+      # BL-1 (независимый архитектурный аудит I02A): build обязан идти ДО acceptance.
+      # Acceptance порождает CLI отдельным OS-процессом (`node apps/cli/src/main.ts`), на
+      # который alias-ы vitest не действуют: он резолвит `@zona/*` по `exports` пакета, то есть
+      # в `dist`. `dist` в .gitignore, lifecycle-скрипта сборки нет, поэтому на чистом checkout
+      # шаг acceptance падал бы с ERR_MODULE_NOT_FOUND. Раньше build стоял последним.
+      - run: pnpm build
+
       - run: pnpm test:unit
       - run: pnpm test:property
       - run: pnpm test:contract
@@ -56,7 +64,6 @@ jobs:
       - run: pnpm security:licenses
       - run: pnpm security:static
       - run: pnpm security:no-llm
-      - run: pnpm build
 
       # DEV-02: контроль владения на уровне результата переживает порчу session-level
       # настроек агента, поэтому повторяется вне агентной сессии.

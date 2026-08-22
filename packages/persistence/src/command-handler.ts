@@ -24,6 +24,7 @@
  */
 import {
   requireCanonical,
+  requireChecksum,
   type Command,
   type CommandRejectionCode,
   type WorldEvent,
@@ -122,11 +123,22 @@ class UnavailableRandomSource implements RandomSource {
 const jsonOrNull = (value: unknown, label: string): string | null =>
   value === null || value === undefined ? null : requireCanonical(value, label);
 
+/**
+ * Отпечаток тела команды: канонический checksum всего envelope, включая `command_id`.
+ *
+ * Именно всего, а не выбранных полей: любое поле команды влияет на её смысл, а перечисление
+ * «значимых» полей вручную рано или поздно разойдётся с контрактом (тот же довод, что у
+ * области checksum снимка в I01).
+ */
+export const commandFingerprint = (command: Command): string =>
+  requireChecksum(command, `command(${command.command_id})`);
+
 const readStoredResult = async (
   db: DatabaseConnection,
   worldId: string,
   commandId: string,
-): Promise<CommandExecution | null> => {
+  expectedFingerprint: string,
+): Promise<CommandExecution | 'fingerprint-mismatch' | null> => {
   const row = await db
     .selectFrom('command_results')
     .selectAll()
@@ -134,6 +146,7 @@ const readStoredResult = async (
     .where('command_id', '=', commandId)
     .executeTakeFirst();
   if (row === undefined) return null;
+  if (row.command_fingerprint !== expectedFingerprint) return 'fingerprint-mismatch';
 
   const before = requireSafeInteger(
     row.world_version_before,
@@ -190,170 +203,197 @@ export const executeCommand = async (
   const now = options.now ?? ((): Date => new Date());
   const afterStep = options.afterStep ?? ((): void => {});
 
-  return db.transaction().execute(async (trx) => {
-    const locked = await trx
-      .selectFrom('worlds')
-      .select(['world_id', 'version'])
-      .where('world_id', '=', command.world_id)
-      .forUpdate()
-      .executeTakeFirst();
-    if (locked === undefined) {
-      throw new Error(`persistence: мир ${command.world_id} не существует`);
-    }
-    await afterStep('world-locked');
+  // Уровень изоляции задаётся ЯВНО (M-1 аудита I02A). Корректность handler-а завязана на
+  // READ COMMITTED: под REPEATABLE READ/SERIALIZABLE конкурентная команда получает не
+  // названный доменный отказ `stale_world_version`, а брошенный 40001
+  // (`could not serialize access due to concurrent update`) — без строки в `command_results` и
+  // без ретрая. Раньше уровень брался из настроек сервера, то есть `ALTER DATABASE` вне
+  // репозитория молча менял наблюдаемую семантику отказа, и ни один тест этого не ловил.
+  return db
+    .transaction()
+    .setIsolationLevel('read committed')
+    .execute(async (trx) => {
+      const locked = await trx
+        .selectFrom('worlds')
+        .select(['world_id', 'version'])
+        .where('world_id', '=', command.world_id)
+        .forUpdate()
+        .executeTakeFirst();
+      if (locked === undefined) {
+        throw new Error(`persistence: мир ${command.world_id} не существует`);
+      }
+      await afterStep('world-locked');
 
-    // Идемпотентность проверяется ДО optimistic-версии: повтор уже исполненной команды обязан
-    // вернуть прежний ответ, даже когда мир с тех пор ушёл вперёд (B3).
-    const stored = await readStoredResult(trx, command.world_id, command.command_id);
-    if (stored !== null) return stored;
+      // Идемпотентность проверяется ДО optimistic-версии: повтор уже исполненной команды обязан
+      // вернуть прежний ответ, даже когда мир с тех пор ушёл вперёд (B3). Но «повтор» — это ТА ЖЕ
+      // команда, а не тот же `command_id` (M-2): чужое тело под записанным id — не идемпотентность,
+      // а подмена, и она получает названный отказ без единой записи.
+      const fingerprint = commandFingerprint(command);
+      const stored = await readStoredResult(trx, command.world_id, command.command_id, fingerprint);
+      if (stored === 'fingerprint-mismatch') {
+        return {
+          outcome: 'rejected',
+          commandId: command.command_id,
+          rejectionCode: 'precondition_failed',
+          rejectionMessage:
+            `command_id ${command.command_id} уже записан в journal этого мира с ДРУГИМ телом ` +
+            'команды. Идемпотентность требует той же команды, а не только того же идентификатора.',
+          worldVersionBefore: requireSafeInteger(locked.version, 'worlds.version'),
+          worldVersionAfter: requireSafeInteger(locked.version, 'worlds.version'),
+          replayed: false,
+        };
+      }
+      if (stored !== null) return stored;
 
-    const [state, meta] = await Promise.all([
-      loadWorldState(trx, command.world_id),
-      loadWorldMeta(trx, command.world_id),
-    ]);
-    if (state === null || meta === null) {
-      throw new Error(`persistence: мир ${command.world_id} исчез внутри транзакции`);
-    }
+      const [state, meta] = await Promise.all([
+        loadWorldState(trx, command.world_id),
+        loadWorldMeta(trx, command.world_id),
+      ]);
+      if (state === null || meta === null) {
+        throw new Error(`persistence: мир ${command.world_id} исчез внутри транзакции`);
+      }
 
-    const nextSequence = state.sequence + 1;
-    const result = decide(state, command, {
-      clock: new FixedClock(state.worldTime),
-      random: new UnavailableRandomSource(),
-      // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
-      // уникально между командами, потому что принятая команда всегда двигает sequence.
-      ids: new DerivedIdFactory(`${state.worldId}:${nextSequence}`),
-      ruleset: new FixedRuleset(meta.versions),
-    });
+      const nextSequence = state.sequence + 1;
+      const result = decide(state, command, {
+        clock: new FixedClock(state.worldTime),
+        random: new UnavailableRandomSource(),
+        // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
+        // уникально между командами, потому что принятая команда всегда двигает sequence.
+        ids: new DerivedIdFactory(`${state.worldId}:${nextSequence}`),
+        ruleset: new FixedRuleset(meta.versions),
+      });
 
-    const recordedAt = now();
+      const recordedAt = now();
 
-    if (result.kind === 'rejected') {
+      if (result.kind === 'rejected') {
+        await trx
+          .insertInto('command_results')
+          .values({
+            world_id: command.world_id,
+            command_id: command.command_id,
+            type: command.type,
+            outcome: 'rejected',
+            rejection_code: result.rejection.code,
+            rejection_message: result.rejection.message,
+            event_ids: [],
+            command_fingerprint: fingerprint,
+            world_version_before: state.worldVersion,
+            world_version_after: state.worldVersion,
+            recorded_at: recordedAt,
+          })
+          .execute();
+        await afterStep('command-result-inserted');
+        await afterStep('before-commit');
+        return {
+          outcome: 'rejected',
+          commandId: command.command_id,
+          rejectionCode: result.rejection.code,
+          rejectionMessage: result.rejection.message,
+          worldVersionBefore: state.worldVersion,
+          worldVersionAfter: state.worldVersion,
+          replayed: false,
+        };
+      }
+
+      let nextState = state;
+      const eventIds: string[] = [];
+      const recorded: WorldEvent[] = [];
+      for (const draft of result.events) {
+        // `recorded_at` ставит именно этот слой: домен операционных часов не знает
+        // (`world-event.ts`, `decide.ts` — `DraftWorldEvent` намеренно без этого поля).
+        const event: WorldEvent = { ...draft, recorded_at: recordedAt.toISOString() };
+        await trx
+          .insertInto('world_events')
+          .values({
+            event_id: event.event_id,
+            world_id: event.world_id,
+            sequence: event.sequence,
+            world_time: event.world_time,
+            type: event.type,
+            schema_version: event.schema_version,
+            rules_version: event.rules_version,
+            content_version: event.content_version,
+            actor_ids: [...event.actor_ids],
+            subject_ids: [...event.subject_ids],
+            location_id: event.location_id,
+            correlation_id: event.correlation_id,
+            caused_by: [...event.caused_by],
+            command_id: event.command_id ?? null,
+            random_audit: jsonOrNull(event.random_audit, `random_audit(${event.event_id})`),
+            payload: requireCanonical(event.payload, `payload(${event.event_id})`),
+            recorded_at: recordedAt,
+          })
+          .execute();
+        eventIds.push(event.event_id);
+        recorded.push(event);
+        nextState = evolve(nextState, event);
+      }
+      await afterStep('event-inserted');
+
+      for (const agent of changedAgents(state, nextState)) {
+        await trx
+          .updateTable('agents')
+          .set({ location_id: agent.locationId, status: agent.status, route_id: agent.routeId })
+          .where('world_id', '=', command.world_id)
+          .where('agent_id', '=', agent.id)
+          .execute();
+      }
+      await afterStep('agent-updated');
+
+      await trx
+        .updateTable('worlds')
+        .set({
+          version: nextState.worldVersion,
+          last_sequence: nextState.sequence,
+          world_time: nextState.worldTime,
+        })
+        .where('world_id', '=', command.world_id)
+        .execute();
+      await afterStep('world-updated');
+
+      // Outbox пишется последним из фактов: строка доставки не должна существовать раньше
+      // состояния, которое подписчик по ней прочитает (PLAN §7, инвариант 3).
+      for (const event of recorded) {
+        await trx
+          .insertInto('outbox')
+          .values({
+            world_id: event.world_id,
+            event_id: event.event_id,
+            sequence: event.sequence,
+            payload: requireCanonical(event, `outbox(${event.event_id})`),
+            created_at: recordedAt,
+            published_at: null,
+          })
+          .execute();
+      }
+      await afterStep('outbox-inserted');
+
       await trx
         .insertInto('command_results')
         .values({
           world_id: command.world_id,
           command_id: command.command_id,
           type: command.type,
-          outcome: 'rejected',
-          rejection_code: result.rejection.code,
-          rejection_message: result.rejection.message,
-          event_ids: [],
+          outcome: 'accepted',
+          rejection_code: null,
+          rejection_message: null,
+          event_ids: eventIds,
+          command_fingerprint: fingerprint,
           world_version_before: state.worldVersion,
-          world_version_after: state.worldVersion,
+          world_version_after: nextState.worldVersion,
           recorded_at: recordedAt,
         })
         .execute();
       await afterStep('command-result-inserted');
       await afterStep('before-commit');
+
       return {
-        outcome: 'rejected',
+        outcome: 'accepted',
         commandId: command.command_id,
-        rejectionCode: result.rejection.code,
-        rejectionMessage: result.rejection.message,
+        eventIds,
         worldVersionBefore: state.worldVersion,
-        worldVersionAfter: state.worldVersion,
+        worldVersionAfter: nextState.worldVersion,
         replayed: false,
       };
-    }
-
-    let nextState = state;
-    const eventIds: string[] = [];
-    const recorded: WorldEvent[] = [];
-    for (const draft of result.events) {
-      // `recorded_at` ставит именно этот слой: домен операционных часов не знает
-      // (`world-event.ts`, `decide.ts` — `DraftWorldEvent` намеренно без этого поля).
-      const event: WorldEvent = { ...draft, recorded_at: recordedAt.toISOString() };
-      await trx
-        .insertInto('world_events')
-        .values({
-          event_id: event.event_id,
-          world_id: event.world_id,
-          sequence: event.sequence,
-          world_time: event.world_time,
-          type: event.type,
-          schema_version: event.schema_version,
-          rules_version: event.rules_version,
-          content_version: event.content_version,
-          actor_ids: [...event.actor_ids],
-          subject_ids: [...event.subject_ids],
-          location_id: event.location_id,
-          correlation_id: event.correlation_id,
-          caused_by: [...event.caused_by],
-          command_id: event.command_id ?? null,
-          random_audit: jsonOrNull(event.random_audit, `random_audit(${event.event_id})`),
-          payload: requireCanonical(event.payload, `payload(${event.event_id})`),
-          recorded_at: recordedAt,
-        })
-        .execute();
-      eventIds.push(event.event_id);
-      recorded.push(event);
-      nextState = evolve(nextState, event);
-    }
-    await afterStep('event-inserted');
-
-    for (const agent of changedAgents(state, nextState)) {
-      await trx
-        .updateTable('agents')
-        .set({ location_id: agent.locationId, status: agent.status, route_id: agent.routeId })
-        .where('world_id', '=', command.world_id)
-        .where('agent_id', '=', agent.id)
-        .execute();
-    }
-    await afterStep('agent-updated');
-
-    await trx
-      .updateTable('worlds')
-      .set({
-        version: nextState.worldVersion,
-        last_sequence: nextState.sequence,
-        world_time: nextState.worldTime,
-      })
-      .where('world_id', '=', command.world_id)
-      .execute();
-    await afterStep('world-updated');
-
-    // Outbox пишется последним из фактов: строка доставки не должна существовать раньше
-    // состояния, которое подписчик по ней прочитает (PLAN §7, инвариант 3).
-    for (const event of recorded) {
-      await trx
-        .insertInto('outbox')
-        .values({
-          world_id: event.world_id,
-          event_id: event.event_id,
-          sequence: event.sequence,
-          payload: requireCanonical(event, `outbox(${event.event_id})`),
-          created_at: recordedAt,
-          published_at: null,
-        })
-        .execute();
-    }
-    await afterStep('outbox-inserted');
-
-    await trx
-      .insertInto('command_results')
-      .values({
-        world_id: command.world_id,
-        command_id: command.command_id,
-        type: command.type,
-        outcome: 'accepted',
-        rejection_code: null,
-        rejection_message: null,
-        event_ids: eventIds,
-        world_version_before: state.worldVersion,
-        world_version_after: nextState.worldVersion,
-        recorded_at: recordedAt,
-      })
-      .execute();
-    await afterStep('command-result-inserted');
-    await afterStep('before-commit');
-
-    return {
-      outcome: 'accepted',
-      commandId: command.command_id,
-      eventIds,
-      worldVersionBefore: state.worldVersion,
-      worldVersionAfter: nextState.worldVersion,
-      replayed: false,
-    };
-  });
+    });
 };

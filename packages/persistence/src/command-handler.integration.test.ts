@@ -140,6 +140,32 @@ describe('B2/B3/B4 — атомарный старт journey', () => {
     expect(await counts()).toEqual(before);
   });
 
+  it('M-2: чужая команда под уже записанным command_id отвергается, а не «принимается»', async () => {
+    // Аудит I02A: `readStoredResult` сверял только (world_id, command_id) и возвращал чужой
+    // результат как свой. `--command-id` — публичный флаг CLI, то есть вход, управляемый
+    // снаружи: вызывающему сообщали «принято» про команду, которой не было, и отдавали чужие
+    // event_ids. Идемпотентность обязана требовать ТУ ЖЕ команду, а не тот же идентификатор.
+    await seedWorld();
+    const original = command();
+    const first = await executeCommand(db, original);
+    expect(first.outcome).toBe('accepted');
+
+    const impostor: Command = {
+      ...original,
+      actor_id: 'agent:ghost',
+      expected_world_version: 999,
+      payload: { route_id: 'route:missing' },
+    };
+    const result = await executeCommand(db, impostor);
+
+    expect(result.outcome).toBe('rejected');
+    if (result.outcome !== 'rejected') return;
+    expect(result.rejectionCode).toBe('precondition_failed');
+    expect(result.rejectionMessage).toMatch(/command_id/);
+    // Ни события, ни второй строки journal: подделка не меняет мир и не переписывает результат.
+    expect(await counts()).toEqual({ world_events: 1, outbox: 1, command_results: 1 });
+  });
+
   it.each([
     ['маршрут не существует', { payload: { route_id: 'route:missing' } }, 'route_unavailable'],
     [

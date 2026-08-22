@@ -7,6 +7,7 @@
  * сюда строка приходит явным параметром (ADR-003: оболочка снаружи, зависимости внутрь).
  */
 import { RUNTIME_ID_PREFIXES, compareByCodePoint, type Command } from '@zona/contracts';
+import { randomUUID } from 'node:crypto';
 import { DerivedIdFactory, testRulesetVersions } from '@zona/domain';
 import { PROTOTYPE_WORLD } from '@zona/content';
 import {
@@ -22,6 +23,7 @@ import {
   type Logger,
 } from '@zona/persistence';
 import type { CliResult } from './commands.ts';
+import { describeDatabaseTarget } from './config.ts';
 import { seedWorld } from './world.ts';
 
 const SILENT_LOGGER: Logger = { info: () => {}, warn: () => {}, error: () => {} };
@@ -46,14 +48,31 @@ const parseSeed = (args: readonly string[]): number | string => {
 export const connect = (databaseUrl: string): DatabaseConnection =>
   createDatabase(parseDatabaseConnectionUrl(databaseUrl));
 
-/** `world migrate` — применяет неприменённые миграции общим runner-ом. */
-export const runWorldMigrateCommand = async (db: DatabaseConnection): Promise<CliResult> => {
+/**
+ * `world migrate` — применяет неприменённые миграции общим runner-ом.
+ *
+ * Роль подключения называется в выводе: миграции обязаны идти под владельцем схемы, а рантайм —
+ * под `zona_worker` (BL-2 аудита I02A). Если `MIGRATION_DATABASE_URL` не задана и команда
+ * пошла под рантайм-строкой, это ГОВОРИТСЯ вслух, а не подразумевается.
+ */
+export const runWorldMigrateCommand = async (
+  db: DatabaseConnection,
+  databaseUrl: string,
+  usedRuntimeConnection: boolean,
+): Promise<CliResult> => {
   const report = await runMigrations({ db, migrations, logger: SILENT_LOGGER });
   const applied = report.applied.map((entry) => `${entry.id}-${entry.name}`);
   const lines =
     applied.length === 0
       ? [`Схема уже на версии ${String(report.schemaVersion)}; применять нечего.`]
       : [`Применено: ${applied.join(', ')}`, `Версия схемы: ${String(report.schemaVersion)}`];
+  lines.push(`Подключение: ${describeDatabaseTarget(databaseUrl)}`);
+  if (usedRuntimeConnection) {
+    lines.push(
+      'MIGRATION_DATABASE_URL не задана — миграции применены рантайм-подключением. ' +
+        'В поставке роли обязаны различаться (03_TECHNICAL_DESIGN §11).',
+    );
+  }
   return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
 };
 
@@ -98,10 +117,25 @@ export const runWorldInitCommand = async (
 /**
  * `world run --agent <id> --route <id> [--command-id <id>]` — начинает путь.
  *
- * Без `--command-id` он выводится из (мир, агент, маршрут, текущая версия мира). Это не
- * украшение: повтор ТОЙ ЖЕ команды при неизменившемся мире даёт тот же `command_id`, поэтому
- * идемпотентность (B3) наблюдается прямо в demo, без ручного копирования id.
+ * `command_id` — ключ идемпотентности, и его семантика здесь прямая: БЕЗ `--command-id` каждый
+ * запуск это НОВАЯ попытка и получает свежий id; С `--command-id` это повтор ровно той попытки.
+ *
+ * Прежняя редакция выводила id из (мир, агент, маршрут, версия мира). M-9 аудита I02A показал,
+ * чего это стоит: транзакция закоммитилась, процесс убит до вывода, оператор повторяет ту же
+ * строку — версия мира уже другая, значит и `command_id` другой, journal повтора не находит, и
+ * команда исполняется заново. То есть ровно тот сценарий OPS-01, ради которого journal и
+ * существует, шёл мимо него. Дубликата не возникало только потому, что `journey.start` защищает
+ * себя сам; для первой же команды с повторяемым предусловием это был бы генератор дублей.
+ *
+ * `correlation_id` выводится ИЗ `command_id`, а не независимым счётчиком: иначе повтор с тем же
+ * `--command-id` давал бы другое тело команды (счётчик фабрики стартовал бы с другой позиции),
+ * и проверка отпечатка (M-2) честно объявляла бы повтор подменой. Найдено исполнением при
+ * закрытии M-2.
  */
+const freshCommandId = (): string =>
+  // `apps/cli` — императивная оболочка, ей случайность разрешена (в отличие от домена).
+  new DerivedIdFactory(randomUUID()).next(RUNTIME_ID_PREFIXES.command);
+
 export const runWorldRunCommand = async (
   db: DatabaseConnection,
   args: readonly string[],
@@ -120,17 +154,18 @@ export const runWorldRunCommand = async (
     };
   }
 
-  const intentKey = `${state.worldId}:${agentId}:${routeId}:${String(state.worldVersion)}`;
-  const ids = new DerivedIdFactory(intentKey);
+  const commandId = flag(args, '--command-id') ?? freshCommandId();
   const command: Command = {
-    command_id: flag(args, '--command-id') ?? ids.next(RUNTIME_ID_PREFIXES.command),
+    command_id: commandId,
     world_id: state.worldId,
     type: 'journey.start',
     schema_version: testRulesetVersions().schemaVersion,
     actor_id: agentId,
     issued_at_world_time: state.worldTime,
     expected_world_version: state.worldVersion,
-    correlation_id: ids.next(RUNTIME_ID_PREFIXES.correlation),
+    correlation_id: new DerivedIdFactory(`${commandId}:correlation`).next(
+      RUNTIME_ID_PREFIXES.correlation,
+    ),
     payload: { route_id: routeId },
   };
 

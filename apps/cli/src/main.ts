@@ -19,7 +19,7 @@
  */
 import { pathToFileURL } from 'node:url';
 import { COMMANDS, type CliResult, renderCommandList } from './commands.ts';
-import { loadCliConfig } from './config.ts';
+import { loadCliConfig, type CliConfig } from './config.ts';
 import { runWorldInspectCommand, runWorldSeedCommand } from './world-cli.ts';
 import {
   connect,
@@ -98,17 +98,24 @@ export function runCli(argv: readonly string[]): CliResult {
  * Подключение открывается и закрывается вокруг ОДНОЙ команды: CLI — короткоживущий процесс, и
  * оставленный пул не давал бы ему завершиться (что и проверяет B9, порождая настоящие процессы).
  */
-export async function runCliAsync(
-  argv: readonly string[],
-  databaseUrl: string | undefined,
-): Promise<CliResult> {
+export async function runCliAsync(argv: readonly string[], config: CliConfig): Promise<CliResult> {
   const commandName = argv.slice(0, 2).join(' ');
   const command = COMMANDS.find((c) => c.name === commandName);
   if (command?.requiresDatabase !== true) return runCli(argv);
 
+  // BL-2: миграции идут под ролью владельца схемы, всё остальное — под рантайм-ролью с
+  // least privilege. Разделение ролей обязано существовать в РАБОТАЮЩЕМ пути, а не только
+  // в миграции, которая их создаёт.
+  const isMigration = command.name === 'world migrate';
+  const databaseUrl = isMigration
+    ? (config.migrationDatabaseUrl ?? config.databaseUrl)
+    : config.databaseUrl;
+
   if (databaseUrl === undefined || databaseUrl.length === 0) {
     return {
-      stdout: `"${command.name}" требует DATABASE_URL (см. docker-compose.yml).\n`,
+      stdout: `"${command.name}" требует ${
+        isMigration ? 'MIGRATION_DATABASE_URL или DATABASE_URL' : 'DATABASE_URL'
+      } (см. docker-compose.yml).\n`,
       exitCode: 2,
     };
   }
@@ -118,7 +125,11 @@ export async function runCliAsync(
   try {
     switch (command.name) {
       case 'world migrate':
-        return await runWorldMigrateCommand(db);
+        return await runWorldMigrateCommand(
+          db,
+          databaseUrl,
+          config.migrationDatabaseUrl === undefined,
+        );
       case 'world init':
         return await runWorldInitCommand(db, commandArgs);
       case 'world run':
@@ -146,7 +157,7 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  const result = await runCliAsync(process.argv.slice(2), loadCliConfig().databaseUrl);
+  const result = await runCliAsync(process.argv.slice(2), loadCliConfig());
   process.stdout.write(result.stdout);
   process.exitCode = result.exitCode;
 }

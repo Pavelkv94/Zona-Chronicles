@@ -94,6 +94,8 @@ export interface CommandResultsTable {
   rejection_code: string | null;
   rejection_message: string | null;
   event_ids: string[];
+  /** Канонический checksum ТЕЛА команды (M-2): идемпотентность требует той же команды. */
+  command_fingerprint: string;
   world_version_before: BigIntColumn;
   world_version_after: BigIntColumn;
   recorded_at: ColumnType<Date, Date, Date>;

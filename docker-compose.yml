@@ -40,7 +40,9 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: '3001'
-      DATABASE_URL: postgres://zona:zona_local_dev_only@postgres:5432/zona
+      # BL-2: observer API ходит под read-only ролью без единого гранта на канонические
+      # таблицы. Least privilege обязан быть в РАБОТАЮЩЕМ пути, а не только в миграции.
+      DATABASE_URL: postgres://zona_api:zona_local_dev_only@postgres:5432/zona
     ports:
       - '3001:3001'
     depends_on:
@@ -55,7 +57,10 @@ services:
       target: worker
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://zona:zona_local_dev_only@postgres:5432/zona
+      # BL-2: canonical worker — роль без DDL и без update/delete на world_events.
+      DATABASE_URL: postgres://zona_worker:zona_local_dev_only@postgres:5432/zona
+      # Миграции — единственное, что идёт под владельцем схемы.
+      MIGRATION_DATABASE_URL: postgres://zona:zona_local_dev_only@postgres:5432/zona
     depends_on:
       postgres:
         condition: service_healthy

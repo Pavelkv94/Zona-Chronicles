@@ -76,19 +76,48 @@ describe('I02A B8/B9 — durable мир', () => {
     // Агент уже в пути, поэтому новая команда получает честный отказ — и именно её
     // command_id используется дальше: журнал команд обязан быть идемпотентным и для
     // отказов, иначе повтор превратил бы записанный отказ в новую попытку (B3).
-    const events = cli(['world', 'events'], db.url);
-    const commandId = /cmd_[0-9A-HJKMNP-TV-Z]{26}/.exec(
-      cli(['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID], db.url).stdout,
-    );
-    expect(commandId).not.toBeNull();
+    const eventsBefore = cli(['world', 'events'], db.url).stdout;
+    const rejected = cli(['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID], db.url);
+    expect(rejected.stdout).toContain('отклонена');
+    const commandId = /cmd_[0-9A-HJKMNP-TV-Z]{26}/.exec(rejected.stdout)?.[0];
+    expect(commandId).toBeDefined();
 
-    const before = events.stdout;
     const repeat = cli(
-      ['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID, '--command-id', commandId![0]],
+      ['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID, '--command-id', commandId!],
       db.url,
     );
     expect(repeat.stdout).toContain('повтор: результат прочитан из journal');
-    expect(cli(['world', 'events'], db.url).stdout).toBe(before);
+    expect(cli(['world', 'events'], db.url).stdout).toBe(eventsBefore);
+  });
+
+  it('B9: тот же command_id с ДРУГИМ телом команды отвергается между процессами (M-2)', () => {
+    const first = cli(['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID], db.url);
+    const commandId = /cmd_[0-9A-HJKMNP-TV-Z]{26}/.exec(first.stdout)?.[0];
+    expect(commandId).toBeDefined();
+
+    // Тот же идентификатор, другой актор — это подмена, а не повтор.
+    const impostor = cli(
+      ['world', 'run', '--agent', 'agent:kite', '--route', ROUTE_ID, '--command-id', commandId!],
+      db.url,
+    );
+    expect(impostor.stdout).toContain('precondition_failed');
+    expect(impostor.stdout).toContain('с ДРУГИМ телом команды');
+    expect(impostor.exitCode).toBe(1);
+  });
+
+  it('B9: без --command-id каждый запуск это новая попытка (M-9)', () => {
+    // Прежде id выводился из версии мира, поэтому повтор после потерянного ответа получал
+    // ДРУГОЙ id и обходил journal идемпотентности. Теперь связь с версией мира разорвана:
+    // два запуска — два разных id, и это видно.
+    const a = /cmd_[0-9A-HJKMNP-TV-Z]{26}/.exec(
+      cli(['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID], db.url).stdout,
+    )?.[0];
+    const b = /cmd_[0-9A-HJKMNP-TV-Z]{26}/.exec(
+      cli(['world', 'run', '--agent', AGENT_ID, '--route', ROUTE_ID], db.url).stdout,
+    )?.[0];
+    expect(a).toBeDefined();
+    expect(b).toBeDefined();
+    expect(a).not.toBe(b);
   });
 
   it('B8: состояние после команды совпадает с in-memory прогоном той же команды', async () => {

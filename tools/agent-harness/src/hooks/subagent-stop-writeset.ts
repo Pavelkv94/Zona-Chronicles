@@ -195,26 +195,56 @@ const changedFilesSince = (projectRoot: string, baseCommit: string): GitListResu
 /** F5-1: каталог state-файлов эскалации — вне репозитория, читает/пишет только сам hook-процесс. */
 const STATE_DIR = join(tmpdir(), 'agent-harness-subagent-stop-state');
 
+/**
+ * Сколько раз одна сессия может быть заблокирована SubagentStop-ом, суммарно по всем причинам.
+ *
+ * Не «один раз на причину» и не «без ограничения». Живой прогон I02A показал, почему граница
+ * обязана быть на СЕССИИ: reviewer-сессия работала в общем дереве, lead продолжал править
+ * файлы, список нарушений в тексте причины рос от каждой чужой правки — а значит каждый раз
+ * давал «новую причину» и новую блокировку. Текст причины в общем дереве не свойство сессии,
+ * а снимок чужой работы, поэтому дедуп по тексту не ограничивает ничего.
+ *
+ * Два, а не один: намерение F5-1 (I00) в том, что действительно НОВАЯ информация заслуживает
+ * быть показанной, и одна повторная эскалация это сохраняет. Дальше сессия выпускается в любом
+ * случае — причина при этом всегда называется, а итоговая сверка идёт неблокирующим
+ * `pnpm ownership:check`.
+ */
+const MAX_ESCALATIONS_PER_SESSION = 2;
+
 const stateFilePath = (projectRoot: string, sessionId: string): string => {
   const repoHash = createHash('sha256').update(projectRoot).digest('hex').slice(0, 20);
   const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 200);
   return join(STATE_DIR, `${repoHash}--${safeSessionId}.json`);
 };
 
-const readLastReasonHash = (path: string): string | undefined => {
+interface EscalationState {
+  /** Хеш причины ПОСЛЕДНЕЙ блокировки: точный повтор той же причины эскалацией не считается. */
+  readonly reasonHash: string;
+  /** Сколько блокировок эта сессия уже получила; см. `MAX_ESCALATIONS_PER_SESSION`. */
+  readonly escalations: number;
+}
+
+const readEscalationState = (path: string): EscalationState | undefined => {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    const hash = (parsed as { readonly reasonHash?: unknown } | null)?.reasonHash;
-    return typeof hash === 'string' ? hash : undefined;
+    const record = parsed as {
+      readonly reasonHash?: unknown;
+      readonly escalations?: unknown;
+    } | null;
+    if (typeof record?.reasonHash !== 'string') return undefined;
+    // Состояние прежнего формата (без счётчика) читается как одна состоявшаяся эскалация:
+    // сессия, начатая до обновления хука, не должна получить лишнюю блокировку.
+    const escalations = typeof record.escalations === 'number' ? record.escalations : 1;
+    return { reasonHash: record.reasonHash, escalations };
   } catch {
     return undefined;
   }
 };
 
-const writeReasonHash = (path: string, reasonHash: string): void => {
+const writeEscalationState = (path: string, state: EscalationState): void => {
   try {
     mkdirSync(STATE_DIR, { recursive: true });
-    writeFileSync(path, JSON.stringify({ reasonHash }), 'utf8');
+    writeFileSync(path, JSON.stringify(state), 'utf8');
   } catch {
     // Best-effort: если состояние недоступно для записи, следующий вызов просто снова
     // заблокирует один раз — деградация в сторону большей строгости (блокирует), не fail-open.
@@ -225,17 +255,23 @@ const clearState = (path: string): void => {
   try {
     rmSync(path, { force: true });
   } catch {
-    // Best-effort — см. writeReasonHash.
+    // Best-effort — см. writeEscalationState.
   }
 };
 
-const hashReason = (reason: string): string => createHash('sha256').update(reason).digest('hex');
-
 /**
- * F5-1: блокирует (`exit 2`) при первом появлении причины для данной сессии; при ТОЧНО ТОЙ ЖЕ
- * причине для ТОЙ ЖЕ сессии — эскалация уже состоялась и не помогла, поэтому пропускает
- * (`exit 0`) вместо повторной блокировки. См. docstring файла. Без `session_id` в payload дедуп
- * невозможен — тогда безопасное направление отказа то же, что и раньше: блокировать безусловно.
+ * F5-1: блокирует (`exit 2`) не более {@link MAX_ESCALATIONS_PER_SESSION} раз на сессию,
+ * после чего пропускает (`exit 0`), обязательно назвав причину.
+ *
+ * Учёт ведётся по (сессия, причина): точный повтор той же причины эскалацией не считается —
+ * она уже состоялась и не помогла. Новая причина расходует одну оставшуюся эскалацию, а не
+ * открывает бесконечный счёт: см. рассуждение у {@link MAX_ESCALATIONS_PER_SESSION}.
+ *
+ * Состояние очищается только при действительно чистом завершении без единой причины
+ * (см. конец `main`).
+ *
+ * Без `session_id` в payload учёт невозможен — тогда безопасное направление отказа прежнее:
+ * блокировать безусловно.
  */
 const handleFailure = (
   sessionId: string | undefined,
@@ -248,26 +284,26 @@ const handleFailure = (
   }
 
   const path = stateFilePath(projectRoot, sessionId);
-  const reasonHash = hashReason(reason);
-  const lastReasonHash = readLastReasonHash(path);
+  const reasonHash = createHash('sha256').update(reason).digest('hex');
+  const previous = readEscalationState(path);
 
-  if (lastReasonHash === reasonHash) {
-    // Состояние НЕ очищается: последующие повторы ТОЙ ЖЕ причины обязаны продолжать пропускать,
-    // а не блокировать снова через один раз (иначе получился бы цикл «блок-пропуск-блок...» —
-    // тот же класс бага, только вдвое медленнее). Очистка происходит только при действительно
-    // чистом завершении без единой причины (см. конец `main`) — тогда следующая, отличающаяся
-    // причина для этой же сессии снова блокирует один раз, как положено.
+  const sameReason = previous?.reasonHash === reasonHash;
+  const escalations = previous?.escalations ?? 0;
+
+  if (sameReason || escalations >= MAX_ESCALATIONS_PER_SESSION) {
     process.stderr.write(
       `${reason}\n\n` +
-        '[F5-1] Это ТА ЖЕ причина, что уже блокировала эту сессию (session_id=' +
-        `${sessionId}) раньше. Эскалация однократна: повторная блокировка не защищает, а держит ` +
-        'сессию в ловушке без выхода (живой прогон I00-F5). Остановка разрешена; итоговая ' +
-        'сверка — через отдельный, неблокирующий `pnpm ownership:check` или human review.\n',
+        `[F5-1] Эскалация для этой сессии (session_id=${sessionId}) исчерпана: ` +
+        `${String(escalations)} из ${String(MAX_ESCALATIONS_PER_SESSION)}` +
+        (sameReason ? ', и эта причина уже показывалась' : '') +
+        '. Повторная блокировка не защищает, а держит сессию в ловушке без выхода (живые ' +
+        'прогоны I00-F5 и I02A). Причина выше названа и остаётся в силе — остановка разрешена, ' +
+        'итоговая сверка через неблокирующий `pnpm ownership:check` или human review.\n',
     );
     return;
   }
 
-  writeReasonHash(path, reasonHash);
+  writeEscalationState(path, { reasonHash, escalations: escalations + 1 });
   process.stderr.write(`${reason}\n`);
   process.exit(2);
 };

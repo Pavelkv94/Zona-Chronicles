@@ -22,9 +22,38 @@
  * asserted on by the acceptance tests, not hidden here.
  */
 import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const CLI_ENTRY = fileURLToPath(new URL('../../../apps/cli/src/main.ts', import.meta.url));
+
+/**
+ * Собранные `dist` рабочих пакетов, без которых порождённый CLI не стартует.
+ *
+ * BL-1 (аудит I02A): у порождённого процесса нет alias-ов `vitest.config.ts`, поэтому
+ * `@zona/persistence` он резолвит по `exports` пакета — в `dist/index.js`. `dist` не в git и
+ * не собирается lifecycle-скриптом, так что на чистом дереве вместо осмысленного падения
+ * получался `ERR_MODULE_NOT_FOUND` из недр Node. Проверка ниже превращает это в названную
+ * причину: acceptance зависит от `pnpm build`, и это должно быть видно сразу.
+ */
+const REQUIRED_DIST_ENTRIES = ['contracts', 'domain', 'content', 'persistence'].map((name) =>
+  fileURLToPath(new URL(`../../../packages/${name}/dist/index.js`, import.meta.url)),
+);
+
+let distChecked = false;
+
+function requireBuiltPackages(): void {
+  if (distChecked) return;
+  const missing = REQUIRED_DIST_ENTRIES.filter((entry) => !existsSync(entry));
+  if (missing.length > 0) {
+    throw new Error(
+      'Acceptance порождает CLI отдельным процессом, который резолвит @zona/* в dist, а не в ' +
+        `src. Не собрано: ${missing.join(', ')}. Запустите "pnpm build" перед "pnpm ` +
+        'test:acceptance" (в CI build стоит до тест-шагов — см. .github/workflows/ci.yml).',
+    );
+  }
+  distChecked = true;
+}
 
 /** Environment variables set to unroutable/refusing values, so an accidental network or DB
  *  connection attempt is forced to either hang (caught by `timeoutMs`) or fail loudly, instead
@@ -88,6 +117,8 @@ function run(
       env[key] = value;
     }
   }
+
+  requireBuiltPackages();
 
   const startedAt = Date.now();
   const result: SpawnSyncReturns<string> = spawnSync(command, args, {
