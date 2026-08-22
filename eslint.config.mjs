@@ -19,6 +19,38 @@ import globals from 'globals';
  * ADR-003 как предел, а не подразумевается закрытым — недоказанное абсолютное правило хуже
  * задокументированного частичного.
  */
+/**
+ * ALLOW-LIST внешних импортов канонического ядра (N-5 повторного аудита I02A).
+ *
+ * Перечисления запрещённого недостаточно: незаявленный импорт корневой devDependency —
+ * например `@testcontainers/postgresql`, то есть Docker, сеть и настоящий PostgreSQL —
+ * не ловил НИ ОДИН контроль. Manifest-проверка молчала (не объявлено), dependency-cruiser
+ * молчал (резолвится в `node_modules`, а `node_modules` исключён из его графа —
+ * подтверждено исполнением), `no-unresolvable` молчал (резолвится).
+ *
+ * eslint работает с ТЕКСТОМ спецификатора импорта, до резолва, поэтому здесь запрет
+ * выразим как allow-list: разрешены относительные пути, workspace-пакеты и короткий
+ * список внешних. Всё остальное — ошибка.
+ *
+ * `@zona/*` разрешены здесь, а не поимённо: направление рёбер между workspace-пакетами
+ * проверяет `boundaries:check`, и дублировать его матрицу в eslint значило бы завести
+ * второй источник правды, который разойдётся с первым.
+ */
+const CORE_ALLOWED_EXTERNAL_IMPORTS = ['@sinclair/typebox', 'vitest', 'fast-check'];
+
+const coreExternalAllowlist = {
+  // Разрешены: относительный путь (начинается с точки), `node:`-встроенные (их отдельно
+  // ограничивает `adapterImportRestrictions`), workspace-пакеты и поимённо перечисленные
+  // внешние — целиком или с подпутём. Всё остальное отвергается.
+  regex: `^(?!(?:\\.|node:|@zona/)|(?:${CORE_ALLOWED_EXTERNAL_IMPORTS.map((name) =>
+    name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+  ).join('|')})(?:$|/))`,
+  message:
+    'ADR-003: каноническому ядру разрешены только относительные импорты, @zona/* и явно ' +
+    `перечисленные внешние пакеты (${CORE_ALLOWED_EXTERNAL_IMPORTS.join(', ')}). ` +
+    'Перечисление запрещённого не может быть полным; перечисление разрешённого может.',
+};
+
 const nondeterminismRestrictions = [
   {
     selector:
@@ -267,14 +299,23 @@ export default tseslint.config(
   },
   {
     // Каноническое ядро: дополнительные детерминистские запреты.
-    files: ['packages/domain/**/*.ts', 'packages/simulation/**/*.ts', 'packages/contracts/**/*.ts'],
+    files: [
+      'packages/domain/**/*.ts',
+      'packages/simulation/**/*.ts',
+      'packages/contracts/**/*.ts',
+      'packages/content/**/*.ts',
+    ],
     rules: {
       'no-restricted-syntax': ['error', ...nondeterminismRestrictions],
       'no-restricted-globals': ['error', ...nondeterminismGlobals],
       'no-restricted-imports': [
         'error',
         {
-          patterns: [...adapterImportRestrictions.patterns, ...llmImportRestrictions.patterns],
+          patterns: [
+            ...adapterImportRestrictions.patterns,
+            ...llmImportRestrictions.patterns,
+            coreExternalAllowlist,
+          ],
         },
       ],
     },

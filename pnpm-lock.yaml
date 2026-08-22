@@ -126,19 +126,40 @@ importers:
         specifier: 10.3.1
         version: 10.3.1
 
-  packages/content: {}
+  packages/content:
+    devDependencies:
+      fast-check:
+        specifier: 4.9.0
+        version: 4.9.0
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.10.2)(@vitest/coverage-v8@4.1.11)(vite@8.2.1(@types/node@24.10.2)(yaml@2.9.0))
 
   packages/contracts:
     dependencies:
       '@sinclair/typebox':
         specifier: 'catalog:'
         version: 0.34.52
+    devDependencies:
+      fast-check:
+        specifier: 4.9.0
+        version: 4.9.0
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.10.2)(@vitest/coverage-v8@4.1.11)(vite@8.2.1(@types/node@24.10.2)(yaml@2.9.0))
 
   packages/domain:
     dependencies:
       '@zona/contracts':
         specifier: workspace:*
         version: link:../contracts
+    devDependencies:
+      fast-check:
+        specifier: 4.9.0
+        version: 4.9.0
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.10.2)(@vitest/coverage-v8@4.1.11)(vite@8.2.1(@types/node@24.10.2)(yaml@2.9.0))
 
   packages/persistence:
     dependencies:
@@ -188,6 +209,13 @@ importers:
       '@zona/domain':
         specifier: workspace:*
         version: link:../domain
+    devDependencies:
+      fast-check:
+        specifier: 4.9.0
+        version: 4.9.0
+      vitest:
+        specifier: 4.1.11
+        version: 4.1.11(@types/node@24.10.2)(@vitest/coverage-v8@4.1.11)(vite@8.2.1(@types/node@24.10.2)(yaml@2.9.0))
 
   packages/testkit:
     dependencies:

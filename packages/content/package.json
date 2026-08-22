@@ -19,5 +19,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.build.json",
     "clean": "rm -rf dist *.tsbuildinfo"
+  },
+  "devDependencies": {
+    "fast-check": "4.9.0",
+    "vitest": "4.1.11"
   }
 }
