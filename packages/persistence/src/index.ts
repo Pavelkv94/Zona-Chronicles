@@ -47,6 +47,14 @@ export {
 export type { CommandAccepted, CommandExecution, CommandRejected } from './command-handler.ts';
 export { commandFingerprint, eventIdOriginKey, executeCommand } from './command-handler.ts';
 
+export type { ClaimedAction, ClaimOptions, TickOptions, TickResult } from './scheduler.ts';
+export {
+  DEFAULT_BATCH_SIZE,
+  DEFAULT_LEASE_MS,
+  claimDueActions,
+  runWorldTick,
+} from './scheduler.ts';
+
 export type { EnsureRolesResult, RoleName } from './principals.ts';
 export {
   APPLICATION_ROLES,

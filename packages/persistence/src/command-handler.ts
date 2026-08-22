@@ -24,6 +24,7 @@
  */
 import { sql } from 'kysely';
 import {
+  compareByCodePoint,
   commandFingerprintSource,
   requireCanonical,
   requireChecksum,
@@ -128,6 +129,15 @@ export interface ExecuteCommandOptions {
   readonly now?: () => Date;
   /** Инъекция сбоя после названного шага (B5). Бросок отменяет всю транзакцию. */
   readonly afterStep?: (step: TransactionStep) => Promise<void> | void;
+  /**
+   * Мировое время, к которому продвигается мир этой командой (I02B).
+   *
+   * По умолчанию команда исполняется в текущем мировом времени: внешнее намерение время не
+   * двигает. Scheduler передаёт `due_at` обрабатываемого действия — тогда событие получает
+   * момент, в который оно произошло В МИРЕ, а не момент, когда до него дошли руки.
+   * Движение назад запрещено (C12): время мира монотонно.
+   */
+  readonly worldTime?: string;
 }
 
 /**
@@ -366,9 +376,18 @@ export const executeCommand = async (
         throw new Error(`persistence: мир ${command.world_id} исчез внутри транзакции`);
       }
 
+      const worldTime = options.worldTime ?? state.worldTime;
+      if (compareByCodePoint(worldTime, state.worldTime) < 0) {
+        // Каноническая ISO-форма сравнима лексикографически, поэтому сравнение текстов и есть
+        // сравнение моментов — без обращения к `Date` и без часового пояса.
+        throw new Error(
+          `persistence: мировое время не может идти назад (${state.worldTime} -> ${worldTime})`,
+        );
+      }
+
       const nextSequence = state.sequence + 1;
       const result = decide(state, command, {
-        clock: new FixedClock(state.worldTime),
+        clock: new FixedClock(worldTime),
         random: new UnavailableRandomSource(),
         // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
         // уникально между командами, потому что принятая команда всегда двигает sequence.
