@@ -11,7 +11,7 @@ export type { RandomDraw, RandomSource } from './ports/random-source.ts';
 export { DeterministicRandomSource } from './ports/random-source.ts';
 
 export type { IdFactory } from './ports/id-factory.ts';
-export { SequentialIdFactory } from './ports/id-factory.ts';
+export { DerivedIdFactory, SequentialIdFactory } from './ports/id-factory.ts';
 
 export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
 export { FixedRuleset, testRulesetVersions } from './ports/ruleset.ts';

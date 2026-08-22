@@ -1,0 +1,132 @@
+/**
+ * B7 — append-only и разделение ролей исполняются грантами PostgreSQL (OPS-03).
+ */
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { Client } from 'pg';
+import type { TestDatabase } from './__fixtures__/test-database.ts';
+import { createMigratedDatabase, type MigratedDatabase } from './__fixtures__/migrated-database.ts';
+import { LOCAL_DEV_ROLE_PASSWORD, ROLE_NAMES } from './migrations/0003-roles-and-grants.ts';
+
+const asRole = async <T>(
+  db: TestDatabase,
+  role: string,
+  fn: (client: Client) => Promise<T>,
+): Promise<T> => {
+  const url = new URL(db.url);
+  url.username = role;
+  url.password = LOCAL_DEV_ROLE_PASSWORD;
+  const client = new Client({ connectionString: url.toString() });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+};
+
+const expectDenied = async (client: Client, sql: string): Promise<string> => {
+  try {
+    await client.query(sql);
+  } catch (error) {
+    return String((error as { message?: string }).message ?? error);
+  }
+  throw new Error(`Ожидался отказ по правам, но запрос выполнился: ${sql}`);
+};
+
+describe('B7 — гранты ролей', () => {
+  let migrated: MigratedDatabase;
+  let db: TestDatabase;
+
+  beforeAll(async () => {
+    migrated = await createMigratedDatabase('grants');
+    db = migrated.testDb;
+    const admin = new Client({ connectionString: db.url });
+    await admin.connect();
+    try {
+      await admin.query(
+        `insert into worlds (world_id, seed, version, last_sequence, world_time, rules_version,
+                             content_version, schema_version, created_at)
+         values ('world:grants', 1, 0, 0, '2028-04-26T06:00:00.000Z', '0.1.0', '0.1.0', 1, now())`,
+      );
+      await admin.query(
+        `insert into world_events (event_id, world_id, sequence, world_time, type, schema_version,
+                                   rules_version, content_version, actor_ids, subject_ids,
+                                   location_id, correlation_id, caused_by, command_id,
+                                   random_audit, payload, recorded_at)
+         values ('evt_seed', 'world:grants', 1, '2028-04-26T06:00:00.000Z', 'journey.started', 1,
+                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_seed', '{}', null, null, '{}', now())`,
+      );
+    } finally {
+      await admin.end();
+    }
+  });
+
+  afterAll(async () => {
+    await migrated.close();
+  });
+
+  it('canonical worker пишет и читает world_events', async () => {
+    await asRole(db, ROLE_NAMES.worker, async (client) => {
+      const read = await client.query(`select count(*)::int as n from world_events`);
+      expect(read.rows[0]).toEqual({ n: 1 });
+      await client.query(
+        `insert into world_events (event_id, world_id, sequence, world_time, type, schema_version,
+                                   rules_version, content_version, actor_ids, subject_ids,
+                                   location_id, correlation_id, caused_by, command_id,
+                                   random_audit, payload, recorded_at)
+         values ('evt_worker', 'world:grants', 2, '2028-04-26T06:10:00.000Z', 'journey.started', 1,
+                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_worker', '{}', null, null, '{}', now())`,
+      );
+    });
+  });
+
+  it('canonical worker НЕ может переписать или удалить историю', async () => {
+    await asRole(db, ROLE_NAMES.worker, async (client) => {
+      const updateError = await expectDenied(
+        client,
+        `update world_events set type = 'tampered' where event_id = 'evt_seed'`,
+      );
+      expect(updateError).toMatch(/permission denied/i);
+      const deleteError = await expectDenied(
+        client,
+        `delete from world_events where event_id = 'evt_seed'`,
+      );
+      expect(deleteError).toMatch(/permission denied/i);
+    });
+  });
+
+  it('read-only api не имеет доступа к каноническим таблицам (OPS-02)', async () => {
+    await asRole(db, ROLE_NAMES.api, async (client) => {
+      for (const table of ['world_events', 'agents', 'worlds', 'command_results', 'outbox']) {
+        const message = await expectDenied(client, `select 1 from ${table} limit 1`);
+        expect(message).toMatch(/permission denied/i);
+      }
+    });
+  });
+
+  it('projection builder читает историю, но не пишет её', async () => {
+    await asRole(db, ROLE_NAMES.projection, async (client) => {
+      const read = await client.query(`select count(*)::int as n from world_events`);
+      expect(read.rows[0]).toEqual({ n: 2 });
+      const message = await expectDenied(
+        client,
+        `insert into world_events (event_id, world_id, sequence, world_time, type, schema_version,
+                                   rules_version, content_version, actor_ids, subject_ids,
+                                   location_id, correlation_id, caused_by, command_id,
+                                   random_audit, payload, recorded_at)
+         values ('evt_proj', 'world:grants', 3, '2028-04-26T06:20:00.000Z', 'journey.started', 1,
+                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_proj', '{}', null, null, '{}', now())`,
+      );
+      expect(message).toMatch(/permission denied/i);
+    });
+  });
+
+  it('application-роли не имеют DDL', async () => {
+    for (const role of Object.values(ROLE_NAMES)) {
+      await asRole(db, role, async (client) => {
+        const message = await expectDenied(client, `create table probe_${role} (id int)`);
+        expect(message).toMatch(/permission denied/i);
+      });
+    }
+  });
+});

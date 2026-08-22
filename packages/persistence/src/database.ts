@@ -1,9 +1,8 @@
-import { Kysely, PostgresDialect, type ColumnType } from 'kysely';
+import { Kysely, PostgresDialect, type ColumnType, type Generated } from 'kysely';
 import { Pool } from 'pg';
 
 /**
- * Журнал применённых миграций. Единственная таблица, известная пакету в I00 —
- * доменные таблицы мира (`world_events`, `agents`, ...) добавляются в I02A.
+ * Журнал применённых миграций (I00, миграция 0001).
  */
 export interface SchemaMigrationsTable {
   id: string;
@@ -13,9 +12,127 @@ export interface SchemaMigrationsTable {
   duration_ms: number;
 }
 
-/** Схема, известная пакету persistence на текущей итерации (I00). */
+/**
+ * Значение `bigint` из PostgreSQL: читается строкой, пишется числом или строкой.
+ *
+ * Драйвер `pg` намеренно не приводит `int8` к `number` — молчаливая потеря точности за
+ * `Number.MAX_SAFE_INTEGER` хуже явного разбора. Разбор с проверкой границы делает
+ * {@link requireSafeInteger}, а не тип.
+ */
+type BigIntColumn = ColumnType<string, number | string, number | string>;
+
+/**
+ * Конфигурация мира (I02A, миграция 0002).
+ *
+ * `world_time` — `text`, а не `timestamptz`: канонической формой момента владеет контракт, и
+ * она входит в checksum события (см. шапку миграции 0002). `created_at`/`recorded_at` —
+ * операционные отметки реальных часов, поэтому `timestamptz` и `Date`.
+ */
+export interface WorldsTable {
+  world_id: string;
+  seed: BigIntColumn;
+  version: BigIntColumn;
+  last_sequence: BigIntColumn;
+  world_time: string;
+  rules_version: string;
+  content_version: string;
+  schema_version: number;
+  created_at: ColumnType<Date, Date, Date>;
+}
+
+export interface LocationsTable {
+  world_id: string;
+  location_id: string;
+  name: string;
+  description: string;
+}
+
+export interface RoutesTable {
+  world_id: string;
+  route_id: string;
+  from_location_id: string;
+  to_location_id: string;
+  travel_minutes: number;
+}
+
+export interface AgentsTable {
+  world_id: string;
+  agent_id: string;
+  name: string;
+  location_id: string;
+  status: 'idle' | 'traveling';
+  route_id: string | null;
+}
+
+/** Append-only журнал фактов. Права на `update`/`delete` не выдаются никому (миграция 0003). */
+export interface WorldEventsTable {
+  event_id: string;
+  world_id: string;
+  sequence: BigIntColumn;
+  world_time: string;
+  type: string;
+  schema_version: number;
+  rules_version: string;
+  content_version: string;
+  actor_ids: string[];
+  subject_ids: string[];
+  location_id: string | null;
+  correlation_id: string;
+  caused_by: string[];
+  command_id: string | null;
+  random_audit: ColumnType<unknown, string | null, string | null>;
+  payload: ColumnType<unknown, string, string>;
+  recorded_at: ColumnType<Date, Date, Date>;
+}
+
+/** Journal команд: и accepted, и rejected — источник идемпотентности (ACCEPTANCE B3/B4). */
+export interface CommandResultsTable {
+  world_id: string;
+  command_id: string;
+  type: string;
+  outcome: 'accepted' | 'rejected';
+  rejection_code: string | null;
+  rejection_message: string | null;
+  event_ids: string[];
+  world_version_before: BigIntColumn;
+  world_version_after: BigIntColumn;
+  recorded_at: ColumnType<Date, Date, Date>;
+}
+
+export interface OutboxTable {
+  outbox_id: Generated<BigIntColumn>;
+  world_id: string;
+  event_id: string;
+  sequence: BigIntColumn;
+  payload: ColumnType<unknown, string, string>;
+  created_at: ColumnType<Date, Date, Date>;
+  published_at: ColumnType<Date | null, Date | null, Date | null>;
+}
+
+/** Схема, известная пакету persistence на текущей итерации (I00 + I02A). */
 export interface Database {
   schema_migrations: SchemaMigrationsTable;
+  worlds: WorldsTable;
+  locations: LocationsTable;
+  routes: RoutesTable;
+  agents: AgentsTable;
+  world_events: WorldEventsTable;
+  command_results: CommandResultsTable;
+  outbox: OutboxTable;
+}
+
+/**
+ * Разбирает `bigint`-строку в безопасное целое. Выход за границу — громкий сбой: молча
+ * округлить `sequence` значит потерять место в истории мира.
+ */
+export function requireSafeInteger(value: string | number, label: string): number {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  if (!Number.isSafeInteger(parsed)) {
+    throw new Error(
+      `persistence: ${label} = ${String(value)} вне безопасного целочисленного диапазона`,
+    );
+  }
+  return parsed;
 }
 
 /**
@@ -85,6 +202,10 @@ export function parseDatabaseConnectionUrl(connectionUrl: string): DatabaseConne
     database,
   };
 }
+
+/** Kysely-инстанс поверх {@link Database}. Транзакция (`Transaction<Database>`) ему присваиваема,
+ *  поэтому репозитории принимают этот тип и одинаково работают внутри и вне транзакции. */
+export type DatabaseConnection = Kysely<Database>;
 
 /** Фабрика Kysely-инстанса поверх `pg` с явно переданной конфигурацией. */
 export function createDatabase(config: DatabaseConnectionConfig): Kysely<Database> {

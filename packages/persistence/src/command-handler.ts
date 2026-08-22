@@ -1,0 +1,342 @@
+/**
+ * Транзакционный command handler (I02A ACCEPTANCE B2–B6, PLAN §7).
+ *
+ * Порядок внутри одной транзакции фиксирован и является контрактом итерации:
+ *
+ * ```text
+ * SELECT ... FROM worlds FOR UPDATE      -- сериализация команд одного мира
+ * -> идемпотентность по command_id       -- ДО проверки версии (B3)
+ * -> чистый decide(state, command, ctx)  -- правила живут только здесь
+ * -> INSERT world_events                 -- append-only
+ * -> UPDATE agents (только изменившиеся)
+ * -> UPDATE worlds (version, last_sequence, world_time)
+ * -> INSERT outbox                       -- ровно одна строка на событие
+ * -> INSERT command_results              -- accepted и rejected одинаково
+ * COMMIT
+ * ```
+ *
+ * Почему `FOR UPDATE`, а не только optimistic-версия: без блокировки две конкурентные команды
+ * читают одну версию, обе проходят `decide`, и вторая падает уже на уникальном индексе
+ * `(world_id, sequence)` — то есть техническим сбоем вместо доменного отказа
+ * `stale_world_version`. Блокировка превращает гонку в ожидание, после которого вторая команда
+ * видит новую версию и получает НАЗВАННЫЙ отказ (B6). Optimistic-версия при этом остаётся: она
+ * защищает от команды, собранной по устаревшему прочтению мира вне транзакции.
+ */
+import {
+  requireCanonical,
+  type Command,
+  type CommandRejectionCode,
+  type WorldEvent,
+} from '@zona/contracts';
+import {
+  DerivedIdFactory,
+  FixedClock,
+  FixedRuleset,
+  decide,
+  evolve,
+  type AgentState,
+  type RandomDraw,
+  type RandomSource,
+  type WorldState,
+} from '@zona/domain';
+import { requireSafeInteger, type DatabaseConnection } from './database.ts';
+import { loadWorldMeta, loadWorldState } from './world-repository.ts';
+
+/** Точки, после которых можно инъектировать сбой (B5). Порядок совпадает с порядком записи. */
+export const TRANSACTION_STEPS = [
+  'world-locked',
+  'event-inserted',
+  'agent-updated',
+  'world-updated',
+  'outbox-inserted',
+  'command-result-inserted',
+  'before-commit',
+] as const;
+
+export type TransactionStep = (typeof TRANSACTION_STEPS)[number];
+
+export interface CommandAccepted {
+  readonly outcome: 'accepted';
+  readonly commandId: string;
+  readonly eventIds: readonly string[];
+  readonly worldVersionBefore: number;
+  readonly worldVersionAfter: number;
+  /** `true` — результат прочитан из journal, команда исполнялась раньше (B3). */
+  readonly replayed: boolean;
+}
+
+export interface CommandRejected {
+  readonly outcome: 'rejected';
+  readonly commandId: string;
+  readonly rejectionCode: CommandRejectionCode;
+  readonly rejectionMessage: string;
+  readonly worldVersionBefore: number;
+  readonly worldVersionAfter: number;
+  readonly replayed: boolean;
+}
+
+export type CommandExecution = CommandAccepted | CommandRejected;
+
+export interface ExecuteCommandOptions {
+  /** Операционные часы для `recorded_at`. Инъектируются, чтобы тест мог их зафиксировать. */
+  readonly now?: () => Date;
+  /** Инъекция сбоя после названного шага (B5). Бросок отменяет всю транзакцию. */
+  readonly afterStep?: (step: TransactionStep) => Promise<void> | void;
+}
+
+/**
+ * PRNG, который отказывается работать.
+ *
+ * Позиции потоков PRNG ещё НЕ персистятся — это I02B (`scheduled actions, snapshots и PRNG
+ * positions`). Собрать здесь `DeterministicRandomSource(seed)` заново на каждую команду значило
+ * бы выдавать одно и то же значение всю жизнь мира и не заметить этого: `journey.start` розыгрышей
+ * не делает, поэтому тест бы не упал. Отказ вместо тихого повтора превращает будущую ошибку в
+ * громкую: первая же команда, которой понадобится случайность, упадёт здесь с названной причиной.
+ */
+class UnavailableRandomSource implements RandomSource {
+  draw(streamKey: string): RandomDraw {
+    throw new Error(
+      `persistence: розыгрыш по потоку "${streamKey}" невозможен — позиции PRNG ещё не ` +
+        'персистятся (I02B). Команда, которой нужна случайность, не должна исполняться до этого.',
+    );
+  }
+}
+
+const jsonOrNull = (value: unknown, label: string): string | null =>
+  value === null || value === undefined ? null : requireCanonical(value, label);
+
+const readStoredResult = async (
+  db: DatabaseConnection,
+  worldId: string,
+  commandId: string,
+): Promise<CommandExecution | null> => {
+  const row = await db
+    .selectFrom('command_results')
+    .selectAll()
+    .where('world_id', '=', worldId)
+    .where('command_id', '=', commandId)
+    .executeTakeFirst();
+  if (row === undefined) return null;
+
+  const before = requireSafeInteger(
+    row.world_version_before,
+    'command_results.world_version_before',
+  );
+  const after = requireSafeInteger(row.world_version_after, 'command_results.world_version_after');
+
+  if (row.outcome === 'accepted') {
+    return {
+      outcome: 'accepted',
+      commandId: row.command_id,
+      eventIds: row.event_ids,
+      worldVersionBefore: before,
+      worldVersionAfter: after,
+      replayed: true,
+    };
+  }
+  if (row.rejection_code === null) {
+    throw new Error(
+      `persistence: строка command_results ${commandId} помечена rejected без rejection_code`,
+    );
+  }
+  return {
+    outcome: 'rejected',
+    commandId: row.command_id,
+    rejectionCode: row.rejection_code as CommandRejectionCode,
+    rejectionMessage: row.rejection_message ?? '',
+    worldVersionBefore: before,
+    worldVersionAfter: after,
+    replayed: true,
+  };
+};
+
+const changedAgents = (before: WorldState, after: WorldState): readonly AgentState[] =>
+  Object.values(after.agents).filter((agent) => {
+    const previous = before.agents[agent.id];
+    return (
+      previous === undefined ||
+      previous.locationId !== agent.locationId ||
+      previous.status !== agent.status ||
+      previous.routeId !== agent.routeId
+    );
+  });
+
+/**
+ * Исполняет команду. Доменный отказ — обычный результат (`outcome: 'rejected'`), а не исключение;
+ * исключения остаются за техническими сбоями и нарушениями причинности.
+ */
+export const executeCommand = async (
+  db: DatabaseConnection,
+  command: Command,
+  options: ExecuteCommandOptions = {},
+): Promise<CommandExecution> => {
+  const now = options.now ?? ((): Date => new Date());
+  const afterStep = options.afterStep ?? ((): void => {});
+
+  return db.transaction().execute(async (trx) => {
+    const locked = await trx
+      .selectFrom('worlds')
+      .select(['world_id', 'version'])
+      .where('world_id', '=', command.world_id)
+      .forUpdate()
+      .executeTakeFirst();
+    if (locked === undefined) {
+      throw new Error(`persistence: мир ${command.world_id} не существует`);
+    }
+    await afterStep('world-locked');
+
+    // Идемпотентность проверяется ДО optimistic-версии: повтор уже исполненной команды обязан
+    // вернуть прежний ответ, даже когда мир с тех пор ушёл вперёд (B3).
+    const stored = await readStoredResult(trx, command.world_id, command.command_id);
+    if (stored !== null) return stored;
+
+    const [state, meta] = await Promise.all([
+      loadWorldState(trx, command.world_id),
+      loadWorldMeta(trx, command.world_id),
+    ]);
+    if (state === null || meta === null) {
+      throw new Error(`persistence: мир ${command.world_id} исчез внутри транзакции`);
+    }
+
+    const nextSequence = state.sequence + 1;
+    const result = decide(state, command, {
+      clock: new FixedClock(state.worldTime),
+      random: new UnavailableRandomSource(),
+      // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
+      // уникально между командами, потому что принятая команда всегда двигает sequence.
+      ids: new DerivedIdFactory(`${state.worldId}:${nextSequence}`),
+      ruleset: new FixedRuleset(meta.versions),
+    });
+
+    const recordedAt = now();
+
+    if (result.kind === 'rejected') {
+      await trx
+        .insertInto('command_results')
+        .values({
+          world_id: command.world_id,
+          command_id: command.command_id,
+          type: command.type,
+          outcome: 'rejected',
+          rejection_code: result.rejection.code,
+          rejection_message: result.rejection.message,
+          event_ids: [],
+          world_version_before: state.worldVersion,
+          world_version_after: state.worldVersion,
+          recorded_at: recordedAt,
+        })
+        .execute();
+      await afterStep('command-result-inserted');
+      await afterStep('before-commit');
+      return {
+        outcome: 'rejected',
+        commandId: command.command_id,
+        rejectionCode: result.rejection.code,
+        rejectionMessage: result.rejection.message,
+        worldVersionBefore: state.worldVersion,
+        worldVersionAfter: state.worldVersion,
+        replayed: false,
+      };
+    }
+
+    let nextState = state;
+    const eventIds: string[] = [];
+    const recorded: WorldEvent[] = [];
+    for (const draft of result.events) {
+      // `recorded_at` ставит именно этот слой: домен операционных часов не знает
+      // (`world-event.ts`, `decide.ts` — `DraftWorldEvent` намеренно без этого поля).
+      const event: WorldEvent = { ...draft, recorded_at: recordedAt.toISOString() };
+      await trx
+        .insertInto('world_events')
+        .values({
+          event_id: event.event_id,
+          world_id: event.world_id,
+          sequence: event.sequence,
+          world_time: event.world_time,
+          type: event.type,
+          schema_version: event.schema_version,
+          rules_version: event.rules_version,
+          content_version: event.content_version,
+          actor_ids: [...event.actor_ids],
+          subject_ids: [...event.subject_ids],
+          location_id: event.location_id,
+          correlation_id: event.correlation_id,
+          caused_by: [...event.caused_by],
+          command_id: event.command_id ?? null,
+          random_audit: jsonOrNull(event.random_audit, `random_audit(${event.event_id})`),
+          payload: requireCanonical(event.payload, `payload(${event.event_id})`),
+          recorded_at: recordedAt,
+        })
+        .execute();
+      eventIds.push(event.event_id);
+      recorded.push(event);
+      nextState = evolve(nextState, event);
+    }
+    await afterStep('event-inserted');
+
+    for (const agent of changedAgents(state, nextState)) {
+      await trx
+        .updateTable('agents')
+        .set({ location_id: agent.locationId, status: agent.status, route_id: agent.routeId })
+        .where('world_id', '=', command.world_id)
+        .where('agent_id', '=', agent.id)
+        .execute();
+    }
+    await afterStep('agent-updated');
+
+    await trx
+      .updateTable('worlds')
+      .set({
+        version: nextState.worldVersion,
+        last_sequence: nextState.sequence,
+        world_time: nextState.worldTime,
+      })
+      .where('world_id', '=', command.world_id)
+      .execute();
+    await afterStep('world-updated');
+
+    // Outbox пишется последним из фактов: строка доставки не должна существовать раньше
+    // состояния, которое подписчик по ней прочитает (PLAN §7, инвариант 3).
+    for (const event of recorded) {
+      await trx
+        .insertInto('outbox')
+        .values({
+          world_id: event.world_id,
+          event_id: event.event_id,
+          sequence: event.sequence,
+          payload: requireCanonical(event, `outbox(${event.event_id})`),
+          created_at: recordedAt,
+          published_at: null,
+        })
+        .execute();
+    }
+    await afterStep('outbox-inserted');
+
+    await trx
+      .insertInto('command_results')
+      .values({
+        world_id: command.world_id,
+        command_id: command.command_id,
+        type: command.type,
+        outcome: 'accepted',
+        rejection_code: null,
+        rejection_message: null,
+        event_ids: eventIds,
+        world_version_before: state.worldVersion,
+        world_version_after: nextState.worldVersion,
+        recorded_at: recordedAt,
+      })
+      .execute();
+    await afterStep('command-result-inserted');
+    await afterStep('before-commit');
+
+    return {
+      outcome: 'accepted',
+      commandId: command.command_id,
+      eventIds,
+      worldVersionBefore: state.worldVersion,
+      worldVersionAfter: nextState.worldVersion,
+      replayed: false,
+    };
+  });
+};

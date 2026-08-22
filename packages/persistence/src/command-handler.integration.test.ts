@@ -1,0 +1,196 @@
+/**
+ * B2, B3, B4 — транзакционный command handler (I02A ACCEPTANCE).
+ */
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { RUNTIME_ID_PREFIXES, type Command } from '@zona/contracts';
+import { DerivedIdFactory } from '@zona/domain';
+import {
+  createMigratedDatabase,
+  truncateWorldData,
+  type MigratedDatabase,
+} from './__fixtures__/migrated-database.ts';
+import {
+  FIXTURE_AGENT_ID,
+  FIXTURE_BACK_ROUTE_ID,
+  FIXTURE_OTHER_AGENT_ID,
+  FIXTURE_ROUTE_ID,
+  FIXTURE_WORLD_ID,
+  FIXTURE_WORLD_TIME,
+  fixtureInitialization,
+} from './__fixtures__/world-fixture.ts';
+import type { DatabaseConnection } from './database.ts';
+import { initializeWorld, loadWorldState } from './world-repository.ts';
+import { executeCommand } from './command-handler.ts';
+
+const ids = new DerivedIdFactory('i02a-test');
+
+const command = (overrides: Partial<Command> = {}): Command => ({
+  command_id: ids.next(RUNTIME_ID_PREFIXES.command),
+  world_id: FIXTURE_WORLD_ID,
+  type: 'journey.start',
+  schema_version: 1,
+  actor_id: FIXTURE_AGENT_ID,
+  issued_at_world_time: FIXTURE_WORLD_TIME,
+  expected_world_version: 0,
+  correlation_id: ids.next(RUNTIME_ID_PREFIXES.correlation),
+  payload: { route_id: FIXTURE_ROUTE_ID },
+  ...overrides,
+});
+
+describe('B2/B3/B4 — атомарный старт journey', () => {
+  let migrated: MigratedDatabase;
+  let db: DatabaseConnection;
+
+  beforeAll(async () => {
+    migrated = await createMigratedDatabase('command_handler');
+    db = migrated.db;
+  });
+
+  afterAll(async () => {
+    await migrated.close();
+  });
+
+  afterEach(async () => {
+    await truncateWorldData(db);
+  });
+
+  const seedWorld = async (): Promise<void> => {
+    await initializeWorld(db, fixtureInitialization());
+  };
+
+  const counts = async (): Promise<Record<string, number>> => {
+    const rows = await Promise.all(
+      (['world_events', 'outbox', 'command_results'] as const).map(async (table) => {
+        const result = await db
+          .selectFrom(table)
+          .select((eb) => eb.fn.countAll<string>().as('n'))
+          .executeTakeFirstOrThrow();
+        return [table, Number(result.n)] as const;
+      }),
+    );
+    return Object.fromEntries(rows);
+  };
+
+  it('B2: принятая команда пишет событие, состояние, outbox и результат', async () => {
+    await seedWorld();
+    const cmd = command();
+    const result = await executeCommand(db, cmd);
+
+    expect(result.outcome).toBe('accepted');
+    if (result.outcome !== 'accepted') return;
+    expect(result.eventIds).toHaveLength(1);
+    expect(result.worldVersionBefore).toBe(0);
+    expect(result.worldVersionAfter).toBe(1);
+    expect(result.replayed).toBe(false);
+
+    const events = await db.selectFrom('world_events').selectAll().execute();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.type).toBe('journey.started');
+    expect(Number(events[0]?.sequence)).toBe(1);
+    expect(events[0]?.command_id).toBe(cmd.command_id);
+    expect(events[0]?.recorded_at).toBeInstanceOf(Date);
+
+    const world = await db
+      .selectFrom('worlds')
+      .selectAll()
+      .where('world_id', '=', FIXTURE_WORLD_ID)
+      .executeTakeFirstOrThrow();
+    expect(Number(world.version)).toBe(1);
+    expect(Number(world.last_sequence)).toBe(1);
+
+    const agent = await db
+      .selectFrom('agents')
+      .selectAll()
+      .where('agent_id', '=', FIXTURE_AGENT_ID)
+      .executeTakeFirstOrThrow();
+    expect(agent.status).toBe('traveling');
+    expect(agent.route_id).toBe(FIXTURE_ROUTE_ID);
+
+    const outbox = await db.selectFrom('outbox').selectAll().execute();
+    expect(outbox).toHaveLength(1);
+    expect(outbox[0]?.event_id).toBe(events[0]?.event_id);
+    expect(outbox[0]?.published_at).toBeNull();
+
+    const stored = await db.selectFrom('command_results').selectAll().executeTakeFirstOrThrow();
+    expect(stored.outcome).toBe('accepted');
+    expect(stored.event_ids).toEqual([events[0]?.event_id]);
+  });
+
+  it('B3: повтор той же команды возвращает записанный результат без второго события', async () => {
+    await seedWorld();
+    const cmd = command();
+    const first = await executeCommand(db, cmd);
+    const before = await counts();
+
+    const second = await executeCommand(db, cmd);
+    expect(second).toEqual({ ...first, replayed: true });
+    expect(await counts()).toEqual(before);
+  });
+
+  it('B3: повтор идемпотентен даже с устаревшей expected_world_version', async () => {
+    await seedWorld();
+    const cmd = command();
+    const first = await executeCommand(db, cmd);
+    const before = await counts();
+
+    // Мир уже версии 1, команда всё ещё заявляет 0 — но это ТОТ ЖЕ command_id.
+    const second = await executeCommand(db, cmd);
+    expect(second.outcome).toBe('accepted');
+    expect(second).toEqual({ ...first, replayed: true });
+    expect(await counts()).toEqual(before);
+  });
+
+  it.each([
+    ['маршрут не существует', { payload: { route_id: 'route:missing' } }, 'route_unavailable'],
+    [
+      'маршрут не начинается в локации агента',
+      { payload: { route_id: FIXTURE_BACK_ROUTE_ID } },
+      'route_unavailable',
+    ],
+    ['агент не существует', { actor_id: 'agent:ghost' }, 'actor_not_actionable'],
+    ['устаревшая версия мира', { expected_world_version: 7 }, 'stale_world_version'],
+  ])('B4: отказ «%s» записан и не породил событий', async (_label, overrides, code) => {
+    await seedWorld();
+    const result = await executeCommand(db, command(overrides));
+
+    expect(result.outcome).toBe('rejected');
+    if (result.outcome !== 'rejected') return;
+    expect(result.rejectionCode).toBe(code);
+    expect(result.worldVersionAfter).toBe(0);
+
+    expect(await counts()).toEqual({ world_events: 0, outbox: 0, command_results: 1 });
+    const world = await db
+      .selectFrom('worlds')
+      .selectAll()
+      .where('world_id', '=', FIXTURE_WORLD_ID)
+      .executeTakeFirstOrThrow();
+    expect(Number(world.version)).toBe(0);
+  });
+
+  it('B4: агент уже в пути отклоняется как actor_not_actionable', async () => {
+    await seedWorld();
+    await executeCommand(db, command());
+    const result = await executeCommand(
+      db,
+      command({ expected_world_version: 1, payload: { route_id: FIXTURE_ROUTE_ID } }),
+    );
+    expect(result.outcome).toBe('rejected');
+    if (result.outcome !== 'rejected') return;
+    expect(result.rejectionCode).toBe('actor_not_actionable');
+    expect(await counts()).toEqual({ world_events: 1, outbox: 1, command_results: 2 });
+  });
+
+  it('состояние, прочитанное обратно, отражает применённое событие', async () => {
+    await seedWorld();
+    await executeCommand(db, command({ actor_id: FIXTURE_OTHER_AGENT_ID }));
+    const state = await loadWorldState(db, FIXTURE_WORLD_ID);
+    expect(state?.worldVersion).toBe(1);
+    expect(state?.sequence).toBe(1);
+    expect(state?.agents[FIXTURE_OTHER_AGENT_ID]).toEqual({
+      id: FIXTURE_OTHER_AGENT_ID,
+      locationId: 'loc:quiet-yard',
+      status: 'traveling',
+      routeId: FIXTURE_ROUTE_ID,
+    });
+  });
+});

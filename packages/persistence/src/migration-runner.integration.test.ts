@@ -79,15 +79,16 @@ describe('runMigrations — integration (PostgreSQL/PostGIS через Testconta
     const report = await runMigrations({ db, migrations, logger: silentLogger });
 
     expect(report.skipped).toEqual([]);
-    expect(report.applied).toHaveLength(1);
-    expect(report.applied[0]?.id).toBe('0001');
+    // Реестр растёт с итерациями (I02A добавила 0002/0003), поэтому проверяется соответствие
+    // реестру, а не «ровно одна миграция»: захардкоженная единица ломалась бы на каждой новой
+    // поставке, ничего при этом не доказывая.
+    expect(report.applied.map((entry) => entry.id)).toEqual(migrations.map((m) => m.id));
     expect(report.applied[0]?.name).toBe('bootstrap');
     expect(report.applied[0]?.durationMs).toBeGreaterThanOrEqual(0);
-    expect(report.schemaVersion).toBe('0001');
+    expect(report.schemaVersion).toBe(migrations[migrations.length - 1]?.id);
 
-    const rows = await db.selectFrom('schema_migrations').selectAll().execute();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.id).toBe('0001');
+    const rows = await db.selectFrom('schema_migrations').selectAll().orderBy('id').execute();
+    expect(rows.map((row) => row.id)).toEqual(migrations.map((m) => m.id));
     expect(rows[0]?.name).toBe('bootstrap');
 
     const extensions = await sql<{ extname: string }>`
@@ -104,11 +105,11 @@ describe('runMigrations — integration (PostgreSQL/PostGIS через Testconta
     const report = await runMigrations({ db, migrations, logger: silentLogger });
 
     expect(report.applied).toEqual([]);
-    expect(report.skipped).toEqual([{ id: '0001', name: 'bootstrap' }]);
-    expect(report.schemaVersion).toBe('0001');
+    expect(report.skipped).toEqual(migrations.map((m) => ({ id: m.id, name: m.name })));
+    expect(report.schemaVersion).toBe(migrations[migrations.length - 1]?.id);
 
     const rows = await db.selectFrom('schema_migrations').selectAll().execute();
-    expect(rows).toHaveLength(1);
+    expect(rows).toHaveLength(migrations.length);
   });
 
   it('порча checksum в журнале приводит к MIGRATION_CHECKSUM_MISMATCH, ничего не меняет, lock свободен после ошибки', async () => {
@@ -124,8 +125,9 @@ describe('runMigrations — integration (PostgreSQL/PostGIS через Testconta
       MigrationChecksumMismatchError,
     );
 
-    const rows = await db.selectFrom('schema_migrations').selectAll().execute();
-    expect(rows).toHaveLength(1);
+    // orderBy обязателен: в журнале теперь больше одной строки, и порядок без него не задан.
+    const rows = await db.selectFrom('schema_migrations').selectAll().orderBy('id').execute();
+    expect(rows).toHaveLength(migrations.length);
     expect(rows[0]?.checksum).toBe('corrupted-checksum');
 
     // BLOCKER-фикс: runner не должен зависать: advisory lock снят даже после ошибки —
@@ -188,7 +190,7 @@ describe('runMigrations — integration (PostgreSQL/PostGIS через Testconta
 
     // После освобождения чужой сессией runner снова проходит нормально (идемпотентный skip).
     const report = await runMigrations({ db, migrations, logger: silentLogger });
-    expect(report.skipped).toEqual([{ id: '0001', name: 'bootstrap' }]);
+    expect(report.skipped).toEqual(migrations.map((m) => ({ id: m.id, name: m.name })));
     await assertAdvisoryLockIsFree(DEFAULT_ADVISORY_LOCK_KEY);
   });
 });
