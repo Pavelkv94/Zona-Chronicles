@@ -47,6 +47,12 @@ export {
 export type { CommandAccepted, CommandExecution, CommandRejected } from './command-handler.ts';
 export { commandFingerprint, eventIdOriginKey, executeCommand } from './command-handler.ts';
 
+export type { LoadSnapshotContext, SnapshotContent } from './snapshot-store.ts';
+export { loadLatestSnapshot, loadSnapshotAt, writeSnapshot } from './snapshot-store.ts';
+
+export type { PersistentRandomSourceOptions } from './prng-positions.ts';
+export { PersistentRandomSource } from './prng-positions.ts';
+
 export type { ClaimedAction, ClaimOptions, TickOptions, TickResult } from './scheduler.ts';
 export {
   DEFAULT_BATCH_SIZE,
