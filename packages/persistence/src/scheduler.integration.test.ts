@@ -70,16 +70,13 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
     await initializeWorld(db, fixtureInitialization());
     await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
 
-    // Мир доводится до момента прибытия тем же способом, что и в жизни: время двигает
-    // обработанное действие. Здесь достаточно сдвинуть часы мира вручную — это делает
-    // следующий tick, потому что due_at уже наступил относительно нового времени.
-    await db
-      .updateTable('worlds')
-      .set({ world_time: '2028-04-26T06:40:00.000Z' })
-      .where('world_id', '=', FIXTURE_WORLD_ID)
-      .execute();
-
-    const result = await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' });
+    // Горизонт задаёт, до какого мирового времени двигать мир этим шагом (ADR-004): сами часы
+    // руками никто не крутит — их двигает обработанное действие.
+    const result = await runWorldTick(db, {
+      worldId: FIXTURE_WORLD_ID,
+      owner: 'worker-1',
+      horizon: '2028-04-26T06:40:00.000Z',
+    });
     expect(result.claimed).toBe(1);
     expect(result.executed[0]?.outcome).toBe('accepted');
 
@@ -107,12 +104,11 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
       await initializeWorld(db, fixtureInitialization());
       await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
       await executeCommand(db, start(FIXTURE_OTHER_AGENT_ID, 1));
-      await db
-        .updateTable('worlds')
-        .set({ world_time: '2028-04-26T06:40:00.000Z' })
-        .where('world_id', '=', FIXTURE_WORLD_ID)
-        .execute();
-      await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' });
+      await runWorldTick(db, {
+        worldId: FIXTURE_WORLD_ID,
+        owner: 'worker-1',
+        horizon: '2028-04-26T06:40:00.000Z',
+      });
       const events = await loadWorldEvents(db, FIXTURE_WORLD_ID);
       return events.filter((e) => e.type === 'journey.completed').map((e) => e.actor_ids[0]!);
     };
@@ -126,18 +122,36 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
     expect([...first]).toEqual([...first].sort());
   });
 
-  it('C12: мировое время не может пойти назад', async () => {
+  it('C12: горизонт в прошлом отвергается, время назад не идёт', async () => {
     await initializeWorld(db, fixtureInitialization());
     await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
-    await db
-      .updateTable('worlds')
-      .set({ world_time: '2028-04-26T08:00:00.000Z' })
-      .where('world_id', '=', FIXTURE_WORLD_ID)
-      .execute();
+    await runWorldTick(db, {
+      worldId: FIXTURE_WORLD_ID,
+      owner: 'worker-1',
+      horizon: '2028-04-26T06:40:00.000Z',
+    });
 
-    // due_at действия (06:40) уже позади: попытка исполнить его сдвинула бы время назад.
     await expect(
-      runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' }),
-    ).rejects.toThrow(/мировое время не может идти назад/);
+      runWorldTick(db, {
+        worldId: FIXTURE_WORLD_ID,
+        owner: 'worker-1',
+        horizon: '2028-04-26T06:00:00.000Z',
+      }),
+    ).rejects.toThrow(/мир не идёт назад/);
+  });
+
+  it('C12: обработанное действие двигает мировое время вперёд, а горизонт его не обгоняет', async () => {
+    await initializeWorld(db, fixtureInitialization());
+    await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
+
+    // Горизонт на час вперёд, но действие наступает в 06:40 — время встаёт на нём, а не на
+    // горизонте: мир двигают события, а не таймер (ADR-004).
+    const result = await runWorldTick(db, {
+      worldId: FIXTURE_WORLD_ID,
+      owner: 'worker-1',
+      horizon: '2028-04-26T07:00:00.000Z',
+    });
+    expect(result.claimed).toBe(1);
+    expect(result.worldTime).toBe('2028-04-26T06:40:00.000Z');
   });
 });

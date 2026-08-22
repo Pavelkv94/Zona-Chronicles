@@ -32,7 +32,7 @@ export interface ClaimedAction {
 
 export interface ClaimOptions {
   readonly worldId: string;
-  /** Мировое время: действие доступно, когда `due_at <= worldTime`. */
+  /** Горизонт: действие доступно, когда `due_at <= worldTime`. См. `TickOptions.horizon`. */
   readonly worldTime: string;
   /** Кто захватывает. Разные worker-ы обязаны иметь разные значения. */
   readonly owner: string;
@@ -108,6 +108,24 @@ export const claimDueActions = async (
 export interface TickOptions {
   readonly worldId: string;
   readonly owner: string;
+  /**
+   * ГОРИЗОНТ: до какого мирового времени двигать мир этим шагом.
+   *
+   * Без него мир стоял бы вечно, и это не мелочь, а суть модели. ADR-004 выбрал
+   * дискретно-событийное время вместо глобального тика: мировое время двигают САМИ события, а
+   * не отдельный таймер. Значит, у первого действия нет никого, кто довёл бы мир до его
+   * `due_at` — до горизонта эта конструкция была замкнутым кругом, и тесты обходили его,
+   * подкручивая `worlds.world_time` руками.
+   *
+   * Горизонт приходит СНАРУЖИ, из оболочки (оператор, worker, связка со скоростью мира), и
+   * именно поэтому детерминизм сохраняется: канонический результат зависит от горизонта, а не
+   * от того, когда процессу дали процессорное время. Replay горизонта не требует вовсе — он
+   * применяет уже записанные события.
+   *
+   * По умолчанию — текущее мировое время: тогда обрабатывается только то, что уже наступило,
+   * и ненаступившее действие не исполняется (ACCEPTANCE C3).
+   */
+  readonly horizon?: string;
   readonly batchSize?: number;
   readonly leaseMs?: number;
   /** Реальные часы: срок аренды и `recorded_at`. Инъектируются для проб с просроченной арендой. */
@@ -137,9 +155,17 @@ export const runWorldTick = async (
   const state = await loadWorldState(db, options.worldId);
   if (state === null) throw new Error(`scheduler: мир ${options.worldId} не существует`);
 
+  const horizon = options.horizon ?? state.worldTime;
+  if (compareByCodePoint(horizon, state.worldTime) < 0) {
+    throw new Error(
+      `scheduler: горизонт ${horizon} раньше текущего мирового времени ${state.worldTime}: ` +
+        'мир не идёт назад (C12)',
+    );
+  }
+
   const claimed = await claimDueActions(db, {
     worldId: options.worldId,
-    worldTime: state.worldTime,
+    worldTime: horizon,
     owner: options.owner,
     leaseMs: options.leaseMs ?? DEFAULT_LEASE_MS,
     batchSize: options.batchSize ?? DEFAULT_BATCH_SIZE,
