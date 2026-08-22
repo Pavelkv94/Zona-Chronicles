@@ -83,6 +83,8 @@ export interface WorldEventsTable {
   random_audit: ColumnType<unknown, string | null, string | null>;
   payload: ColumnType<unknown, string, string>;
   recorded_at: ColumnType<Date, Date, Date>;
+  /** Канонический checksum события, снятый ДО записи (M-3): проверяет точность round-trip. */
+  event_checksum: string;
 }
 
 /** Journal команд: и accepted, и rejected — источник идемпотентности (ACCEPTANCE B3/B4). */
@@ -151,6 +153,24 @@ export interface DatabaseConnectionConfig {
 }
 
 /**
+ * Описание строки подключения БЕЗ пароля — для сообщений об ошибках и логов.
+ *
+ * M-5 (аудит I02A): сообщения `parseDatabaseConnectionUrl` печатали строку целиком через
+ * `JSON.stringify`, поэтому невалидный `DATABASE_URL` с настоящим паролем уходил в stderr и в
+ * любой лог, который его собирает (§11 `03_TECHNICAL_DESIGN`: secrets не в logs и artifacts).
+ * Нераспознанная строка не показывается вовсе: из неё нечего вырезать безопасно.
+ */
+export function redactConnectionUrl(connectionUrl: string): string {
+  try {
+    const url = new URL(connectionUrl);
+    const user = url.username.length > 0 ? `${url.username}:***@` : '';
+    return `${url.protocol}//${user}${url.host}${url.pathname}`;
+  } catch {
+    return '<строка подключения не разобрана; содержимое скрыто, т.к. может содержать пароль>';
+  }
+}
+
+/**
  * Строит {@link DatabaseConnectionConfig} из connection URL вида
  * `postgres://user:password@host:port/database`.
  *
@@ -170,27 +190,27 @@ export function parseDatabaseConnectionUrl(connectionUrl: string): DatabaseConne
     url = new URL(connectionUrl);
   } catch {
     throw new Error(
-      `Invalid database connection URL: not a valid URL, got ${JSON.stringify(connectionUrl)}.`,
+      `Invalid database connection URL: not a valid URL, got ${redactConnectionUrl(connectionUrl)}.`,
     );
   }
 
   if (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') {
     throw new Error(
       `Invalid database connection URL: expected "postgres://" or "postgresql://" scheme, got ` +
-        `${JSON.stringify(connectionUrl)}.`,
+        `${redactConnectionUrl(connectionUrl)}.`,
     );
   }
 
   const database = decodeURIComponent(url.pathname.replace(/^\//, ''));
   if (database.length === 0) {
     throw new Error(
-      `Invalid database connection URL: missing database name in path, got ${JSON.stringify(connectionUrl)}.`,
+      `Invalid database connection URL: missing database name in path, got ${redactConnectionUrl(connectionUrl)}.`,
     );
   }
 
   if (url.hostname.length === 0) {
     throw new Error(
-      `Invalid database connection URL: missing host, got ${JSON.stringify(connectionUrl)}.`,
+      `Invalid database connection URL: missing host, got ${redactConnectionUrl(connectionUrl)}.`,
     );
   }
 

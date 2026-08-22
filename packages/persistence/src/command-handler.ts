@@ -130,6 +130,17 @@ const jsonOrNull = (value: unknown, label: string): string | null =>
  * «значимых» полей вручную рано или поздно разойдётся с контрактом (тот же довод, что у
  * области checksum снимка в I01).
  */
+/**
+ * Ключ происхождения id событий, порождённых командой (m-3 аудита I02A).
+ *
+ * Функция, а не соглашение в комментарии: раньше формат `<world_id>:<sequence>` был записан
+ * словами здесь и скопирован в acceptance-тест. Scheduler в I02B, которому тоже нужно
+ * порождать события, разошёлся бы с этим форматом молча — и получил бы другие `event_id` на
+ * том же seed, то есть нарушил SIM-01, ничего при этом не сломав на глаз.
+ */
+export const eventIdOriginKey = (worldId: string, sequence: number): string =>
+  `${worldId}:${String(sequence)}`;
+
 export const commandFingerprint = (command: Command): string =>
   requireChecksum(command, `command(${command.command_id})`);
 
@@ -217,7 +228,13 @@ export const executeCommand = async (
         .selectFrom('worlds')
         .select(['world_id', 'version'])
         .where('world_id', '=', command.world_id)
-        .forUpdate()
+        // `FOR NO KEY UPDATE`, а не `FOR UPDATE` (M-6 аудита I02A). На `worlds` ссылаются шесть
+        // таблиц; вставка в любую из них берёт `FOR KEY SHARE` на родительскую строку, а он
+        // конфликтует с `FOR UPDATE`. Handler ключевых колонок `worlds` не меняет — только
+        // `version`, `last_sequence`, `world_time` — поэтому более слабый замок даёт ту же
+        // сериализацию команд мира, не блокируя проверки внешних ключей. С одним писателем
+        // разницы не видно; со scheduler-ом I02B она станет измеримой.
+        .forNoKeyUpdate()
         .executeTakeFirst();
       if (locked === undefined) {
         throw new Error(`persistence: мир ${command.world_id} не существует`);
@@ -259,7 +276,7 @@ export const executeCommand = async (
         random: new UnavailableRandomSource(),
         // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
         // уникально между командами, потому что принятая команда всегда двигает sequence.
-        ids: new DerivedIdFactory(`${state.worldId}:${nextSequence}`),
+        ids: new DerivedIdFactory(eventIdOriginKey(state.worldId, nextSequence)),
         ruleset: new FixedRuleset(meta.versions),
       });
 
@@ -322,6 +339,9 @@ export const executeCommand = async (
             random_audit: jsonOrNull(event.random_audit, `random_audit(${event.event_id})`),
             payload: requireCanonical(event.payload, `payload(${event.event_id})`),
             recorded_at: recordedAt,
+            // Снимается с события ДО записи: `jsonb` не сохраняет канонический порядок ключей,
+            // и точность обратного чтения обязана быть проверяемой, а не предполагаемой (M-3).
+            event_checksum: requireChecksum(event, `event(${event.event_id})`),
           })
           .execute();
         eventIds.push(event.event_id);
@@ -385,6 +405,22 @@ export const executeCommand = async (
         })
         .execute();
       await afterStep('command-result-inserted');
+
+      // m-4 аудита I02A: `changedAgents` перечисляет поля `AgentState` вручную, поэтому новое
+      // поле агента молча не персистилось бы — и ни один тест бы этого не заметил.
+      // Перечитываем состояние ВНУТРИ той же транзакции и сверяем с тем, что вычислил домен:
+      // расхождение значит, что запись потеряла часть состояния, и коммитить его нельзя.
+      const persisted = await loadWorldState(trx, command.world_id);
+      const expectedChecksum = requireChecksum(nextState, 'состояние после evolve');
+      const persistedChecksum = requireChecksum(persisted, 'состояние, прочитанное из БД');
+      if (persistedChecksum !== expectedChecksum) {
+        throw new Error(
+          `persistence: записанное состояние мира ${command.world_id} не совпадает с ` +
+            `результатом evolve (ожидалось ${expectedChecksum}, в БД ${persistedChecksum}). ` +
+            'Транзакция отменена: частично сохранённое состояние хуже отсутствующего.',
+        );
+      }
+
       await afterStep('before-commit');
 
       return {

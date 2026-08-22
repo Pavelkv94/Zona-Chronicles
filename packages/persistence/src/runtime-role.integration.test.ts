@@ -10,7 +10,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
 import { RUNTIME_ID_PREFIXES, type Command } from '@zona/contracts';
 import { DerivedIdFactory } from '@zona/domain';
-import { createMigratedDatabase, type MigratedDatabase } from './__fixtures__/migrated-database.ts';
+import {
+  TEST_ROLE_PASSWORD,
+  createMigratedDatabase,
+  type MigratedDatabase,
+} from './__fixtures__/migrated-database.ts';
 import {
   FIXTURE_AGENT_ID,
   FIXTURE_ROUTE_ID,
@@ -19,7 +23,7 @@ import {
   fixtureInitialization,
 } from './__fixtures__/world-fixture.ts';
 import { createDatabase, parseDatabaseConnectionUrl, type DatabaseConnection } from './database.ts';
-import { LOCAL_DEV_ROLE_PASSWORD, ROLE_NAMES } from './migrations/0003-roles-and-grants.ts';
+import { ROLE_NAMES } from './principals.ts';
 import { executeCommand } from './command-handler.ts';
 import { initializeWorld, loadWorldState } from './world-repository.ts';
 
@@ -33,7 +37,7 @@ describe('BL-2 — канонический путь под рантайм-ро�
     migrated = await createMigratedDatabase('runtime_role');
     const url = new URL(migrated.testDb.url);
     url.username = ROLE_NAMES.worker;
-    url.password = LOCAL_DEV_ROLE_PASSWORD;
+    url.password = TEST_ROLE_PASSWORD;
     worker = createDatabase({ ...parseDatabaseConnectionUrl(url.toString()), maxConnections: 4 });
   });
 

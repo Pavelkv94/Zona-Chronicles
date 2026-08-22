@@ -5,6 +5,7 @@
  * ни одного `if` о том, можно ли выйти на маршрут. Это граница ADR-003 — императивная оболочка
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
+import { requireChecksum, type WorldEvent } from '@zona/contracts';
 import type { RulesetVersions, WorldState, AgentState, RouteDefinition } from '@zona/domain';
 import { requireSafeInteger, type DatabaseConnection } from './database.ts';
 
@@ -187,4 +188,56 @@ export const loadWorldMeta = async (
       contentVersion: world.content_version,
     },
   };
+};
+
+/**
+ * Читает канонический журнал мира и ПРОВЕРЯЕТ каждое событие по его checksum (M-3).
+ *
+ * Событие восстанавливается из строки и сверяется с checksum, снятым до записи. Расхождение —
+ * громкий сбой, а не тихо отличающийся факт: журнал невосполним, и молча «почти то же самое»
+ * событие хуже отсутствующего. Именно эта функция станет входом replay в I02B, поэтому
+ * проверка живёт здесь, а не в тесте.
+ */
+export const loadWorldEvents = async (
+  db: DatabaseConnection,
+  worldId: string,
+): Promise<readonly WorldEvent[]> => {
+  const rows = await db
+    .selectFrom('world_events')
+    .selectAll()
+    .where('world_id', '=', worldId)
+    .orderBy('sequence')
+    .execute();
+
+  return rows.map((row) => {
+    const event = {
+      event_id: row.event_id,
+      world_id: row.world_id,
+      sequence: requireSafeInteger(row.sequence, `world_events.sequence(${row.event_id})`),
+      world_time: row.world_time,
+      type: row.type,
+      schema_version: row.schema_version,
+      rules_version: row.rules_version,
+      content_version: row.content_version,
+      actor_ids: row.actor_ids,
+      subject_ids: row.subject_ids,
+      location_id: row.location_id,
+      correlation_id: row.correlation_id,
+      caused_by: row.caused_by,
+      command_id: row.command_id,
+      random_audit: row.random_audit ?? null,
+      payload: row.payload,
+      recorded_at: row.recorded_at.toISOString(),
+    } as WorldEvent;
+
+    const actual = requireChecksum(event, `event(${row.event_id})`);
+    if (actual !== row.event_checksum) {
+      throw new Error(
+        `persistence: событие ${row.event_id} прочитано из БД в форме, не совпадающей с ` +
+          `checksum, снятым при записи (записано ${row.event_checksum}, прочитано ${actual}). ` +
+          'Журнал невосполним — расхождение обязано быть сбоем, а не тихо другим фактом.',
+      );
+    }
+    return event;
+  });
 };

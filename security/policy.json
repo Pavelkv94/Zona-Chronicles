@@ -85,10 +85,29 @@
         "severity": "moderate",
         "regex": "^[A-Z][A-Z0-9_]{2,}=\\S{8,}$",
         "flags": "m"
+      },
+      {
+        "id": "password-assignment",
+        "description": "Присваивание password/passwd/pwd значению, не входящему в список задокументированных заглушек (M-4, аудит I02A)",
+        "severity": "high",
+        "regex": "\\b(?:password|passwd|pwd)\\b\\s*[:=]\\s*[\"'`](?!(?:\\*\\*\\*|zona_local_dev_only|poison|password|pass|p%2Fass|p|u|\\$\\{[^}]*\\})[\"'`])[^\"'`\\n]{6,}[\"'`]",
+        "flags": "i"
+      },
+      {
+        "id": "credential-url",
+        "description": "Строка подключения со встроенным паролем, не входящим в список задокументированных заглушек (M-4, аудит I02A)",
+        "severity": "critical",
+        "regex": "\\b[a-z][a-z0-9+.-]*:\\/\\/[^\\s:\\/@]+:(?!(?:\\*\\*\\*|zona_local_dev_only|poison|password|pass|p%2Fass|p|u|\\$\\{[^}]*\\})@)[^\\s:\\/@]+@[^\\s\\/]+",
+        "flags": "i"
       }
     ],
     "allowlisted_paths": ["tools/security-scan/src/__fixtures__/**"],
-    "min_blocking_severity": "low"
+    "min_blocking_severity": "low",
+    "non_secret_placeholders": {
+      "//": "Значения, которые НЕ являются секретами и потому не должны глушить весь паттерн целиком. Локальный dev-пароль docker-compose, TEST-NET-3 заглушка acceptance и односимвольные значения в unit-тестах парсера URL. Любое ДРУГОЕ значение на их месте — finding. Значение *** — уже отредактированный пароль (redactConnectionUrl), по определению не секрет. regex_alternatives — формы, которые ТЕКСТУАЛЬНО не являются литералом: подстановка ${...} в шаблонной строке хранит значение в переменной, а не в файле.",
+      "values": ["***", "zona_local_dev_only", "poison", "password", "pass", "p%2Fass", "p", "u"],
+      "regex_alternatives": ["\\$\\{[^}]*\\}"]
+    }
   },
   "static_policy": {
     "owner": "platform-security (lead, I00)",

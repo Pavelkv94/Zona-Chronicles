@@ -185,6 +185,21 @@ describe('I02A B8/B9 — durable мир', () => {
         requireChecksum(inMemory, 'состояние в памяти'),
       );
       expect(throughDatabase).toEqual(inMemory);
+
+      // m-2 аудита: `WorldState` не содержит `event_id`, поэтому сверка выше НЕ доказывает
+      // утверждение трассировки «event_id выводится детерминированно». Сверяем явно: id,
+      // записанный в журнал, обязан совпасть с id независимого in-memory прогона.
+      const { loadWorldEvents } =
+        await import('../../packages/persistence/src/world-repository.ts');
+      const secondConnection = createDatabase(parseDatabaseConnectionUrl(isolated.url));
+      try {
+        const stored = await loadWorldEvents(secondConnection, PROTOTYPE_WORLD.worldId);
+        expect(stored.map((event) => event.event_id)).toEqual(
+          decided.events.map((event) => event.event_id),
+        );
+      } finally {
+        await secondConnection.destroy();
+      }
     } finally {
       await isolated.drop();
     }

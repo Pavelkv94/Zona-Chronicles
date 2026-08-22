@@ -2,6 +2,7 @@
  * B2, B3, B4 — транзакционный command handler (I02A ACCEPTANCE).
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { sql } from 'kysely';
 import { RUNTIME_ID_PREFIXES, type Command } from '@zona/contracts';
 import { DerivedIdFactory } from '@zona/domain';
 import {
@@ -19,7 +20,7 @@ import {
   fixtureInitialization,
 } from './__fixtures__/world-fixture.ts';
 import type { DatabaseConnection } from './database.ts';
-import { initializeWorld, loadWorldState } from './world-repository.ts';
+import { initializeWorld, loadWorldEvents, loadWorldState } from './world-repository.ts';
 import { executeCommand } from './command-handler.ts';
 
 const ids = new DerivedIdFactory('i02a-test');
@@ -218,5 +219,51 @@ describe('B2/B3/B4 — атомарный старт journey', () => {
       status: 'traveling',
       routeId: FIXTURE_ROUTE_ID,
     });
+  });
+});
+
+describe('M-3 — точность round-trip события через jsonb', () => {
+  let migrated: MigratedDatabase;
+  let db: DatabaseConnection;
+
+  beforeAll(async () => {
+    migrated = await createMigratedDatabase('event_roundtrip');
+    db = migrated.db;
+  });
+
+  afterAll(async () => {
+    await migrated.close();
+  });
+
+  afterEach(async () => {
+    await truncateWorldData(db);
+  });
+
+  it('прочитанное событие совпадает с записанным по checksum', async () => {
+    await initializeWorld(db, fixtureInitialization());
+    const cmd = command();
+    const executed = await executeCommand(db, cmd);
+    expect(executed.outcome).toBe('accepted');
+
+    const events = await loadWorldEvents(db, FIXTURE_WORLD_ID);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.event_id).toBe(
+      executed.outcome === 'accepted' ? executed.eventIds[0] : undefined,
+    );
+    expect(events[0]?.command_id).toBe(cmd.command_id);
+  });
+
+  it('порча сохранённого события ловится checksum-ом, а не проходит молча', async () => {
+    await initializeWorld(db, fixtureInitialization());
+    await executeCommand(db, command());
+
+    // Правка идёт мимо приложения (роль owner), как это сделал бы ручной SQL или сбой носителя.
+    await sql`update world_events set payload = jsonb_set(payload, '{route_id}', '"route:tampered"')`.execute(
+      db,
+    );
+
+    await expect(loadWorldEvents(db, FIXTURE_WORLD_ID)).rejects.toThrow(
+      /не совпадающей с checksum/,
+    );
   });
 });

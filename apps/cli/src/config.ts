@@ -5,7 +5,7 @@
  * прочитанного `Record`, `loadCliConfig()` — единственное место во всём apps/cli, где встречается
  * литеральное `process.env` (см. правило для apps-приложений в `eslint.config.mjs`).
  *
- * Allowlist исчерпывающий: читается только `DATABASE_URL`. Строка подключения содержит пароль,
+ * Allowlist исчерпывающий: `DATABASE_URL`, `MIGRATION_DATABASE_URL`, `ZONA_ROLE_PASSWORD`. Строка подключения содержит пароль,
  * поэтому она НИКОГДА не попадает в вывод и в сообщения об ошибках — `describeDatabaseTarget`
  * отдаёт `user@host:port/database` без пароля (§11 `03_TECHNICAL_DESIGN`: secrets не в логах).
  */
@@ -23,6 +23,14 @@ export interface CliConfig {
    * `DATABASE_URL` и ГОВОРИТ об этом: в локальной разработке это удобно, в поставке — заметно.
    */
   readonly migrationDatabaseUrl: string | undefined;
+  /**
+   * Пароль application-ролей для `world migrate` (M-4 аудита I02A).
+   *
+   * В репозитории его нет: миграция, содержащая пароль, положила бы секрет в git, в `dist` и в
+   * неизменяемый checksum журнала (§11 `03_TECHNICAL_DESIGN`). Не задан — роли не создаются,
+   * применяются только гранты к уже существующим principals.
+   */
+  readonly rolePassword: string | undefined;
 }
 
 const nonEmpty = (value: string | undefined): string | undefined =>
@@ -33,6 +41,7 @@ export function parseCliConfig(env: Record<string, string | undefined>): CliConf
   return {
     databaseUrl: nonEmpty(env['DATABASE_URL']),
     migrationDatabaseUrl: nonEmpty(env['MIGRATION_DATABASE_URL']),
+    rolePassword: nonEmpty(env['ZONA_ROLE_PASSWORD']),
   };
 }
 

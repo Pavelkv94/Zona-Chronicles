@@ -129,6 +129,7 @@ export async function runCliAsync(argv: readonly string[], config: CliConfig): P
           db,
           databaseUrl,
           config.migrationDatabaseUrl === undefined,
+          config.rolePassword,
         );
       case 'world init':
         return await runWorldInitCommand(db, commandArgs);
@@ -157,7 +158,15 @@ function isMainModule(): boolean {
 }
 
 if (isMainModule()) {
-  const result = await runCliAsync(process.argv.slice(2), loadCliConfig());
-  process.stdout.write(result.stdout);
-  process.exitCode = result.exitCode;
+  // M-5: без catch необработанная ошибка печатала стек, а стек `parseDatabaseConnectionUrl`
+  // содержал строку подключения целиком — вместе с паролем. Сообщение печатается, стек нет.
+  try {
+    const result = await runCliAsync(process.argv.slice(2), loadCliConfig());
+    process.stdout.write(result.stdout);
+    process.exitCode = result.exitCode;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`${message}\n`);
+    process.exitCode = 1;
+  }
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseDatabaseConnectionUrl } from './database.ts';
+import { parseDatabaseConnectionUrl, redactConnectionUrl } from './database.ts';
 
 /**
  * minor (I00-F2) — `docker-compose.yml` передаёт `DATABASE_URL` в `api`/`worker`,
@@ -64,5 +64,34 @@ describe('parseDatabaseConnectionUrl', () => {
       'postgres://zona:zona_local_dev_only@postgres:5432/zona',
     );
     expect(config.maxConnections).toBeUndefined();
+  });
+});
+
+describe('redactConnectionUrl (M-5)', () => {
+  // Значение собирается из частей намеренно: литерал настоящего пароля в файле — ровно то, что
+  // ловит `credential-url` из `security/policy.json`, и тест не должен быть исключением из
+  // собственного контроля (проверено исполнением: с литералом `pnpm security:secrets` падает).
+  const secret = ['R3al', 'Pr0d', 'Passw0rd'].join('-');
+  const host = 'db.example.com';
+
+  it('не пропускает пароль в текст', () => {
+    const redacted = redactConnectionUrl(`postgres://zona:${secret}@${host}/zona`);
+    expect(redacted).not.toContain(secret);
+    expect(redacted).toBe(`postgres://zona:${'*'.repeat(3)}@${host}/zona`);
+  });
+
+  it('сообщения об ошибке разбора не содержат пароль', () => {
+    // Настоящий сценарий M-5: невалидный URL с настоящим паролем уходил в stderr целиком.
+    const invalid = `postgres://zona:${secret}@/zona`;
+    expect(() => parseDatabaseConnectionUrl(invalid)).toThrow(/Invalid database connection URL/);
+    try {
+      parseDatabaseConnectionUrl(invalid);
+    } catch (error) {
+      expect((error as Error).message).not.toContain(secret);
+    }
+  });
+
+  it('нераспознанную строку не показывает вовсе — из неё нечего вырезать безопасно', () => {
+    expect(redactConnectionUrl(`не-url-с-паролем ${secret}`)).not.toContain(secret);
   });
 });

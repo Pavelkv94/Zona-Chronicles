@@ -17,10 +17,20 @@ export type {
   WorldEventsTable,
   WorldsTable,
 } from './database.ts';
-export { createDatabase, parseDatabaseConnectionUrl, requireSafeInteger } from './database.ts';
+export {
+  createDatabase,
+  parseDatabaseConnectionUrl,
+  redactConnectionUrl,
+  requireSafeInteger,
+} from './database.ts';
 
 export type { WorldContent, WorldInitialization, WorldMeta } from './world-repository.ts';
-export { initializeWorld, loadWorldMeta, loadWorldState } from './world-repository.ts';
+export {
+  initializeWorld,
+  loadWorldEvents,
+  loadWorldMeta,
+  loadWorldState,
+} from './world-repository.ts';
 
 /**
  * Из handler-а наружу выходит только то, что нужно ПОТРЕБИТЕЛЮ пакета: сама команда и форма
@@ -34,9 +44,16 @@ export { initializeWorld, loadWorldMeta, loadWorldState } from './world-reposito
  * напрямую (finding m-1 независимого архитектурного аудита).
  */
 export type { CommandAccepted, CommandExecution, CommandRejected } from './command-handler.ts';
-export { executeCommand } from './command-handler.ts';
+export { commandFingerprint, eventIdOriginKey, executeCommand } from './command-handler.ts';
 
-export { LOCAL_DEV_ROLE_PASSWORD, ROLE_NAMES } from './migrations/0003-roles-and-grants.ts';
+export type { EnsureRolesResult, RoleName } from './principals.ts';
+export {
+  APPLICATION_ROLES,
+  GRANT_MATRIX,
+  ROLE_NAMES,
+  applyGrants,
+  ensureApplicationRoles,
+} from './principals.ts';
 
 export type { AppliedMigrationRecord } from './migration-ledger.ts';
 export { computeChecksum } from './migration-ledger.ts';

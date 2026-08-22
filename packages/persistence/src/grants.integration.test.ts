@@ -4,8 +4,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 import type { TestDatabase } from './__fixtures__/test-database.ts';
-import { createMigratedDatabase, type MigratedDatabase } from './__fixtures__/migrated-database.ts';
-import { LOCAL_DEV_ROLE_PASSWORD, ROLE_NAMES } from './migrations/0003-roles-and-grants.ts';
+import {
+  TEST_ROLE_PASSWORD,
+  createMigratedDatabase,
+  type MigratedDatabase,
+} from './__fixtures__/migrated-database.ts';
+import { APPLICATION_ROLES, GRANT_MATRIX, ROLE_NAMES } from './principals.ts';
 
 const asRole = async <T>(
   db: TestDatabase,
@@ -14,7 +18,7 @@ const asRole = async <T>(
 ): Promise<T> => {
   const url = new URL(db.url);
   url.username = role;
-  url.password = LOCAL_DEV_ROLE_PASSWORD;
+  url.password = TEST_ROLE_PASSWORD;
   const client = new Client({ connectionString: url.toString() });
   await client.connect();
   try {
@@ -52,9 +56,10 @@ describe('B7 — гранты ролей', () => {
         `insert into world_events (event_id, world_id, sequence, world_time, type, schema_version,
                                    rules_version, content_version, actor_ids, subject_ids,
                                    location_id, correlation_id, caused_by, command_id,
-                                   random_audit, payload, recorded_at)
+                                   random_audit, payload, recorded_at, event_checksum)
          values ('evt_seed', 'world:grants', 1, '2028-04-26T06:00:00.000Z', 'journey.started', 1,
-                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_seed', '{}', null, null, '{}', now())`,
+                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_seed', '{}', null, null, '{}', now(),
+                 'sha256:0000000000000000000000000000000000000000000000000000000000000000')`,
       );
     } finally {
       await admin.end();
@@ -73,9 +78,10 @@ describe('B7 — гранты ролей', () => {
         `insert into world_events (event_id, world_id, sequence, world_time, type, schema_version,
                                    rules_version, content_version, actor_ids, subject_ids,
                                    location_id, correlation_id, caused_by, command_id,
-                                   random_audit, payload, recorded_at)
+                                   random_audit, payload, recorded_at, event_checksum)
          values ('evt_worker', 'world:grants', 2, '2028-04-26T06:10:00.000Z', 'journey.started', 1,
-                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_worker', '{}', null, null, '{}', now())`,
+                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_worker', '{}', null, null, '{}', now(),
+                 'sha256:0000000000000000000000000000000000000000000000000000000000000000')`,
       );
     });
   });
@@ -113,12 +119,64 @@ describe('B7 — гранты ролей', () => {
         `insert into world_events (event_id, world_id, sequence, world_time, type, schema_version,
                                    rules_version, content_version, actor_ids, subject_ids,
                                    location_id, correlation_id, caused_by, command_id,
-                                   random_audit, payload, recorded_at)
+                                   random_audit, payload, recorded_at, event_checksum)
          values ('evt_proj', 'world:grants', 3, '2028-04-26T06:20:00.000Z', 'journey.started', 1,
-                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_proj', '{}', null, null, '{}', now())`,
+                 '0.1.0', '0.1.0', '{}', '{}', null, 'corr_proj', '{}', null, null, '{}', now(),
+                 'sha256:0000000000000000000000000000000000000000000000000000000000000000')`,
       );
       expect(message).toMatch(/permission denied/i);
     });
+  });
+
+  it('M-7: фактические гранты совпадают с объявленной матрицей ЦЕЛИКОМ, а не по списку таблиц', async () => {
+    // Прежняя редакция перечисляла пять имён таблиц. Когда I02B добавит свои и случайно
+    // выдаст права `zona_api`, перечисление останется зелёным — новой таблицы в нём нет.
+    // Здесь сверяется весь снимок `role_table_grants` для application-ролей: любое право,
+    // которого нет в `GRANT_MATRIX`, роняет тест, даже на таблице, о которой тест не знал.
+    //
+    // Что этот тест НЕ доказывает: сама матрица правильна. Обе стороны сравнения выводятся из
+    // неё, поэтому её изменение он пропустит по построению. Он ловит РАСХОЖДЕНИЕ объявленного
+    // и фактического; «api не имеет доступа к каноническим таблицам» остаётся отдельным
+    // утверждением теста выше, независимым от матрицы (проба lead-а: выдача api права на
+    // world_events роняет именно тот тест, а не этот).
+    const client = new Client({ connectionString: db.url });
+    await client.connect();
+    try {
+      const rows = await client.query<{
+        grantee: string;
+        table_name: string;
+        privilege_type: string;
+      }>(
+        `select grantee, table_name, privilege_type
+           from information_schema.role_table_grants
+          where table_schema = 'public' and grantee = any($1::text[])
+          order by grantee, table_name, privilege_type`,
+        [[...APPLICATION_ROLES]],
+      );
+
+      const actual: Record<string, Record<string, string[]>> = {};
+      for (const row of rows.rows) {
+        (actual[row.grantee] ??= {})[row.table_name] ??= [];
+        actual[row.grantee]![row.table_name]!.push(row.privilege_type);
+      }
+
+      const expected: Record<string, Record<string, string[]>> = {};
+      for (const role of APPLICATION_ROLES) {
+        const tables = GRANT_MATRIX[role];
+        const nonEmpty = Object.entries(tables).filter(([, privileges]) => privileges.length > 0);
+        if (nonEmpty.length === 0) continue;
+        expected[role] = Object.fromEntries(
+          nonEmpty.map(([table, privileges]) => [table, [...privileges].sort()]),
+        );
+      }
+      for (const role of Object.keys(actual)) {
+        for (const table of Object.keys(actual[role]!)) actual[role]![table]!.sort();
+      }
+
+      expect(actual).toEqual(expected);
+    } finally {
+      await client.end();
+    }
   });
 
   it('application-роли не имеют DDL', async () => {

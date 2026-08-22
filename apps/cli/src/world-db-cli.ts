@@ -19,6 +19,8 @@ import {
   parseDatabaseConnectionUrl,
   requireSafeInteger,
   runMigrations,
+  applyGrants,
+  ensureApplicationRoles,
   type DatabaseConnection,
   type Logger,
 } from '@zona/persistence';
@@ -59,6 +61,7 @@ export const runWorldMigrateCommand = async (
   db: DatabaseConnection,
   databaseUrl: string,
   usedRuntimeConnection: boolean,
+  rolePassword: string | undefined,
 ): Promise<CliResult> => {
   const report = await runMigrations({ db, migrations, logger: SILENT_LOGGER });
   const applied = report.applied.map((entry) => `${entry.id}-${entry.name}`);
@@ -66,6 +69,26 @@ export const runWorldMigrateCommand = async (
     applied.length === 0
       ? [`Схема уже на версии ${String(report.schemaVersion)}; применять нечего.`]
       : [`Применено: ${applied.join(', ')}`, `Версия схемы: ${String(report.schemaVersion)}`];
+
+  // Роли и гранты применяются КАЖДЫЙ раз, а не один раз в журнале: они кластерные, а журнал
+  // базовый, поэтому restore базы в чистый кластер иначе остался бы без прав и без сигнала
+  // (M-8 аудита I02A, OPS-04). Операция идемпотентна.
+  if (rolePassword !== undefined) {
+    const roles = await ensureApplicationRoles(db, rolePassword);
+    lines.push(
+      roles.created.length === 0
+        ? `Роли на месте: ${roles.existing.join(', ')}`
+        : `Созданы роли: ${roles.created.join(', ')}`,
+    );
+  } else {
+    lines.push(
+      'ZONA_ROLE_PASSWORD не задан — роли не создавались; гранты применяются к уже ' +
+        'существующим principals (в поставке роли заводит оператор из secret store).',
+    );
+  }
+  await applyGrants(db);
+  lines.push('Гранты применены.');
+
   lines.push(`Подключение: ${describeDatabaseTarget(databaseUrl)}`);
   if (usedRuntimeConnection) {
     lines.push(
@@ -94,19 +117,32 @@ export const runWorldInitCommand = async (
     };
   }
 
-  await initializeWorld(db, {
-    seed,
-    state,
-    versions: testRulesetVersions(),
-    content: {
-      locations: PROTOTYPE_WORLD.locations.map((location) => ({
-        id: location.id,
-        name: location.name,
-        description: location.description,
-      })),
-      agentNames: Object.fromEntries(PROTOTYPE_WORLD.agents.map((a) => [a.id, a.name])),
-    },
-  });
+  // m-6 аудита I02A: проверка выше — check-then-act. Конкурентный `world init` проигрывает на
+  // первичном ключе, и это правильный исход; но он обязан быть СООБЩЕНИЕМ, а не стеком.
+  try {
+    await initializeWorld(db, {
+      seed,
+      state,
+      versions: testRulesetVersions(),
+      content: {
+        locations: PROTOTYPE_WORLD.locations.map((location) => ({
+          id: location.id,
+          name: location.name,
+          description: location.description,
+        })),
+        agentNames: Object.fromEntries(PROTOTYPE_WORLD.agents.map((a) => [a.id, a.name])),
+      },
+    });
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === '23505') {
+      return {
+        stdout: `world init: мир ${state.worldId} создан параллельно другим процессом.\n`,
+        exitCode: 2,
+      };
+    }
+    throw error;
+  }
 
   return {
     stdout: `Мир ${state.worldId} создан из seed=${String(seed)}; версия ${String(state.worldVersion)}.\n`,
