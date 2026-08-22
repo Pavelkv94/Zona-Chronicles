@@ -155,3 +155,68 @@ describe('loadWriteSetFromGit (N2 review finding)', () => {
     expect(result.kind).toBe('invalid');
   });
 });
+
+describe('файл с несколькими задачами (I02B)', () => {
+  const twoTasks = JSON.stringify({
+    tasks: [
+      { task_id: 'T1', owner_role: 'tooling-implementer', write_paths: ['apps/cli/**'] },
+      { task_id: 'T2', owner_role: 'persistence-implementer', write_paths: ['packages/x.ts'] },
+    ],
+  });
+
+  it('сессия получает задачу СВОЕЙ роли', () => {
+    const result = parseWriteSet(twoTasks, 'persistence-implementer');
+    expect(result.kind).toBe('task');
+    if (result.kind !== 'task') return;
+    expect(result.writeSet.task_id).toBe('T2');
+    expect(result.writeSet.write_paths).toEqual(['packages/x.ts']);
+  });
+
+  it('роль вне списка не получает прав — fail-closed, а не «ограничений нет»', () => {
+    const result = parseWriteSet(twoTasks, 'frontend-implementer');
+    expect(result.kind).toBe('invalid');
+    if (result.kind !== 'invalid') return;
+    expect(result.reason).toContain('frontend-implementer');
+  });
+
+  it('без роли в payload выбрать задачу нечем — fail-closed', () => {
+    expect(parseWriteSet(twoTasks, undefined).kind).toBe('invalid');
+    expect(parseWriteSet(twoTasks, '').kind).toBe('invalid');
+  });
+
+  it('две задачи с одной ролью — отказ: выбор неоднозначен', () => {
+    const ambiguous = JSON.stringify({
+      tasks: [
+        { task_id: 'A', owner_role: 'tooling-implementer', write_paths: ['a/**'] },
+        { task_id: 'B', owner_role: 'tooling-implementer', write_paths: ['b/**'] },
+      ],
+    });
+    const result = parseWriteSet(ambiguous, 'tooling-implementer');
+    expect(result.kind).toBe('invalid');
+    if (result.kind !== 'invalid') return;
+    expect(result.reason).toMatch(/неоднознач/i);
+  });
+
+  it('невалидная запись внутри списка отвергает файл целиком', () => {
+    const broken = JSON.stringify({
+      tasks: [
+        { task_id: 'A', owner_role: 'tooling-implementer', write_paths: ['a/**'] },
+        { task_id: 'B', owner_role: 'persistence-implementer', write_paths: [] },
+      ],
+    });
+    expect(parseWriteSet(broken, 'tooling-implementer').kind).toBe('invalid');
+  });
+
+  it('одиночное объявление продолжает работать и роль игнорирует', () => {
+    const single = JSON.stringify({
+      task_id: 'ONE',
+      owner_role: 'tooling-implementer',
+      write_paths: ['apps/cli/**'],
+    });
+    for (const role of [undefined, 'persistence-implementer', 'tooling-implementer']) {
+      const result = parseWriteSet(single, role);
+      expect(result.kind).toBe('task');
+      if (result.kind === 'task') expect(result.writeSet.task_id).toBe('ONE');
+    }
+  });
+});

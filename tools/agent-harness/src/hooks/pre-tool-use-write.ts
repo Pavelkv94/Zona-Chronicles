@@ -26,7 +26,11 @@ const main = async (): Promise<void> => {
   // Роль решается payload-ом (agent_id/agent_type), не наличием writeset.json (B2 review finding):
   // тот же файл, который задаёт ограничение, лежит в write path, доступном самой task-сессии.
   const sessionRole = classifySession(input);
-  const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
+  // Роль сессии — из payload (`agent_type`), тем же неподделываемым признаком, что и
+  // `classifySession`. Она нужна файлу с НЕСКОЛЬКИМИ задачами: параллельные исполнители
+  // делят один `.claude/writeset.json` и выбирают свою запись по роли (I02B).
+  const ownerRole = typeof input['agent_type'] === 'string' ? input['agent_type'] : undefined;
+  const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`, ownerRole);
   const decision = decideWrite({ targetPath, projectRoot, writeSet, sessionRole });
 
   // Осознанно не возвращаем "allow": обычный permission flow должен остаться в силе.

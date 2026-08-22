@@ -1,6 +1,24 @@
 {
-  "task_id": "I02A-VERIFY",
-  "owner_role": "reviewer",
-  "write_paths": [],
-  "allow_protected_paths": []
+  "//": "I02B: две ПАРАЛЛЕЛЬНЫЕ задачи. Сессия выбирает свою по owner_role из hook payload (agent_type) — неподделываемого признака, тем же механизмом, что и classifySession. Роль вне списка прав не получает (fail-closed).",
+  "tasks": [
+    {
+      "task_id": "I02B-T1",
+      "owner_role": "tooling-implementer",
+      "write_paths": ["apps/cli/**", "tests/acceptance/**"],
+      "allow_protected_paths": ["tests/acceptance/**"]
+    },
+    {
+      "task_id": "I02B-T2",
+      "owner_role": "persistence-implementer",
+      "write_paths": [
+        "packages/persistence/src/snapshot-store.ts",
+        "packages/persistence/src/snapshot-store.integration.test.ts",
+        "packages/persistence/src/prng-positions.ts",
+        "packages/persistence/src/prng-positions.test.ts",
+        "packages/contracts/src/snapshot.ts",
+        "packages/contracts/src/snapshot.contract.test.ts"
+      ],
+      "allow_protected_paths": []
+    }
+  ]
 }

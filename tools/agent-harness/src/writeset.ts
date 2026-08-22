@@ -32,11 +32,135 @@ export type WriteSetLoadResult =
   | { readonly kind: 'task'; readonly writeSet: WriteSet }
   | { readonly kind: 'invalid'; readonly reason: string };
 
+/**
+ * Форма файла для ПАРАЛЛЕЛЬНЫХ задач (I02B).
+ *
+ * Одиночное объявление описывает ровно одну задачу, и этого хватало, пока исполнитель был один.
+ * Живой прогон I02B показал границу: in-process subagent наследует cwd родительской сессии,
+ * поэтому «свой worktree» через `cd` в Bash хук не видит — он читает `input.cwd`, то есть общий
+ * корень. Два параллельных исполнителя упираются в один файл, который может описывать только
+ * одного.
+ *
+ * Расширение: файл может объявлять НЕСКОЛЬКО задач, и сессия выбирает свою по `owner_role`,
+ * который приходит из hook payload (`agent_type`) — неподделываемого признака, тем же
+ * механизмом, что и `classifySession`. Роль, не найденная в списке, — fail-closed, а не
+ * «значит, ограничений нет». Две задачи с ОДНОЙ ролью — тоже fail-closed: тогда выбор
+ * неоднозначен, а угадывать в контроле владения нельзя.
+ */
+export type WriteSetFile = WriteSet | { readonly tasks: readonly WriteSet[] };
+
+/**
+ * Выбирает задачу текущей сессии из файла с несколькими объявлениями.
+ *
+ * Направление отказа везде одно — fail-closed: неизвестная роль, отсутствие роли в payload и
+ * неоднозначность (две задачи с одной ролью) дают `invalid`, то есть запрет на любую запись.
+ * Контроль владения не имеет права угадывать, чью работу он ограничивает.
+ */
+const selectByRole = (
+  tasks: readonly unknown[],
+  ownerRole: string | undefined,
+): WriteSetLoadResult => {
+  if (ownerRole === undefined || ownerRole.length === 0) {
+    return {
+      kind: 'invalid',
+      reason:
+        'writeset.json объявляет несколько задач, но роль этой сессии не известна ' +
+        '(в hook payload нет agent_type). Выбрать задачу нечем — fail-closed.',
+    };
+  }
+
+  const parsedTasks: WriteSet[] = [];
+  for (const [index, task] of tasks.entries()) {
+    const result = parseSingleWriteSet(task, `writeset.json: tasks[${String(index)}]`);
+    if (result.kind === 'invalid') return result;
+    parsedTasks.push(result.writeSet);
+  }
+
+  const matching = parsedTasks.filter((task) => task.owner_role === ownerRole);
+  if (matching.length === 0) {
+    const known = parsedTasks.map((task) => task.owner_role).join(', ');
+    return {
+      kind: 'invalid',
+      reason:
+        `writeset.json не объявляет задачу для роли "${ownerRole}" (объявлены: ${known}). ` +
+        'Незаявленная роль не получает прав — fail-closed.',
+    };
+  }
+  if (matching.length > 1) {
+    return {
+      kind: 'invalid',
+      reason:
+        `writeset.json объявляет ${String(matching.length)} задач для роли "${ownerRole}". ` +
+        'Выбор неоднозначен: две параллельные задачи обязаны иметь РАЗНЫЕ роли.',
+    };
+  }
+  return { kind: 'task', writeSet: matching[0]! };
+};
+
 const isStringArray = (value: unknown): value is readonly string[] =>
   Array.isArray(value) && value.every((item) => typeof item === 'string');
 
-/** Разбирает и валидирует содержимое `.claude/writeset.json`. */
-export const parseWriteSet = (raw: string): WriteSetLoadResult => {
+/**
+ * Валидирует ОДНО объявление задачи. `label` попадает в сообщения, чтобы при нескольких
+ * задачах было видно, какая именно запись невалидна.
+ */
+const parseSingleWriteSet = (
+  parsed: unknown,
+  label: string,
+): { kind: 'task'; writeSet: WriteSet } | { kind: 'invalid'; reason: string } => {
+  if (typeof parsed !== 'object' || parsed === null) {
+    return { kind: 'invalid', reason: `${label}: объявление задачи должно быть объектом` };
+  }
+  const candidate = parsed as Record<string, unknown>;
+
+  if (typeof candidate['task_id'] !== 'string' || candidate['task_id'].length === 0) {
+    return { kind: 'invalid', reason: `${label}: обязательное поле task_id` };
+  }
+  if (typeof candidate['owner_role'] !== 'string' || candidate['owner_role'].length === 0) {
+    return { kind: 'invalid', reason: `${label}: обязательное поле owner_role` };
+  }
+  // M-7 (review, третий раунд): reviewer — единственная роль, для которой нулевые права записи
+  // выражаются явно пустым write_paths, а не кодированием несовпадающим путём (ADR-008, правка
+  // от 2026-08-21). Любая другая роль обязана иметь хотя бы один write path, как и раньше.
+  const isReviewer = candidate['owner_role'] === 'reviewer';
+  if (
+    !isStringArray(candidate['write_paths']) ||
+    (!isReviewer && candidate['write_paths'].length === 0)
+  ) {
+    return {
+      kind: 'invalid',
+      reason: isReviewer
+        ? `${label}: write_paths обязателен и должен быть списком строк (может быть пустым для owner_role: reviewer)`
+        : `${label}: write_paths обязателен и не может быть пустым`,
+    };
+  }
+  const allowProtected = candidate['allow_protected_paths'];
+  if (allowProtected !== undefined && !isStringArray(allowProtected)) {
+    return {
+      kind: 'invalid',
+      reason: `${label}: allow_protected_paths должен быть списком строк`,
+    };
+  }
+
+  return {
+    kind: 'task',
+    writeSet: {
+      task_id: candidate['task_id'],
+      owner_role: candidate['owner_role'],
+      write_paths: candidate['write_paths'],
+      ...(allowProtected === undefined ? {} : { allow_protected_paths: allowProtected }),
+    },
+  };
+};
+
+/**
+ * Разбирает и валидирует содержимое `.claude/writeset.json`.
+ *
+ * `ownerRole` — роль ЭТОЙ сессии из hook payload. Она нужна только для файла с несколькими
+ * задачами: в нём сессия выбирает свою запись по роли. Для одиночного объявления параметр
+ * игнорируется — форма файла не меняет смысла для однозадачного случая.
+ */
+export const parseWriteSet = (raw: string, ownerRole?: string): WriteSetLoadResult => {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -46,51 +170,20 @@ export const parseWriteSet = (raw: string): WriteSetLoadResult => {
   if (typeof parsed !== 'object' || parsed === null) {
     return { kind: 'invalid', reason: 'writeset.json должен быть объектом' };
   }
-  const candidate = parsed as Record<string, unknown>;
+  const container = parsed as Record<string, unknown>;
 
-  if (typeof candidate['task_id'] !== 'string' || candidate['task_id'].length === 0) {
-    return { kind: 'invalid', reason: 'writeset.json: обязательное поле task_id' };
-  }
-  if (typeof candidate['owner_role'] !== 'string' || candidate['owner_role'].length === 0) {
-    return { kind: 'invalid', reason: 'writeset.json: обязательное поле owner_role' };
-  }
-  // M-7 (review, третий раунд): reviewer — единственная роль, для которой нулевые права записи
-  // выражаются явно пустым write_paths, а не кодированием несовпадающим путём (ADR-008, правка от
-  // 2026-08-21). Любая другая роль обязана иметь хотя бы один write path, как и раньше.
-  const isReviewer = candidate['owner_role'] === 'reviewer';
-  if (
-    !isStringArray(candidate['write_paths']) ||
-    (!isReviewer && candidate['write_paths'].length === 0)
-  ) {
-    return {
-      kind: 'invalid',
-      reason: isReviewer
-        ? 'writeset.json: write_paths обязателен и должен быть списком строк (может быть пустым для owner_role: reviewer)'
-        : 'writeset.json: write_paths обязателен и не может быть пустым',
-    };
-  }
-  const allowProtected = candidate['allow_protected_paths'];
-  if (allowProtected !== undefined && !isStringArray(allowProtected)) {
-    return {
-      kind: 'invalid',
-      reason: 'writeset.json: allow_protected_paths должен быть списком строк',
-    };
+  if (Array.isArray(container['tasks'])) {
+    return selectByRole(container['tasks'], ownerRole);
   }
 
-  const writeSet: WriteSet = {
-    task_id: candidate['task_id'],
-    owner_role: candidate['owner_role'],
-    write_paths: candidate['write_paths'],
-    ...(allowProtected === undefined ? {} : { allow_protected_paths: allowProtected }),
-  };
-  return { kind: 'task', writeSet };
+  return parseSingleWriteSet(container, 'writeset.json');
 };
 
 /**
  * Читает write set с диска. Отсутствие файла даёт `kind: 'lead'` — это факт о файле,
  * не о сессии (см. предупреждение у `WriteSetLoadResult`).
  */
-export const loadWriteSet = (path: string): WriteSetLoadResult => {
+export const loadWriteSet = (path: string, ownerRole?: string): WriteSetLoadResult => {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
@@ -99,7 +192,7 @@ export const loadWriteSet = (path: string): WriteSetLoadResult => {
     if (code === 'ENOENT') return { kind: 'lead' };
     return { kind: 'invalid', reason: `writeset.json недоступен: ${String(error)}` };
   }
-  return parseWriteSet(raw);
+  return parseWriteSet(raw, ownerRole);
 };
 
 /**
@@ -119,6 +212,7 @@ export const loadWriteSetFromGit = (
   projectRoot: string,
   ref: string,
   path = '.claude/writeset.json',
+  ownerRole?: string,
 ): WriteSetLoadResult => {
   const commit = resolveCommit(projectRoot, ref);
   if (commit.kind === 'error') return { kind: 'invalid', reason: commit.reason };
@@ -131,5 +225,5 @@ export const loadWriteSetFromGit = (
       reason: `writeset.json недоступен из git-объекта ${ref}: ${blob.reason}`,
     };
   }
-  return parseWriteSet(blob.content);
+  return parseWriteSet(blob.content, ownerRole);
 };

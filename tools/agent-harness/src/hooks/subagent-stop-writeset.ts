@@ -333,7 +333,15 @@ const runChecks = (
 ): void => {
   const sessionRole = classifySession(input);
 
-  const writeSetAtHead = loadWriteSetFromGit(projectRoot, DECLARATION_REF, WRITESET_PATH);
+  // Роль из payload нужна файлу с несколькими задачами (I02B): параллельные исполнители делят
+  // один объявленный write set и выбирают свою запись по роли.
+  const ownerRole = typeof input['agent_type'] === 'string' ? input['agent_type'] : undefined;
+  const writeSetAtHead = loadWriteSetFromGit(
+    projectRoot,
+    DECLARATION_REF,
+    WRITESET_PATH,
+    ownerRole,
+  );
   if (writeSetAtHead.kind === 'invalid') {
     fail(
       `Fail-closed: .claude/writeset.json недоступен из git-объекта ${DECLARATION_REF}: ${writeSetAtHead.reason}`,

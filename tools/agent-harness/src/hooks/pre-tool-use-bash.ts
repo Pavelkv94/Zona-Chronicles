@@ -28,7 +28,11 @@ const main = async (): Promise<void> => {
 
   const projectRoot =
     typeof input['cwd'] === 'string' && input['cwd'].length > 0 ? input['cwd'] : process.cwd();
-  const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`);
+  // Роль сессии — из payload (`agent_type`), тем же неподделываемым признаком, что и
+  // `classifySession`. Она нужна файлу с НЕСКОЛЬКИМИ задачами: параллельные исполнители
+  // делят один `.claude/writeset.json` и выбирают свою запись по роли (I02B).
+  const ownerRole = typeof input['agent_type'] === 'string' ? input['agent_type'] : undefined;
+  const writeSet = loadWriteSet(`${projectRoot}/.claude/writeset.json`, ownerRole);
   const decision = decideBashForSession({ command, projectRoot, sessionRole, writeSet });
 
   if (decision.decision === 'deny') {
