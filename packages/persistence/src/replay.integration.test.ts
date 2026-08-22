@@ -273,3 +273,54 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
     expect(replayed.appliedEventCount).toBe(1);
   });
 });
+
+describe('M5 — рассогласование снимка и журнала не выдаётся за пустой суффикс', () => {
+  let migrated: MigratedDatabase;
+
+  beforeAll(async () => {
+    migrated = await createMigratedDatabase('replay_mismatch');
+  });
+
+  afterAll(async () => {
+    await migrated.close();
+  });
+
+  /** Снимок текущего состояния мира, записанный тем же путём, что и в проде. */
+  const snapshotNow = async (): Promise<Snapshot> => {
+    const state = await loadWorldState(migrated.db, FIXTURE_WORLD_ID);
+    return writeSnapshot(migrated.db, {
+      worldId: FIXTURE_WORLD_ID,
+      lastSequence: state!.sequence,
+      worldTime: state!.worldTime,
+      bundles: bundles(),
+      deterministicRuntimeProfile: runtimeProfile(),
+      prngStreamPositions: {},
+      canonicalState: state!,
+    });
+  };
+
+  it('снимок НОВЕЕ журнала — отказ, а не «нечего доигрывать»', async () => {
+    // Реальный случай: журнал восстановлен из более старого бэкапа, чем снимок (PITR). Без
+    // проверки replay вернул бы состояние снимка как истину, и сверка checksum сошлась бы сама
+    // с собой — детектор детерминизма подтвердил бы несуществующий мир.
+    await truncateWorldData(migrated.db);
+    await initializeWorld(migrated.db, fixtureInitialization());
+
+    const ahead: Snapshot = { ...(await snapshotNow()), last_sequence: 99 };
+    await expect(replayFromSnapshot(migrated.db, FIXTURE_WORLD_ID, ahead)).rejects.toThrow(
+      /новее журнала/,
+    );
+  });
+
+  it('снимок ЧУЖОГО мира — отказ по идентификатору', async () => {
+    // Своя точка: PK `(world_id, last_sequence)` не даёт записать второй снимок на ту же
+    // sequence, и это правильное поведение (проверяется отдельно) — здесь нужен просто мир
+    // с историей.
+    await truncateWorldData(migrated.db);
+    await initializeWorld(migrated.db, fixtureInitialization());
+    const foreign: Snapshot = { ...(await snapshotNow()), world_id: 'world:somebody-else' };
+    await expect(replayFromSnapshot(migrated.db, FIXTURE_WORLD_ID, foreign)).rejects.toThrow(
+      /принадлежит миру world:somebody-else/,
+    );
+  });
+});

@@ -120,3 +120,96 @@ describe('evolve: plan.invalidated', () => {
     expect(next.worldVersion).toBe(before.worldVersion + 1);
   });
 });
+
+describe('M7 — снятие действия из расписания по причине, а не по совпадению полей', () => {
+  const scheduled = (id: string, entityId: string, routeId: string) => ({
+    id,
+    kind: 'journey.complete' as const,
+    dueAt: '2028-04-26T06:40:00.000Z',
+    priority: 100,
+    entityId,
+    routeId,
+  });
+
+  it('снимает ИМЕННО то действие, которое породило завершение', () => {
+    // Две механики планируют для одной пары «агент + маршрут». Сегодня такого в мире нет, но
+    // фильтр по совпадению полей снял бы ОБА, и расписание разошлось бы с журналом молча —
+    // заметно только при replay, то есть сильно позже причины.
+    const base = fixtureWorldState({
+      agents: {
+        'agent:rook': {
+          id: 'agent:rook',
+          locationId: 'loc:quiet-yard',
+          status: 'traveling',
+          routeId: 'route:yard-to-bridge',
+        },
+      },
+      scheduledActions: {
+        evt_cause: scheduled('evt_cause', 'agent:rook', 'route:yard-to-bridge'),
+        evt_other: scheduled('evt_other', 'agent:rook', 'route:yard-to-bridge'),
+      },
+    });
+
+    const next = evolve(base, {
+      event_id: 'evt_done',
+      world_id: base.worldId,
+      sequence: base.sequence + 1,
+      world_time: '2028-04-26T06:40:00.000Z',
+      type: 'journey.completed',
+      schema_version: 1,
+      rules_version: '0.1.0',
+      content_version: '0.1.0',
+      actor_ids: ['agent:rook'],
+      subject_ids: [],
+      location_id: 'loc:bridge',
+      correlation_id: 'corr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      caused_by: ['evt_cause'],
+      command_id: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      random_audit: null,
+      recorded_at: '2026-08-22T00:00:00.000Z',
+      payload: { route_id: 'route:yard-to-bridge' },
+    });
+
+    expect(Object.keys(next.scheduledActions)).toEqual(['evt_other']);
+  });
+
+  it('событие без caused_by применяется по-старому: журнал невосполним', () => {
+    // Совместимость с фактами, записанными до M7. Их нельзя переписать, значит их надо
+    // продолжать применять так, как они были записаны.
+    const base = fixtureWorldState({
+      agents: {
+        'agent:rook': {
+          id: 'agent:rook',
+          locationId: 'loc:quiet-yard',
+          status: 'traveling',
+          routeId: 'route:yard-to-bridge',
+        },
+      },
+      scheduledActions: {
+        evt_legacy: scheduled('evt_legacy', 'agent:rook', 'route:yard-to-bridge'),
+      },
+    });
+
+    const next = evolve(base, {
+      event_id: 'evt_done',
+      world_id: base.worldId,
+      sequence: base.sequence + 1,
+      world_time: '2028-04-26T06:40:00.000Z',
+      type: 'journey.completed',
+      schema_version: 1,
+      rules_version: '0.1.0',
+      content_version: '0.1.0',
+      actor_ids: ['agent:rook'],
+      subject_ids: [],
+      location_id: 'loc:bridge',
+      correlation_id: 'corr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      caused_by: [],
+      command_id: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+      random_audit: null,
+      recorded_at: '2026-08-22T00:00:00.000Z',
+      payload: { route_id: 'route:yard-to-bridge' },
+    });
+
+    expect(Object.keys(next.scheduledActions)).toEqual([]);
+  });
+});

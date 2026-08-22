@@ -356,6 +356,11 @@ export const runWorldTickCommand = async (
     };
   }
 
+  // M9 аудита: отвергнутое запланированное действие — это застрявший в мире путь, а не
+  // рядовая строка вывода. Нулевой код возврата означал, что cron и оператор видят успех
+  // ровно тогда, когда мир сломался.
+  const rejected = result.executed.filter((outcome) => outcome.outcome === 'rejected');
+
   const lines = [`Захвачено действий: ${String(result.claimed)}`];
   for (const execution of result.executed) {
     if (execution.outcome === 'accepted') {
@@ -367,6 +372,17 @@ export const runWorldTickCommand = async (
     }
   }
   lines.push(`Мировое время: ${result.worldTime}`);
+
+  if (rejected.length > 0) {
+    lines.push(
+      '',
+      `ОТВЕРГНУТО ДЕЙСТВИЙ: ${String(rejected.length)}. Каждое помечено failed_at и в очередь ` +
+        'больше не вернётся — соответствующий путь остался незавершённым и требует решения ' +
+        'оператора. Автоматически исправить это мир не может.',
+    );
+    return { stdout: `${lines.join('\n')}\n`, exitCode: 1 };
+  }
+
   return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
 };
 

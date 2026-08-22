@@ -53,6 +53,18 @@ const loadContinuousSuffix = async (
   afterSequence: number,
 ): Promise<readonly WorldEvent[]> => {
   const events = await loadWorldEvents(db, worldId);
+
+  // M5 аудита: снимок НОВЕЕ журнала — это не «пустой суффикс», а рассогласование. Реальный
+  // случай: журнал восстановлен из более старого бэкапа, чем снимок (PITR). Без этой проверки
+  // replay вернул бы состояние снимка как истину, и сверка checksum сошлась бы сама с собой.
+  const lastSequence = events.length === 0 ? 0 : events[events.length - 1]!.sequence;
+  if (afterSequence > lastSequence) {
+    throw new Error(
+      `replay: снимок мира ${worldId} на sequence ${String(afterSequence)} новее журнала ` +
+        `(последняя записанная sequence ${String(lastSequence)}). Журнал и снимок ` +
+        'рассогласованы — это не пустой суффикс.',
+    );
+  }
   const suffix = events.filter((event) => event.sequence > afterSequence);
 
   let expected = afterSequence + 1;
@@ -90,6 +102,13 @@ export const replayFromSnapshot = async (
   worldId: string,
   snapshot: Snapshot,
 ): Promise<ReplayResult> => {
+  // M5 аудита: снимок обязан принадлежать ТОМУ ЖЕ миру. Функция экспортирована из индекса
+  // пакета, то есть вызвать её с чужим снимком может кто угодно, а расхождение проявилось бы
+  // как «мир получился не тот», без единого признака причины.
+  if (snapshot.world_id !== worldId) {
+    throw new Error(`replay: снимок принадлежит миру ${snapshot.world_id}, а реплеится ${worldId}`);
+  }
+
   const suffix = await loadContinuousSuffix(db, worldId, snapshot.last_sequence);
 
   let state = snapshot.canonical_state as WorldState;
