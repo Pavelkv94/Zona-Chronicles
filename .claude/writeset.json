@@ -6,20 +6,19 @@
       "owner_role": "tooling-implementer",
       "agent_types": ["i02b-t1-cli", "tooling-implementer"],
       "write_paths": ["apps/cli/**", "tests/acceptance/**"],
-      "allow_protected_paths": ["tests/acceptance/**"]
+      "allow_protected_paths": ["tests/acceptance/**"],
+      "//": "СДАНА И ПРИНЯТА. Права оставлены на случай правок по замечаниям верификации."
     },
     {
-      "task_id": "I02B-T2",
+      "task_id": "I02B-T3",
       "owner_role": "persistence-implementer",
       "agent_types": ["i02b-t2-snapshots", "persistence-implementer"],
       "write_paths": [
-        "packages/persistence/src/snapshot-store.ts",
-        "packages/persistence/src/snapshot-store.integration.test.ts",
-        "packages/persistence/src/prng-positions.ts",
-        "packages/persistence/src/prng-positions.test.ts"
+        "packages/persistence/src/replay.ts",
+        "packages/persistence/src/replay.integration.test.ts"
       ],
       "allow_protected_paths": [],
-      "//": "Контрактная часть (уровень изоляции в runtime profile) сделана lead-ом: packages/contracts/** — protected path, и это правильно. Задаче остаётся persistence."
+      "//": "Replay: C9 и C10. Снимки (C8/C11) сданы и приняты. Контракты и правила границ — lead."
     }
   ]
 }
