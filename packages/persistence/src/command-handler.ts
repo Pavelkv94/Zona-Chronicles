@@ -55,6 +55,23 @@ export const TRANSACTION_STEPS = [
 
 export type TransactionStep = (typeof TRANSACTION_STEPS)[number];
 
+/**
+ * Точки, реально достигаемые каждым путём.
+ *
+ * Отказ не пишет ни события, ни состояния, ни outbox, поэтому проходит только три точки из
+ * семи. Списки объявлены ДАННЫМИ, а не выведены из кода: тест сверяет фактически пройденные
+ * точки с этими списками, и удаление любого `afterStep` становится падением, а не тишиной
+ * (finding independent review, раунд 1: инъекция сбоя проверялась только на accepted-пути,
+ * и убрать `afterStep` с rejected-ветки можно было незаметно для всех 56 тестов).
+ */
+export const ACCEPTED_PATH_STEPS: readonly TransactionStep[] = TRANSACTION_STEPS;
+
+export const REJECTED_PATH_STEPS: readonly TransactionStep[] = [
+  'world-locked',
+  'command-result-inserted',
+  'before-commit',
+];
+
 export interface CommandAccepted {
   readonly outcome: 'accepted';
   readonly commandId: string;

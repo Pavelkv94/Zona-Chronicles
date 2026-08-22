@@ -22,14 +22,19 @@ export { createDatabase, parseDatabaseConnectionUrl, requireSafeInteger } from '
 export type { WorldContent, WorldInitialization, WorldMeta } from './world-repository.ts';
 export { initializeWorld, loadWorldMeta, loadWorldState } from './world-repository.ts';
 
-export type {
-  CommandAccepted,
-  CommandExecution,
-  CommandRejected,
-  ExecuteCommandOptions,
-  TransactionStep,
-} from './command-handler.ts';
-export { TRANSACTION_STEPS, executeCommand } from './command-handler.ts';
+/**
+ * Из handler-а наружу выходит только то, что нужно ПОТРЕБИТЕЛЮ пакета: сама команда и форма
+ * её результата.
+ *
+ * `TRANSACTION_STEPS`/`ACCEPTED_PATH_STEPS`/`REJECTED_PATH_STEPS` и `ExecuteCommandOptions`
+ * (в котором живёт `afterStep`) намеренно НЕ экспортируются: `afterStep` — шов для инъекции
+ * сбоя, то есть возможность выполнить произвольный код внутри канонической транзакции. В
+ * публичном API пакета такому шву не место — его единственный законный потребитель это
+ * интеграционные тесты, лежащие в этом же пакете и импортирующие `./command-handler.ts`
+ * напрямую (finding m-1 независимого архитектурного аудита).
+ */
+export type { CommandAccepted, CommandExecution, CommandRejected } from './command-handler.ts';
+export { executeCommand } from './command-handler.ts';
 
 export { LOCAL_DEV_ROLE_PASSWORD, ROLE_NAMES } from './migrations/0003-roles-and-grants.ts';
 

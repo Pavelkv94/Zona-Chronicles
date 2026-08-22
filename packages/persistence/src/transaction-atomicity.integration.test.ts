@@ -17,10 +17,17 @@ import {
   FIXTURE_WORLD_ID,
   FIXTURE_WORLD_TIME,
   fixtureInitialization,
+  fixtureInitializationWithAgents,
+  racerAgentIds,
 } from './__fixtures__/world-fixture.ts';
 import type { DatabaseConnection } from './database.ts';
-import { initializeWorld } from './world-repository.ts';
-import { TRANSACTION_STEPS, executeCommand, type TransactionStep } from './command-handler.ts';
+import { initializeWorld, loadWorldState } from './world-repository.ts';
+import {
+  ACCEPTED_PATH_STEPS,
+  REJECTED_PATH_STEPS,
+  executeCommand,
+  type TransactionStep,
+} from './command-handler.ts';
 
 const ids = new DerivedIdFactory('i02a-atomicity');
 
@@ -66,37 +73,62 @@ describe('B5 — атомарность транзакции', () => {
     await truncateWorldData(db);
   });
 
-  it.each(TRANSACTION_STEPS.map((step) => [step] as const))(
-    'сбой после шага «%s» откатывает всё',
-    async (step: TransactionStep) => {
-      await initializeWorld(db, fixtureInitialization());
-      const before = await snapshotTables(db);
+  /**
+   * Путь принятой и путь отклонённой команды проходят РАЗНЫЕ наборы точек, и это утверждение
+   * само по себе является проверкой: если реализация перестанет вызывать `afterStep` на
+   * rejected-ветке, тест упадёт здесь, а не промолчит.
+   */
+  it.each([
+    ['accepted', () => command(), ACCEPTED_PATH_STEPS] as const,
+    [
+      'rejected',
+      () => command({ payload: { route_id: 'route:missing' } }),
+      REJECTED_PATH_STEPS,
+    ] as const,
+  ])('путь «%s» проходит ровно объявленные точки записи', async (_label, build, expected) => {
+    await initializeWorld(db, fixtureInitialization());
+    const reached: TransactionStep[] = [];
+    await executeCommand(db, build(), { afterStep: (step) => void reached.push(step) });
+    expect(reached).toEqual([...expected]);
+  });
 
-      const reached: TransactionStep[] = [];
-      const failure = new Error(`инъекция сбоя после ${step}`);
-      await expect(
-        executeCommand(db, command(), {
-          afterStep: (current) => {
-            reached.push(current);
-            if (current === step) throw failure;
-          },
-        }),
-      ).rejects.toThrow(failure.message);
+  it.each(
+    [
+      ...ACCEPTED_PATH_STEPS.map((step) => ['accepted', step] as const),
+      ...REJECTED_PATH_STEPS.map((step) => ['rejected', step] as const),
+    ].map(([path, step]) => [path, step] as const),
+  )('сбой на пути «%s» после шага «%s» откатывает всё', async (path, step: TransactionStep) => {
+    await initializeWorld(db, fixtureInitialization());
+    const before = await snapshotTables(db);
 
-      // Правило мутационной пробы: сначала доказать, что сбой действительно произошёл в
-      // заявленной точке, иначе «всё откатилось» доказывало бы лишь то, что команда не шла.
-      expect(reached).toContain(step);
-      expect(reached[reached.length - 1]).toBe(step);
+    const build = (): Command =>
+      path === 'accepted' ? command() : command({ payload: { route_id: 'route:missing' } });
 
-      expect(await snapshotTables(db)).toBe(before);
+    const reached: TransactionStep[] = [];
+    const failure = new Error(`инъекция сбоя после ${step}`);
+    await expect(
+      executeCommand(db, build(), {
+        afterStep: (current) => {
+          reached.push(current);
+          if (current === step) throw failure;
+        },
+      }),
+    ).rejects.toThrow(failure.message);
 
-      // Сбой не «съел» command_id: та же команда после сбоя проходит и даёт ровно одно событие.
-      const retry = await executeCommand(db, command());
-      expect(retry.outcome).toBe('accepted');
-      const events = await db.selectFrom('world_events').selectAll().execute();
-      expect(events).toHaveLength(1);
-    },
-  );
+    // Правило мутационной пробы: сначала доказать, что сбой действительно произошёл в
+    // заявленной точке, иначе «всё откатилось» доказывало бы лишь то, что команда не шла.
+    expect(reached).toContain(step);
+    expect(reached[reached.length - 1]).toBe(step);
+
+    expect(await snapshotTables(db)).toBe(before);
+
+    // Сбой не «съел» command_id: та же команда после сбоя проходит до конца, и на accepted-пути
+    // даёт ровно одно событие, а на rejected — ни одного.
+    const retry = await executeCommand(db, build());
+    expect(retry.outcome).toBe(path);
+    const events = await db.selectFrom('world_events').selectAll().execute();
+    expect(events).toHaveLength(path === 'accepted' ? 1 : 0);
+  });
 });
 
 describe('B6 — конкурентные команды', () => {
@@ -139,18 +171,46 @@ describe('B6 — конкурентные команды', () => {
     expect(Number(world.last_sequence)).toBe(1);
   });
 
-  it('восемь конкурентных команд дают sequence без дыр и дублей', async () => {
-    const commands = Array.from({ length: 8 }, (_, index) =>
-      command({
-        actor_id: index % 2 === 0 ? FIXTURE_AGENT_ID : FIXTURE_OTHER_AGENT_ID,
-        // Каждая заявляет версию, актуальную только для одной из попыток.
-        expected_world_version: 1,
-      }),
-    );
-    const results = await Promise.all(commands.map((cmd) => executeCommand(db, cmd)));
+  it('восемь клиентов с повтором дают ровно восемь событий подряд, без дыр', async () => {
+    // Тест самодостаточен: собственный мир, а не состояние, оставленное предыдущим тестом.
+    // Прежняя редакция объявляла всем восьми командам `expected_world_version: 1` — при таком
+    // входе ровно одна команда принимается при ЛЮБОМ порядке исполнения, поэтому тест
+    // оставался зелёным и без всякой конкуренции: он не отличал работающий `FOR UPDATE` от
+    // его отсутствия и вдобавок падал при запуске в одиночку (independent review, раунд 1).
+    //
+    // Здесь каждый клиент ведёт себя как настоящий: читает текущую версию мира, отправляет
+    // команду и ПОВТОРЯЕТ её при `stale_world_version`. Тогда все восемь обязаны пройти, а
+    // журнал — получить восемь событий с sequence 1..8 без дыр, дублей и технических ошибок
+    // уникального индекса. Именно это и доказывает сериализацию.
+    await truncateWorldData(db);
+    const CLIENTS = 8;
+    await initializeWorld(db, fixtureInitializationWithAgents(CLIENTS));
+    const agentIds = racerAgentIds(CLIENTS);
 
-    const accepted = results.filter((result) => result.outcome === 'accepted');
-    expect(accepted).toHaveLength(1);
+    const MAX_ATTEMPTS = 40;
+
+    const client = async (index: number): Promise<number> => {
+      const agentId = agentIds[index]!;
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt += 1) {
+        const state = await loadWorldState(db, FIXTURE_WORLD_ID);
+        if (state === null) throw new Error('мир исчез посреди теста');
+
+        const result = await executeCommand(db, {
+          ...command({ actor_id: agentId, payload: { route_id: FIXTURE_ROUTE_ID } }),
+          expected_world_version: state.worldVersion,
+        });
+        if (result.outcome === 'accepted') return attempt;
+        if (result.rejectionCode !== 'stale_world_version') {
+          throw new Error(`неожиданный отказ ${result.rejectionCode}: ${result.rejectionMessage}`);
+        }
+      }
+      throw new Error(`клиент ${index} не смог пройти за ${MAX_ATTEMPTS} попыток`);
+    };
+
+    // Конкуренция настоящая: восемь параллельных цепочек на восьми соединениях пула.
+    const attempts = await Promise.all(
+      Array.from({ length: CLIENTS }, (_, index) => client(index)),
+    );
 
     const events = await db
       .selectFrom('world_events')
@@ -158,6 +218,18 @@ describe('B6 — конкурентные команды', () => {
       .orderBy('sequence')
       .execute();
     const sequences = events.map((row) => Number(row.sequence));
-    expect(sequences).toEqual(sequences.map((_, index) => index + 1));
+    expect(sequences).toEqual(Array.from({ length: CLIENTS }, (_, index) => index + 1));
+
+    const world = await db
+      .selectFrom('worlds')
+      .selectAll()
+      .where('world_id', '=', FIXTURE_WORLD_ID)
+      .executeTakeFirstOrThrow();
+    expect(Number(world.version)).toBe(CLIENTS);
+    expect(Number(world.last_sequence)).toBe(CLIENTS);
+
+    // Гонка обязана быть НАБЛЮДАЕМОЙ: если бы конкуренции не было, ни один клиент не получил
+    // бы ни одного повтора, и тест снова ничего не доказывал бы про сериализацию.
+    expect(attempts.reduce((sum, value) => sum + value, 0)).toBeGreaterThan(0);
   });
 });

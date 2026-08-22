@@ -4,7 +4,7 @@
  * при изменении продуктового контента и чтобы `@zona/persistence` не получал зависимость на
  * пакет данных ради тестов.
  */
-import { testRulesetVersions, type WorldState } from '@zona/domain';
+import { testRulesetVersions, type AgentState, type WorldState } from '@zona/domain';
 import type { WorldInitialization } from '../world-repository.ts';
 
 export const FIXTURE_WORLD_ID = 'world:fixture';
@@ -64,3 +64,31 @@ export const fixtureInitialization = (): WorldInitialization => ({
     agentNames: { [FIXTURE_AGENT_ID]: 'Рук', [FIXTURE_OTHER_AGENT_ID]: 'Коршун' },
   },
 });
+
+/**
+ * Мир с `count` праздными агентами в стартовой локации — для проверки конкуренции (B6).
+ *
+ * Отдельная фикстура, а не расширение основной: `journey.start` — единственная команда этого
+ * slice, и каждый агент может выйти на маршрут ровно один раз (завершение пути появится в
+ * I02B). Значит, чтобы получить N принятых команд подряд, нужно N агентов. Основная фикстура
+ * остаётся минимальной, как требует PLAN §4.1.
+ */
+export const fixtureInitializationWithAgents = (count: number): WorldInitialization => {
+  const base = fixtureInitialization();
+  const agents: Record<string, AgentState> = {};
+  const agentNames: Record<string, string> = {};
+  for (let index = 0; index < count; index += 1) {
+    const id = `agent:racer-${String(index).padStart(2, '0')}`;
+    agents[id] = { id, locationId: FIXTURE_START_LOCATION_ID, status: 'idle', routeId: null };
+    agentNames[id] = `Бегун ${String(index)}`;
+  }
+  return {
+    ...base,
+    state: { ...base.state, agents },
+    content: { ...base.content, agentNames },
+  };
+};
+
+/** Идентификаторы агентов из {@link fixtureInitializationWithAgents} в том же порядке. */
+export const racerAgentIds = (count: number): readonly string[] =>
+  Array.from({ length: count }, (_, index) => `agent:racer-${String(index).padStart(2, '0')}`);
