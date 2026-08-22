@@ -1,15 +1,17 @@
 {
-  "//": "I02B: две ПАРАЛЛЕЛЬНЫЕ задачи. Сессия выбирает свою по owner_role из hook payload (agent_type) — неподделываемого признака, тем же механизмом, что и classifySession. Роль вне списка прав не получает (fail-closed).",
+  "//": "I02B: две ПАРАЛЛЕЛЬНЫЕ задачи. Сессия выбирает свою по agent_type из hook payload. Внимание: платформа кладёт туда ИМЯ сессии, а не тип subagent-а, поэтому привязка задана явным agent_types, а owner_role остаётся смыслом задачи. Роль вне списка прав не получает (fail-closed).",
   "tasks": [
     {
       "task_id": "I02B-T1",
       "owner_role": "tooling-implementer",
+      "agent_types": ["i02b-t1-cli", "tooling-implementer"],
       "write_paths": ["apps/cli/**", "tests/acceptance/**"],
       "allow_protected_paths": ["tests/acceptance/**"]
     },
     {
       "task_id": "I02B-T2",
       "owner_role": "persistence-implementer",
+      "agent_types": ["i02b-t2-snapshots", "persistence-implementer"],
       "write_paths": [
         "packages/persistence/src/snapshot-store.ts",
         "packages/persistence/src/snapshot-store.integration.test.ts",

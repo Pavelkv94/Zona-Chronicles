@@ -220,3 +220,50 @@ describe('файл с несколькими задачами (I02B)', () => {
     }
   });
 });
+
+describe('привязка задачи к идентификатору сессии (I02B)', () => {
+  // Живой прогон показал: платформа кладёт в `agent_type` ИМЯ сессии, а не тип subagent-а.
+  // Привязка по `owner_role` тогда не срабатывает, и сессия получает fail-closed на КАЖДЫЙ
+  // вызов, включая безобидный `pwd`. Поэтому есть явный `agent_types`.
+  const file = JSON.stringify({
+    tasks: [
+      {
+        task_id: 'T1',
+        owner_role: 'tooling-implementer',
+        agent_types: ['i02b-t1-cli', 'tooling-implementer'],
+        write_paths: ['apps/cli/**'],
+      },
+      {
+        task_id: 'T2',
+        owner_role: 'persistence-implementer',
+        agent_types: ['i02b-t2-snapshots'],
+        write_paths: ['packages/x.ts'],
+      },
+    ],
+  });
+
+  it('сессия опознаётся по имени из agent_types', () => {
+    const result = parseWriteSet(file, 'i02b-t2-snapshots');
+    expect(result.kind).toBe('task');
+    if (result.kind === 'task') expect(result.writeSet.task_id).toBe('T2');
+  });
+
+  it('роль тоже принимается, если она перечислена в agent_types', () => {
+    const result = parseWriteSet(file, 'tooling-implementer');
+    expect(result.kind).toBe('task');
+    if (result.kind === 'task') expect(result.writeSet.task_id).toBe('T1');
+  });
+
+  it('роль НЕ принимается, если задача её не перечислила: привязка явная', () => {
+    // T2 объявила только имя сессии. Совпадение по `owner_role` здесь не годится — иначе
+    // любая сессия, назвавшаяся ролью, получила бы права задачи.
+    expect(parseWriteSet(file, 'persistence-implementer').kind).toBe('invalid');
+  });
+
+  it('пустой agent_types отвергает файл: список либо есть, либо его нет', () => {
+    const broken = JSON.stringify({
+      tasks: [{ task_id: 'A', owner_role: 'r', agent_types: [], write_paths: ['a/**'] }],
+    });
+    expect(parseWriteSet(broken, 'r').kind).toBe('invalid');
+  });
+});

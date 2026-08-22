@@ -25,6 +25,20 @@ export type WriteSet = {
   readonly owner_role: string;
   readonly write_paths: readonly string[];
   readonly allow_protected_paths?: readonly string[];
+  /**
+   * Значения `agent_type` из hook payload, которым принадлежит эта задача (I02B).
+   *
+   * Нужно, потому что `agent_type` — НЕ роль. Живой прогон показал, что там оказывается ИМЯ
+   * сессии (`i02b-t2-snapshots`), а не тип subagent-а (`persistence-implementer`), и привязка
+   * по `owner_role` не срабатывала: сессия не находила своей задачи и получала fail-closed на
+   * каждый вызов, включая безобидный `pwd`.
+   *
+   * `owner_role` остаётся СМЫСЛОМ задачи (кто по роли ею владеет) и используется в документах и
+   * отчётах. `agent_types` — техническая привязка к конкретным сессиям, которую lead объявляет
+   * при запуске. Разделены намеренно: подгонять `owner_role` под то, что платформа положила в
+   * payload, значило бы потерять смысл поля ради совпадения строк.
+   */
+  readonly agent_types?: readonly string[];
 };
 
 export type WriteSetLoadResult =
@@ -76,7 +90,12 @@ const selectByRole = (
     parsedTasks.push(result.writeSet);
   }
 
-  const matching = parsedTasks.filter((task) => task.owner_role === ownerRole);
+  // Сопоставление: сначала явная привязка `agent_types`, затем — совпадение с `owner_role`.
+  // Второе оставлено для однозадачных карт и для случая, когда платформа кладёт в payload
+  // именно роль; полагаться только на него нельзя (см. `agent_types`).
+  const matching = parsedTasks.filter(
+    (task) => task.agent_types?.includes(ownerRole) ?? task.owner_role === ownerRole,
+  );
   if (matching.length === 0) {
     const known = parsedTasks.map((task) => task.owner_role).join(', ');
     return {
@@ -141,6 +160,13 @@ const parseSingleWriteSet = (
       reason: `${label}: allow_protected_paths должен быть списком строк`,
     };
   }
+  const agentTypes = candidate['agent_types'];
+  if (agentTypes !== undefined && (!isStringArray(agentTypes) || agentTypes.length === 0)) {
+    return {
+      kind: 'invalid',
+      reason: `${label}: agent_types должен быть непустым списком строк`,
+    };
+  }
 
   return {
     kind: 'task',
@@ -149,6 +175,7 @@ const parseSingleWriteSet = (
       owner_role: candidate['owner_role'],
       write_paths: candidate['write_paths'],
       ...(allowProtected === undefined ? {} : { allow_protected_paths: allowProtected }),
+      ...(agentTypes === undefined ? {} : { agent_types: agentTypes }),
     },
   };
 };
