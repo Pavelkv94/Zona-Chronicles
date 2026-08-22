@@ -33,6 +33,7 @@ import {
   isValidationFailure,
   requireCanonical,
   snapshotChecksum,
+  verifyRuntimeProfileCompatibility,
   verifySnapshotChecksum,
   type DeterministicRuntimeProfile,
   type Snapshot,
@@ -58,9 +59,25 @@ export interface SnapshotContent {
   readonly createdAt?: Date;
 }
 
-/** Bundles, которые обязан подставить вызывающий на чтении — см. докстринг файла. */
+/**
+ * Что обязан подставить вызывающий на чтении.
+ *
+ * `bundles` — потому что строка `world_snapshots` их не хранит (см. докстринг файла).
+ *
+ * `runtimeProfile` — профиль ЭТОГО процесса, тем же приёмом и по родственному доводу (M3, аудит
+ * I02B). Профиль снимка сознательно вне checksum (`SNAPSHOT_CHECKSUM_FIELDS`): внутри него
+ * настоящая cross-host регрессия детерминизма стала бы неотличима от ожидаемой разницы машин.
+ * Плата за это ровно одна — расхождение профиля обязано проверяться ОТДЕЛЬНО, иначе не
+ * проверяется ничем. ADR-010 §10.1 утверждал, что оно проверяется
+ * `verifyRuntimeProfileCompatibility`; до M3 функция не вызывалась ни на одном пути.
+ *
+ * Значение строит вызывающий, а не этот модуль: профиль включает свойства хоста (`node_version`,
+ * `icu_version`), а `packages/persistence` их читать не должен — это тот же порт, что `Clock` и
+ * `RandomSource` в домене (ADR-002). CLI собирает его в `currentDeterministicRuntimeProfile`.
+ */
 export interface LoadSnapshotContext {
   readonly bundles: Snapshot['bundles'];
+  readonly runtimeProfile: DeterministicRuntimeProfile;
 }
 
 /**
@@ -132,7 +149,7 @@ const rowToSnapshot = (
     readonly deterministic_runtime_profile: unknown;
     readonly created_at: Date;
   },
-  bundles: Snapshot['bundles'],
+  context: LoadSnapshotContext,
 ): Snapshot => {
   const label = `world_snapshots(${row.world_id}:${String(row.last_sequence)})`;
   const snapshot: Snapshot = {
@@ -140,7 +157,7 @@ const rowToSnapshot = (
     last_sequence: requireSafeInteger(row.last_sequence, `${label}.last_sequence`),
     world_time: row.world_time,
     created_at: row.created_at.toISOString(),
-    bundles,
+    bundles: context.bundles,
     deterministic_runtime_profile: row.deterministic_runtime_profile as DeterministicRuntimeProfile,
     prng_stream_positions: row.prng_stream_positions as Readonly<Record<string, number>>,
     canonical_state: row.canonical_state,
@@ -154,6 +171,25 @@ const rowToSnapshot = (
         `${verified.errors.map((issue) => `${issue.path} ${issue.message}`).join('; ')}. ` +
         'Снимок невосполним как точка восстановления — расхождение обязано быть сбоем, а не ' +
         'тихо другим миром (M-3, ADR-010 §10.2).',
+    );
+  }
+
+  // Профиль проверяется ПОСЛЕ checksum намеренно: порча содержимого — более сильный диагноз, и
+  // сообщать «профиль несовместим» о снимке, который вдобавок повреждён, значило бы назвать
+  // причиной вторую по важности из двух.
+  const compatible = verifyRuntimeProfileCompatibility(
+    // Квалифицирован тот профиль, ПОД КОТОРЫМ мир был посчитан: он определение канонического
+    // результата, записанное вместе с состоянием. Профиль читающего процесса — предъявленный.
+    snapshot.deterministic_runtime_profile,
+    context.runtimeProfile,
+  );
+  if (isValidationFailure(compatible)) {
+    throw new Error(
+      `persistence: снимок ${label} снят под несовместимым профилем выполнения: ` +
+        `${compatible.errors.map((issue) => `${issue.path} ${issue.message}`).join('; ')}. ` +
+        'Несовместимость означает «профиль ещё не квалифицирован» (§7), а не «мир сломан»: ' +
+        'принять её тихо значило бы продолжить канонический мир по другим правилам счёта, ' +
+        'и расхождение всплыло бы как необъяснимое расхождение checksum (M3, ADR-010 §10.1).',
     );
   }
   return snapshot;
@@ -173,7 +209,7 @@ export const loadLatestSnapshot = async (
     .limit(1)
     .executeTakeFirst();
   if (row === undefined) return null;
-  return rowToSnapshot(row, context.bundles);
+  return rowToSnapshot(row, context);
 };
 
 /**
@@ -200,5 +236,5 @@ export const loadSnapshotAt = async (
     .where('last_sequence', '=', String(lastSequence))
     .executeTakeFirst();
   if (row === undefined) return null;
-  return rowToSnapshot(row, context.bundles);
+  return rowToSnapshot(row, context);
 };

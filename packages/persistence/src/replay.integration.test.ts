@@ -142,7 +142,10 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
 
     // Удобный вход тоже: единственный снимок мира — как раз snapshotAtK, `replayWorld`
     // обязан найти его сам и дать тот же результат.
-    const viaLatest = await replayWorld(db, FIXTURE_WORLD_ID, { bundles: bundles() });
+    const viaLatest = await replayWorld(db, FIXTURE_WORLD_ID, {
+      bundles: bundles(),
+      runtimeProfile: runtimeProfile(),
+    });
     expect(viaLatest).toEqual(replayed);
   });
 
@@ -168,9 +171,9 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
   it('replayWorld без единого снимка отказывает по названной причине, а не берёт состояние из ниоткуда', async () => {
     await seed();
     await executeCommand(db, startJourney(FIXTURE_AGENT_ID, 0));
-    await expect(replayWorld(db, FIXTURE_WORLD_ID, { bundles: bundles() })).rejects.toThrow(
-      /нет ни одного снимка/,
-    );
+    await expect(
+      replayWorld(db, FIXTURE_WORLD_ID, { bundles: bundles(), runtimeProfile: runtimeProfile() }),
+    ).rejects.toThrow(/нет ни одного снимка/);
   });
 
   it('разрыв в журнале после снимка обнаруживается отказом, а не тихо доигранным "почти тем же" миром', async () => {

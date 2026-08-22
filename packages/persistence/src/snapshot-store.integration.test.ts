@@ -185,7 +185,10 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
     };
     const written = await writeSnapshot(db, content);
 
-    const loaded = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, { bundles: bundles() });
+    const loaded = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+      bundles: bundles(),
+      runtimeProfile: runtimeProfile(),
+    });
     expect(loaded).toEqual(written);
     expect(loaded!.prng_stream_positions).toEqual(positions);
   });
@@ -227,18 +230,32 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
 
     const loadedFirst = await loadSnapshotAt(db, FIXTURE_WORLD_ID, first.last_sequence, {
       bundles: bundles(),
+      runtimeProfile: runtimeProfile(),
     });
     expect(loadedFirst).toEqual(first);
     expect(loadedFirst!.last_sequence).not.toBe(latestWritten.last_sequence);
 
-    const loadedLatest = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, { bundles: bundles() });
+    const loadedLatest = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+      bundles: bundles(),
+      runtimeProfile: runtimeProfile(),
+    });
     expect(loadedLatest).toEqual(latestWritten);
   });
 
   it('снимков ещё нет: loadLatestSnapshot/loadSnapshotAt возвращают null, а не бросают', async () => {
     await seedWorldWithHistory();
-    expect(await loadLatestSnapshot(db, FIXTURE_WORLD_ID, { bundles: bundles() })).toBeNull();
-    expect(await loadSnapshotAt(db, FIXTURE_WORLD_ID, 1, { bundles: bundles() })).toBeNull();
+    expect(
+      await loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+        bundles: bundles(),
+        runtimeProfile: runtimeProfile(),
+      }),
+    ).toBeNull();
+    expect(
+      await loadSnapshotAt(db, FIXTURE_WORLD_ID, 1, {
+        bundles: bundles(),
+        runtimeProfile: runtimeProfile(),
+      }),
+    ).toBeNull();
   });
 
   it('повторная запись на ТОЙ ЖЕ sequence — не идемпотентный повтор, а отказ на первичном ключе', async () => {
@@ -276,9 +293,12 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
        where world_id = ${FIXTURE_WORLD_ID} and last_sequence = ${state!.sequence}
     `.execute(db);
 
-    await expect(loadLatestSnapshot(db, FIXTURE_WORLD_ID, { bundles: bundles() })).rejects.toThrow(
-      /checksum/,
-    );
+    await expect(
+      loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+        bundles: bundles(),
+        runtimeProfile: runtimeProfile(),
+      }),
+    ).rejects.toThrow(/checksum/);
   });
 
   it('bundles, отличные от тех, из которых был снят checksum, — та же громкая ошибка (не молчаливая подмена мира)', async () => {
@@ -295,8 +315,73 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
     });
 
     await expect(
-      loadLatestSnapshot(db, FIXTURE_WORLD_ID, { bundles: otherBundles() }),
+      loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+        bundles: otherBundles(),
+        runtimeProfile: runtimeProfile(),
+      }),
     ).rejects.toThrow(/checksum/);
+  });
+
+  /**
+   * M3 (аудит I02B): ADR-010 §10.1 утверждает, что уровень изоляции «входит в
+   * `deterministic_runtime_profile` снимка и ПРОВЕРЯЕТСЯ `verifyRuntimeProfileCompatibility`».
+   * Функция существовала и была покрыта unit-тестами, но не вызывалась ни на одном пути — то
+   * есть документ описывал контроль, которого в работающей системе нет. Снимок несёт профиль
+   * ВНЕ checksum (осознанно, `SNAPSHOT_CHECKSUM_FIELDS`), поэтому расхождение профиля checksum-ом
+   * не ловится по построению: без отдельной проверки оно не ловится ничем.
+   */
+  it('M3: снимок, снятый под несовместимым профилем выполнения, не восстанавливается молча', async () => {
+    await seedWorldWithHistory();
+    const state = await loadWorldState(db, FIXTURE_WORLD_ID);
+    await writeSnapshot(db, {
+      worldId: FIXTURE_WORLD_ID,
+      lastSequence: state!.sequence,
+      worldTime: state!.worldTime,
+      bundles: bundles(),
+      // Мир записан под ДРУГОЙ версией PRNG: продолжать его текущим процессом означает
+      // получить другую последовательность розыгрышей при том же seed.
+      deterministicRuntimeProfile: { ...runtimeProfile(), prng_version: 'xoshiro256++/2' },
+      prngStreamPositions: {},
+      canonicalState: state,
+    });
+
+    await expect(
+      loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+        bundles: bundles(),
+        runtimeProfile: runtimeProfile(),
+      }),
+    ).rejects.toThrow(/prng_version/);
+  });
+
+  /**
+   * Вторая половина той же пробы: контроль обязан пропускать корректный случай. §7 квалифицирует
+   * major/minor Node, поэтому расхождение patch-версии — НЕ повод отказать в восстановлении мира.
+   * Без этой проверки «строгий» контроль, отвергающий вообще всё, выглядел бы работающим.
+   */
+  it('M3: расхождение patch-версии Node не мешает восстановлению — квалификация по major/minor', async () => {
+    await seedWorldWithHistory();
+    const state = await loadWorldState(db, FIXTURE_WORLD_ID);
+    const written = runtimeProfile();
+    const [major, minor] = written.node_version.replace(/^v/, '').split('.');
+    await writeSnapshot(db, {
+      worldId: FIXTURE_WORLD_ID,
+      lastSequence: state!.sequence,
+      worldTime: state!.worldTime,
+      bundles: bundles(),
+      deterministicRuntimeProfile: {
+        ...written,
+        node_version: `v${major!}.${minor!}.999`,
+      },
+      prngStreamPositions: {},
+      canonicalState: state,
+    });
+
+    const loaded = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+      bundles: bundles(),
+      runtimeProfile: written,
+    });
+    expect(loaded).not.toBeNull();
+    expect(loaded!.last_sequence).toBe(state!.sequence);
   });
 
   it('C11 (сквозной, через настоящую БД): восстановленный источник продолжает PRNG-поток с сохранённой позиции', async () => {
@@ -318,7 +403,10 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
     });
 
     // "Перезапуск": новый процесс не помнит ничего, кроме того, что прочитал из снимка.
-    const loaded = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, { bundles: bundles() });
+    const loaded = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+      bundles: bundles(),
+      runtimeProfile: runtimeProfile(),
+    });
     expect(loaded!.prng_stream_positions).toEqual(written.prng_stream_positions);
     const afterRestart = new PersistentRandomSource({
       seed: 42,

@@ -464,7 +464,8 @@ export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<C
   }
 
   const bundles = currentBundles();
-  const latest = await loadLatestSnapshot(db, state.worldId, { bundles });
+  const runtimeProfile = currentDeterministicRuntimeProfile();
+  const latest = await loadLatestSnapshot(db, state.worldId, { bundles, runtimeProfile });
   const prngStreamPositions =
     latest?.prng_stream_positions ?? genesisPrngStreamPositions(meta.seed);
 
@@ -474,7 +475,7 @@ export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<C
       lastSequence: state.sequence,
       worldTime: state.worldTime,
       bundles,
-      deterministicRuntimeProfile: currentDeterministicRuntimeProfile(),
+      deterministicRuntimeProfile: runtimeProfile,
       prngStreamPositions,
       canonicalState: state,
     });
@@ -531,7 +532,10 @@ export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<Cli
   }
 
   const bundles = currentBundles();
-  const stored = await loadLatestSnapshot(db, state.worldId, { bundles });
+  const stored = await loadLatestSnapshot(db, state.worldId, {
+    bundles,
+    runtimeProfile: currentDeterministicRuntimeProfile(),
+  });
   const bootstrapped = stored === null;
   const snapshot = stored ?? seedWorld(meta.seed).snapshot;
 
