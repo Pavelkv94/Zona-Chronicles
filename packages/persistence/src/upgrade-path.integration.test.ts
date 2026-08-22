@@ -90,12 +90,36 @@ describe('N-1 — обновление с предыдущей поставки'
       await client.end();
     }
 
-    await expect(runMigrations({ db, migrations, logger: SILENT })).rejects.toThrow(
-      /MIGRATION_NAME_MISMATCH/,
-    );
+    try {
+      await expect(runMigrations({ db, migrations, logger: SILENT })).rejects.toThrow(
+        /MIGRATION_NAME_MISMATCH/,
+      );
 
-    // Схема не тронута: отказ произошёл до применения.
-    const state = await loadWorldState(db, FIXTURE_WORLD_ID);
-    expect(state?.worldId).toBe(FIXTURE_WORLD_ID);
+      // Схема не тронута: отказ произошёл до применения.
+      const state = await loadWorldState(db, FIXTURE_WORLD_ID);
+      expect(state?.worldId).toBe(FIXTURE_WORLD_ID);
+    } finally {
+      // p-4: журнал возвращается в исходное состояние. Без этого следующий добавленный в файл
+      // тест получал бы MIGRATION_NAME_MISMATCH по ЧУЖОЙ причине, и сейчас всё работает лишь
+      // потому, что этот тест последний — то есть держится на порядке, а не на инварианте.
+      const restore = new Client({ connectionString: testDb.url });
+      await restore.connect();
+      try {
+        await restore.query(`update schema_migrations set name = $2 where id = $1`, [
+          migrations[2]!.id,
+          migrations[2]!.name,
+        ]);
+      } finally {
+        await restore.end();
+      }
+    }
+  });
+
+  it('после уборки предыдущего теста миграции снова применяются штатно', () => {
+    // Явная проверка того, что уборка работает: этот тест зелёный только если журнал
+    // действительно восстановлен.
+    return expect(runMigrations({ db, migrations, logger: SILENT })).resolves.toMatchObject({
+      applied: [],
+    });
   });
 });

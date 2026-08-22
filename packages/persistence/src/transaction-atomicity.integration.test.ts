@@ -24,7 +24,10 @@ import type { DatabaseConnection } from './database.ts';
 import { initializeWorld, loadWorldState } from './world-repository.ts';
 import {
   ACCEPTED_PATH_STEPS,
+  FINGERPRINT_MISMATCH_PATH_STEPS,
+  MAX_ATTEMPTS_PER_COMMAND,
   REJECTED_PATH_STEPS,
+  TRANSACTION_STEPS,
   executeCommand,
   type TransactionStep,
 } from './command-handler.ts';
@@ -92,12 +95,65 @@ describe('B5 — атомарность транзакции', () => {
     expect(reached).toEqual([...expected]);
   });
 
-  it.each(
-    [
-      ...ACCEPTED_PATH_STEPS.map((step) => ['accepted', step] as const),
-      ...REJECTED_PATH_STEPS.map((step) => ['rejected', step] as const),
-    ].map(([path, step]) => [path, step] as const),
-  )('сбой на пути «%s» после шага «%s» откатывает всё', async (path, step: TransactionStep) => {
+  it('каждая объявленная точка достижима хотя бы одним путём', () => {
+    // Иначе список точек и код расходятся молча: шаг, добавленный в TRANSACTION_STEPS и
+    // забытый в путях, выглядел бы покрытым инъекцией, не будучи достигнутым ни разу.
+    const covered = new Set<TransactionStep>([
+      ...ACCEPTED_PATH_STEPS,
+      ...REJECTED_PATH_STEPS,
+      ...FINGERPRINT_MISMATCH_PATH_STEPS,
+    ]);
+    expect([...covered].sort()).toEqual([...TRANSACTION_STEPS].sort());
+  });
+
+  it('путь «fingerprint-mismatch» проходит ровно объявленные точки записи', async () => {
+    // p-5: третий путь ТОЖЕ пишет в базу, и до этой проверки он не имел ни одной точки
+    // инъекции — утверждение «сбой инъектируется после каждого шага записи» было неверным.
+    await initializeWorld(db, fixtureInitialization());
+    const original = command();
+    await executeCommand(db, original);
+
+    const reached: TransactionStep[] = [];
+    const result = await executeCommand(
+      db,
+      { ...original, actor_id: FIXTURE_OTHER_AGENT_ID },
+      { afterStep: (step) => void reached.push(step) },
+    );
+    expect(result.outcome).toBe('rejected');
+    expect(reached).toEqual([...FINGERPRINT_MISMATCH_PATH_STEPS]);
+  });
+
+  it('аудит попыток ограничен сверху и не растёт бесконечно', async () => {
+    // p-6: `--command-id` — публичный флаг, то есть вход снаружи. Хранится последние
+    // MAX_ATTEMPTS_PER_COMMAND попыток; сигнал «этот id перебирают» остаётся, объём — нет.
+    await initializeWorld(db, fixtureInitialization());
+    const original = command();
+    await executeCommand(db, original);
+
+    const attempts = MAX_ATTEMPTS_PER_COMMAND + 5;
+    for (let index = 0; index < attempts; index += 1) {
+      await executeCommand(db, {
+        ...original,
+        actor_id: FIXTURE_OTHER_AGENT_ID,
+        payload: { route_id: `route:probe-${String(index)}` },
+      });
+    }
+
+    const rows = await db
+      .selectFrom('command_attempt_rejections')
+      .selectAll()
+      .where('command_id', '=', original.command_id)
+      .orderBy('attempt_id')
+      .execute();
+    expect(rows).toHaveLength(MAX_ATTEMPTS_PER_COMMAND);
+    // Сохраняются ПОСЛЕДНИЕ попытки, а не первые: свежий сигнал ценнее исторического.
+    expect(rows[rows.length - 1]?.attempted_fingerprint).toBeDefined();
+  });
+
+  it.each([
+    ...ACCEPTED_PATH_STEPS.map((step) => ['accepted', step] as const),
+    ...REJECTED_PATH_STEPS.map((step) => ['rejected', step] as const),
+  ])('сбой на пути «%s» после шага «%s» откатывает всё', async (path, step: TransactionStep) => {
     await initializeWorld(db, fixtureInitialization());
     const before = await snapshotTables(db);
 

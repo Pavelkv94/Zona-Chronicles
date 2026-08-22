@@ -24,9 +24,24 @@ import { sql } from 'kysely';
 import { createMigratedDatabase, type MigratedDatabase } from './__fixtures__/migrated-database.ts';
 import { GRANT_MATRIX, ROLE_NAMES, applyGrants } from './principals.ts';
 
-const workerCanSelectEvents = async (migrated: MigratedDatabase): Promise<boolean> => {
+/**
+ * Проба берётся по ПОЗДНЕЙ таблице матрицы, а сбой инъектируется в РАННЮЮ (P-1 узкой проверки).
+ *
+ * Первая редакция детектора роняла `applyGrants` на `outbox` — ПОСЛЕДНЕЙ таблице worker — а
+ * проверяла право на `world_events`, ПЕРВОЙ. В autocommit-реализации grant на `world_events`
+ * успевает зафиксироваться до падения, поэтому утверждение выполнялось и на сломанном коде:
+ * тест был зелёным на обеих реализациях, то есть охранял пустоту.
+ *
+ * Мутационную пробу я тогда прогнал, но не посмотрел, НА ЧЁМ она упала: падение было
+ * каскадным, из предыдущего теста файла. Отсюда порядок здесь строго обратный — ломать рано,
+ * спрашивать поздно.
+ */
+const EARLY_TABLE = 'command_results';
+const LATE_TABLE = 'agents';
+
+const workerCanSelect = async (migrated: MigratedDatabase, table: string): Promise<boolean> => {
   const result = await sql<{ ok: boolean }>`
-    select has_table_privilege(${ROLE_NAMES.worker}, 'world_events', 'select') as ok
+    select has_table_privilege(${ROLE_NAMES.worker}, ${table}, 'select') as ok
   `.execute(migrated.db);
   return result.rows[0]?.ok === true;
 };
@@ -42,38 +57,50 @@ describe('N-2 — атомарность переприменения грант
     await migrated.close();
   });
 
+  it('порядок таблиц в матрице таков, что проба действительно позже инъекции', async () => {
+    // Утверждение о САМОМ детекторе: если матрицу переставят, тест обязан упасть здесь, а не
+    // тихо перестать различать сломанную реализацию (именно так и произошло в первой редакции).
+    const order = Object.keys(GRANT_MATRIX[ROLE_NAMES.worker]);
+    expect(order.indexOf(EARLY_TABLE)).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf(LATE_TABLE)).toBeGreaterThan(order.indexOf(EARLY_TABLE));
+    await Promise.resolve();
+  });
+
   it('повторное применение идемпотентно и не меняет прав', async () => {
-    expect(await workerCanSelectEvents(migrated)).toBe(true);
+    expect(await workerCanSelect(migrated, LATE_TABLE)).toBe(true);
     await applyGrants(migrated.db);
-    expect(await workerCanSelectEvents(migrated)).toBe(true);
+    expect(await workerCanSelect(migrated, LATE_TABLE)).toBe(true);
   });
 
   it('сбой посреди применения не оставляет роль без прав', async () => {
-    expect(await workerCanSelectEvents(migrated)).toBe(true);
+    expect(await workerCanSelect(migrated, LATE_TABLE)).toBe(true);
 
-    // `outbox` есть в матрице, но её больше нет в базе: `grant … on outbox` упадёт уже ПОСЛЕ
-    // того, как права сняты. Ни одна другая таблица на неё не ссылается, поэтому удаление
-    // не тянет за собой ничего лишнего.
-    expect(Object.keys(GRANT_MATRIX[ROLE_NAMES.worker])).toContain('outbox');
-    await sql`drop table outbox`.execute(migrated.db);
+    // `command_results` есть в матрице, но её больше нет в базе: `grant … on command_results`
+    // упадёт ПОСЛЕ снятия прав и ДО выдачи прав на `agents`. На неё никто не ссылается по
+    // внешнему ключу, поэтому удаление не тянет за собой ничего лишнего.
+    await sql`drop table command_results`.execute(migrated.db);
 
     try {
-      await expect(applyGrants(migrated.db)).rejects.toThrow(/outbox/);
+      await expect(applyGrants(migrated.db)).rejects.toThrow(/command_results/);
 
-      // Главное утверждение: снятие прав откатилось вместе с упавшей выдачей.
-      expect(await workerCanSelectEvents(migrated)).toBe(true);
+      // Главное утверждение: снятие прав откатилось вместе с упавшей выдачей. На сломанной
+      // (autocommit) реализации право на поздней таблице здесь было бы уже потеряно.
+      expect(await workerCanSelect(migrated, LATE_TABLE)).toBe(true);
     } finally {
-      // Возвращаем таблицу, чтобы файл не оставлял базу в изменённом виде.
       await sql`
-        create table outbox (
-          outbox_id     bigint generated always as identity primary key,
-          world_id      text        not null references worlds (world_id),
-          event_id      text        not null references world_events (event_id),
-          sequence      bigint      not null,
-          payload       jsonb       not null,
-          created_at    timestamptz not null,
-          published_at  timestamptz,
-          unique (event_id)
+        create table command_results (
+          world_id              text        not null references worlds (world_id),
+          command_id            text        not null,
+          type                  text        not null,
+          outcome               text        not null check (outcome in ('accepted', 'rejected')),
+          rejection_code        text,
+          rejection_message     text,
+          event_ids             text[]      not null,
+          command_fingerprint   text        not null,
+          world_version_before  bigint      not null,
+          world_version_after   bigint      not null,
+          recorded_at           timestamptz not null,
+          primary key (world_id, command_id)
         )
       `.execute(migrated.db);
       await applyGrants(migrated.db);

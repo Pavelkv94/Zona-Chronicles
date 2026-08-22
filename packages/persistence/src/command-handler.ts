@@ -22,6 +22,7 @@
  * видит новую версию и получает НАЗВАННЫЙ отказ (B6). Optimistic-версия при этом остаётся: она
  * защищает от команды, собранной по устаревшему прочтению мира вне транзакции.
  */
+import { sql } from 'kysely';
 import {
   commandFingerprintSource,
   requireCanonical,
@@ -47,6 +48,7 @@ import { loadWorldMeta, loadWorldState } from './world-repository.ts';
 /** Точки, после которых можно инъектировать сбой (B5). Порядок совпадает с порядком записи. */
 export const TRANSACTION_STEPS = [
   'world-locked',
+  'attempt-recorded',
   'event-inserted',
   'agent-updated',
   'world-updated',
@@ -57,6 +59,9 @@ export const TRANSACTION_STEPS = [
 
 export type TransactionStep = (typeof TRANSACTION_STEPS)[number];
 
+/** Сколько попыток на (мир, command_id) хранит аудитный приёмник (p-6). */
+export const MAX_ATTEMPTS_PER_COMMAND = 10;
+
 /**
  * Точки, реально достигаемые каждым путём.
  *
@@ -66,11 +71,31 @@ export type TransactionStep = (typeof TRANSACTION_STEPS)[number];
  * (finding independent review, раунд 1: инъекция сбоя проверялась только на accepted-пути,
  * и убрать `afterStep` с rejected-ветки можно было незаметно для всех 56 тестов).
  */
-export const ACCEPTED_PATH_STEPS: readonly TransactionStep[] = TRANSACTION_STEPS;
+export const ACCEPTED_PATH_STEPS: readonly TransactionStep[] = [
+  'world-locked',
+  'event-inserted',
+  'agent-updated',
+  'world-updated',
+  'outbox-inserted',
+  'command-result-inserted',
+  'before-commit',
+];
 
 export const REJECTED_PATH_STEPS: readonly TransactionStep[] = [
   'world-locked',
   'command-result-inserted',
+  'before-commit',
+];
+
+/**
+ * Третий путь: отказ по несовпадению отпечатка (N-3). Он ТОЖЕ пишет в базу, поэтому обязан
+ * иметь свои точки инъекции — p-5 узкой проверки: утверждение «сбой инъектируется после
+ * каждого шага записи» перестало быть верным ровно в тот момент, когда появился новый путь
+ * записи. Тот же класс, который test-reviewer закрыл в первом раунде для rejected-пути.
+ */
+export const FINGERPRINT_MISMATCH_PATH_STEPS: readonly TransactionStep[] = [
+  'world-locked',
+  'attempt-recorded',
   'before-commit',
 ];
 
@@ -296,6 +321,25 @@ export const executeCommand = async (
             recorded_at: now(),
           })
           .execute();
+
+        // p-6: приёмник наполняется ВНЕШНИМ входом (`--command-id` — публичный флаг), поэтому
+        // рост ограничен на месте, а не отложен до retention-политики. Хранится последние
+        // `MAX_ATTEMPTS_PER_COMMAND` попыток на (мир, command_id): сигнал «этот id перебирают»
+        // сохраняется, а объём — нет.
+        await sql`
+          delete from command_attempt_rejections
+           where world_id = ${command.world_id}
+             and command_id = ${command.command_id}
+             and attempt_id not in (
+               select attempt_id from command_attempt_rejections
+                where world_id = ${command.world_id} and command_id = ${command.command_id}
+                order by attempt_id desc
+                limit ${MAX_ATTEMPTS_PER_COMMAND}
+             )
+        `.execute(trx);
+
+        await afterStep('attempt-recorded');
+        await afterStep('before-commit');
         return {
           outcome: 'rejected',
           commandId: command.command_id,
