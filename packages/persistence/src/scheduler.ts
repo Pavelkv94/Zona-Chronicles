@@ -74,6 +74,7 @@ export const claimDueActions = async (
           from scheduled_actions
          where world_id = ${options.worldId}
            and completed_at is null
+           and failed_at is null
            and due_at <= ${options.worldTime}
            and (lease_owner is null or lease_until <= ${now()})
          order by due_at, priority, entity_id, action_id
@@ -148,10 +149,77 @@ export interface TickResult {
  *
  * Мировое время продвигается к `due_at` обрабатываемого действия и только вперёд (C12).
  */
+/**
+ * Ключ advisory-лока мира. Выводится из `world_id` детерминированно, чтобы два процесса,
+ * работающих с одним миром, получили один ключ, а разные миры друг друга не блокировали.
+ */
+const worldLockKey = (worldId: string): number => {
+  let hash = 0x811c9dc5;
+  for (const char of worldId) {
+    hash ^= char.codePointAt(0) ?? 0;
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  // `pg_try_advisory_lock(int)` принимает знаковое 32-битное — приводим в его диапазон.
+  return hash | 0;
+};
+
+export interface TickResultSkipped {
+  readonly claimed: 0;
+  readonly executed: readonly [];
+  readonly worldTime: string;
+  /** `true` — мир в этот момент обрабатывал другой worker, и шаг не выполнялся. */
+  readonly skipped: true;
+}
+
+/**
+ * Один шаг worker-а: захватить доступные действия и исполнить каждое как команду.
+ *
+ * ## Почему шаг держит advisory lock мира
+ *
+ * `03_TECHNICAL_DESIGN` §5 шаг 1 предписывает transaction-level advisory lock канонического
+ * мира, и I02A записала отклонение от него как безобидное. Независимый аудит I02B и
+ * последующая проба показали, что оно таковым не является.
+ *
+ * Мировое время монотонно и ГЛОБАЛЬНО: его двигает каждое обработанное действие к своему
+ * `due_at`. Два worker-а, выбирающие батчи независимо, неизбежно берут действия с РАЗНЫМИ
+ * `due_at` — и тот, кому досталось более раннее, пытается сдвинуть время назад. Воспроизведено:
+ * шесть агентов с разными сроками, три worker-а, `2028-04-26T06:30:00.000Z -> …06:25:00.000Z`.
+ *
+ * То есть параллелизм между worker-ами на ОДНОМ мире несовместим с одними монотонными часами —
+ * это не дефект реализации, а свойство модели, и §5 его учитывал.
+ *
+ * `pg_try_advisory_lock`, а не `pg_advisory_lock`: второй worker не ждёт, а честно сообщает,
+ * что мир сейчас обрабатывается, и возвращается пустым шагом. Ожидание превратило бы очередь
+ * worker-ов в скрытую сериализацию с непредсказуемой задержкой.
+ *
+ * `SKIP LOCKED` при этом остаётся нужным: он развязывает worker-ов на РАЗНЫХ мирах и защищает
+ * от строк, захваченных на время собственного батча.
+ *
+ * Мировое время продвигается к `due_at` обрабатываемого действия и только вперёд (C12).
+ */
 export const runWorldTick = async (
   db: DatabaseConnection,
   options: TickOptions,
-): Promise<TickResult> => {
+): Promise<TickResult | TickResultSkipped> =>
+  db.connection().execute(async (connection) => {
+    const key = worldLockKey(options.worldId);
+    const acquired = await sql<{ ok: boolean }>`select pg_try_advisory_lock(${key}) as ok`.execute(
+      connection,
+    );
+    if (acquired.rows[0]?.ok !== true) {
+      const current = await loadWorldState(db, options.worldId);
+      if (current === null) throw new Error(`scheduler: мир ${options.worldId} не существует`);
+      return { claimed: 0, executed: [], worldTime: current.worldTime, skipped: true };
+    }
+
+    try {
+      return await tickUnderLock(db, options);
+    } finally {
+      await sql`select pg_advisory_unlock(${key})`.execute(connection);
+    }
+  });
+
+const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Promise<TickResult> => {
   const state = await loadWorldState(db, options.worldId);
   if (state === null) throw new Error(`scheduler: мир ${options.worldId} не существует`);
 
@@ -177,21 +245,36 @@ export const runWorldTick = async (
 
   const executed: CommandExecution[] = [];
   for (const action of claimed) {
-    // Версия мира перечитывается перед КАЖДЫМ действием: предыдущее её уже сдвинуло.
-    const current = await loadWorldState(db, options.worldId);
-    if (current === null) throw new Error(`scheduler: мир ${options.worldId} исчез посреди шага`);
-
     const command = commandFor(action, {
       worldId: options.worldId,
       schemaVersion: meta.versions.schemaVersion,
-      version: current.worldVersion,
     });
-    executed.push(
-      await executeCommand(db, command, {
-        worldTime: action.dueAt,
-        ...(options.now === undefined ? {} : { now: options.now }),
-      }),
-    );
+    const outcome = await executeCommand(db, command, {
+      worldTime: action.dueAt,
+      ...(options.now === undefined ? {} : { now: options.now }),
+    });
+    executed.push(outcome);
+
+    if (outcome.outcome === 'rejected') {
+      // Доменный отказ на запланированном действии — нормальный исход (действие могло
+      // устареть, пока ждало очереди), но он обязан быть КОНЕЧНЫМ. Без этой пометки действие
+      // возвращалось в очередь каждым следующим тиком и отвергалось вечно, а агент навсегда
+      // оставался в пути (blocker аудита I02B, воспроизведён детерминированно).
+      //
+      // Починить автоматически нельзя: мир не знает, чего хотел оператор. Можно только
+      // перестать делать вид, что всё в порядке.
+      await db
+        .updateTable('scheduled_actions')
+        .set({
+          failed_at: (options.now ?? ((): Date => new Date()))(),
+          failure_code: outcome.rejectionCode,
+          lease_owner: null,
+          lease_until: null,
+        })
+        .where('world_id', '=', options.worldId)
+        .where('action_id', '=', action.actionId)
+        .execute();
+    }
   }
 
   const after = await loadWorldState(db, options.worldId);
@@ -204,10 +287,15 @@ export const runWorldTick = async (
  * `command_id` выводится из `action_id`, а не из случайности: повторная обработка того же
  * действия — например после истечения аренды у зависшего worker-а — обязана попасть в journal
  * идемпотентности и вернуть записанный результат, а не создать второе событие (C6).
+ *
+ * `expected_world_version` НЕ ставится (ADR-011): действие породил сам мир, проверять нечего, а
+ * его присутствие делало отпечаток зависимым от гонки — конкурентный сдвиг версии между чтением
+ * и захватом замка приводил к вечному `precondition_failed` и агенту, застрявшему `traveling`
+ * навсегда (blocker независимого аудита I02B, воспроизведён).
  */
 export const commandFor = (
   action: ClaimedAction,
-  world: { readonly worldId: string; readonly schemaVersion: number; readonly version: number },
+  world: { readonly worldId: string; readonly schemaVersion: number },
 ): Command => ({
   command_id: new DerivedIdFactory(`${action.actionId}:command`).next(RUNTIME_ID_PREFIXES.command),
   world_id: world.worldId,
@@ -215,7 +303,6 @@ export const commandFor = (
   schema_version: world.schemaVersion,
   actor_id: action.entityId,
   issued_at_world_time: action.dueAt,
-  expected_world_version: world.version,
   correlation_id: new DerivedIdFactory(`${action.actionId}:correlation`).next(
     RUNTIME_ID_PREFIXES.correlation,
   ),

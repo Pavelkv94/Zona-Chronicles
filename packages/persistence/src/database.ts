@@ -144,6 +144,9 @@ export interface ScheduledActionsTable {
   lease_owner: ColumnType<string | null, string | null, string | null>;
   lease_until: ColumnType<Date | null, Date | null, Date | null>;
   completed_at: ColumnType<Date | null, Date | null, Date | null>;
+  /** Явный исход отказа (миграция 0008): действие отвергнуто и в очередь не возвращается. */
+  failed_at: ColumnType<Date | null, Date | null, Date | null>;
+  failure_code: ColumnType<string | null, string | null, string | null>;
 }
 
 export interface WorldSnapshotsTable {

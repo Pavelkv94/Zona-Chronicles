@@ -65,6 +65,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'scheduler-and-snapshots',
     checksum: 'd24c42c6a2c65d274d3c520c80a66f5715522d763bc938b429831c9f4c56519d',
   },
+  {
+    id: '0008',
+    name: 'scheduled-action-failure',
+    checksum: '57fd3de27540308b02a9e46b4d7b1f4896a28c468e9705b8e8994da8e734613a',
+  },
 ];
 
 describe('реестр миграций', () => {

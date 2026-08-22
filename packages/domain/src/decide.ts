@@ -60,6 +60,22 @@ export type DecideResult =
   | { readonly kind: 'accepted'; readonly events: readonly DraftWorldEvent[] }
   | { readonly kind: 'rejected'; readonly rejection: DecideRejection };
 
+/**
+ * Проверка optimistic concurrency, выполняемая ТОЛЬКО когда команда её запросила (ADR-011).
+ *
+ * Отсутствие `expected_world_version` — это не «версия ноль», а «проверять нечего»: так
+ * помечают команду, выведенную из уже принятого факта мира. Сериализацию для неё обеспечивает
+ * замок мира в адаптере персистентности, а не сравнение версий.
+ */
+function checkExpectedVersion(state: WorldState, command: Command): DecideResult | null {
+  if (command.expected_world_version === undefined) return null;
+  if (command.expected_world_version === state.worldVersion) return null;
+  return rejected(
+    'stale_world_version',
+    `команда ожидала версию мира ${command.expected_world_version}, текущая версия ${state.worldVersion}`,
+  );
+}
+
 function rejected(code: CommandRejectionCode, message: string): DecideResult {
   return { kind: 'rejected', rejection: { code, message } };
 }
@@ -106,12 +122,8 @@ function decideJourneyComplete(
   command: Extract<Command, { type: 'journey.complete' }>,
   context: DecideContext,
 ): DecideResult {
-  if (command.expected_world_version !== state.worldVersion) {
-    return rejected(
-      'stale_world_version',
-      `команда ожидала версию мира ${command.expected_world_version}, текущая версия ${state.worldVersion}`,
-    );
-  }
+  const staleness = checkExpectedVersion(state, command);
+  if (staleness !== null) return staleness;
 
   const agent = state.agents[command.actor_id];
   if (agent === undefined) {
@@ -171,12 +183,8 @@ function decideJourneyStart(
   command: Extract<Command, { type: 'journey.start' }>,
   context: DecideContext,
 ): DecideResult {
-  if (command.expected_world_version !== state.worldVersion) {
-    return rejected(
-      'stale_world_version',
-      `команда ожидала версию мира ${command.expected_world_version}, текущая версия ${state.worldVersion}`,
-    );
-  }
+  const staleness = checkExpectedVersion(state, command);
+  if (staleness !== null) return staleness;
 
   const agent = state.agents[command.actor_id];
   if (agent === undefined || agent.status !== 'idle') {

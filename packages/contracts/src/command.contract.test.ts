@@ -100,13 +100,29 @@ describe('command envelope: runtime-отказы (A4)', () => {
     'schema_version',
     'actor_id',
     'issued_at_world_time',
-    'expected_world_version',
     'correlation_id',
     'payload',
   ])('отвергает отсутствие обязательного поля %s', (field) => {
     const broken: Record<string, unknown> = { ...VALID_COMMAND };
     delete broken[field];
     expect(issues(broken)).toMatch(new RegExp(field));
+  });
+
+  it('expected_world_version НЕ обязателен — и это решение, а не послабление (ADR-011)', () => {
+    // Поле запрашивает optimistic concurrency, и запрашивать её должен тот, кому она нужна.
+    // Команде, выведенной из расписания, проверять нечего: действие породил сам мир, а
+    // сериализацию даёт замок мира. Требование поля там стоило потерянных journey — отпечаток
+    // становился зависимым от гонки, и отказ по устаревшей версии делался невосстановимым.
+    const { expected_world_version: _omitted, ...withoutVersion } = VALID_COMMAND;
+    const result = decodeCommand(withoutVersion);
+    expect('errors' in result ? result.errors : null).toBeNull();
+  });
+
+  it('присутствующее expected_world_version по-прежнему валидируется', () => {
+    // Ослабления нет: если поле есть, оно обязано быть корректным.
+    expect(issues({ ...VALID_COMMAND, expected_world_version: -1 })).toMatch(
+      /expected_world_version/,
+    );
   });
 
   it.each([

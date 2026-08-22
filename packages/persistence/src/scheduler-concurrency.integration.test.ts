@@ -20,7 +20,7 @@ import { sql } from 'kysely';
 import { createDatabase, parseDatabaseConnectionUrl, type DatabaseConnection } from './database.ts';
 import { executeCommand } from './command-handler.ts';
 import { claimDueActions, runWorldTick } from './scheduler.ts';
-import { initializeWorld, loadWorldEvents, loadWorldState } from './world-repository.ts';
+import { initializeWorld, loadWorldEvents } from './world-repository.ts';
 
 const AGENTS = 6;
 const ARRIVAL = '2028-04-26T06:40:00.000Z';
@@ -186,7 +186,6 @@ describe('C5/C6 — конкуренция и аренда', () => {
     // Два способа, которыми ожившый worker может попробовать доделать свою работу, и оба
     // обязаны кончиться ничем. Проверяются оба: они защищены РАЗНЫМИ механизмами, и падение
     // любого из них — дубль в невосполнимом журнале.
-    const stateNow = await loadWorldState(db, FIXTURE_WORLD_ID);
 
     // 1. Он помнит версию мира, которая была при захвате, — команда байт в байт та же, что
     //    исполнил живой worker, поэтому срабатывает идемпотентность journal-а.
@@ -199,28 +198,24 @@ describe('C5/C6 — конкуренция и аренда', () => {
       commandFor(action, {
         worldId: FIXTURE_WORLD_ID,
         schemaVersion: 1,
-        version: originalVersion,
       }),
       { worldTime: action.dueAt },
     );
     expect(replayed.replayed).toBe(true);
     expect(replayed.outcome).toBe('accepted');
 
-    // 2. Он пересобрал команду по ТЕКУЩЕЙ версии мира — это уже другая команда под тем же
-    //    идентификатором, то есть подмена, и она получает названный отказ.
-    const impostor = await executeCommand(
+    // 2. Он пересобрал команду заново — и получает ТОТ ЖЕ результат, а не отказ.
+    //    После ADR-011 отпечаток команды расписания не зависит от версии мира, поэтому
+    //    пересборка даёт побайтово ту же команду. Раньше здесь был `precondition_failed`, и
+    //    именно это делало отказ невосстановимым: действие отвергалось вечно, а агент
+    //    оставался `traveling` навсегда (blocker аудита I02B).
+    const rebuilt = await executeCommand(
       db,
-      commandFor(action, {
-        worldId: FIXTURE_WORLD_ID,
-        schemaVersion: 1,
-        version: stateNow!.worldVersion,
-      }),
+      commandFor(action, { worldId: FIXTURE_WORLD_ID, schemaVersion: 1 }),
       { worldTime: action.dueAt },
     );
-    expect(impostor.outcome).toBe('rejected');
-    if (impostor.outcome === 'rejected') {
-      expect(impostor.rejectionCode).toBe('precondition_failed');
-    }
+    expect(rebuilt.replayed).toBe(true);
+    expect(rebuilt.outcome).toBe('accepted');
 
     // Главное: журнал не изменился ни в одном из двух случаев.
     expect(await loadWorldEvents(db, FIXTURE_WORLD_ID)).toEqual(before);
