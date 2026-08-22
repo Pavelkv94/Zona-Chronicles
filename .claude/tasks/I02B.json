@@ -1,0 +1,68 @@
+{
+  "iteration_id": "I02B",
+  "base_commit": "2e34600",
+  "//": "Карта владения путями I02B. Закоммичена ДО запуска исполнителей. Write set-ы задач T1 и T2 не пересекаются НИ ОДНИМ файлом: они работают параллельно в собственных worktree.",
+  "lead_paths": [
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "ops/**",
+    "tests/**",
+    "scripts/boundaries/**",
+    "scripts/worktree/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "tsconfig.depcruise.json",
+    "vitest.config.ts",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".gitignore",
+    ".nvmrc",
+    ".tool-versions",
+    ".dockerignore",
+    "docker-compose.yml",
+    "eslint.config.mjs",
+    ".dependency-cruiser.cjs",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "tools/agent-harness/**",
+    "tools/security-scan/**",
+    "security/**",
+    "scripts/security/**"
+  ],
+  "tasks": [
+    {
+      "task_id": "I02B-T1",
+      "owner_role": "tooling-implementer",
+      "//": "CLI над scheduler-ом: world tick. Плюс acceptance-проверка C7 настоящими процессами. Персистентность и контракты НЕ трогает — они принадлежат T2 и lead-у.",
+      "write_paths": ["apps/cli/**", "tests/acceptance/**"],
+      "allow_protected_paths": ["tests/acceptance/**"]
+    },
+    {
+      "task_id": "I02B-T2",
+      "owner_role": "persistence-implementer",
+      "//": "Снимки и позиции PRNG: C8, C11. Только новые файлы снимков в persistence и поле уровня изоляции в runtime profile контракта. CLI не трогает.",
+      "write_paths": [
+        "packages/persistence/src/snapshot-store.ts",
+        "packages/persistence/src/snapshot-store.integration.test.ts",
+        "packages/persistence/src/prng-positions.ts",
+        "packages/persistence/src/prng-positions.test.ts",
+        "packages/contracts/src/snapshot.ts",
+        "packages/contracts/src/snapshot.contract.test.ts"
+      ],
+      "allow_protected_paths": []
+    },
+    {
+      "task_id": "I02B-VERIFY",
+      "owner_role": "reviewer",
+      "//": "Единая read-only задача для обеих ролей верификации. Worktree создаётся от проверяемого коммита (--base).",
+      "write_paths": [],
+      "allow_protected_paths": []
+    }
+  ]
+}
