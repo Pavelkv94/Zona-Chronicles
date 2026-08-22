@@ -5,6 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
+import { sql } from 'kysely';
 import {
   RUNTIME_ID_PREFIXES,
   bundleRefFor,
@@ -98,6 +99,27 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
     await initializeWorld(db, fixtureInitialization());
   };
 
+  /**
+   * Переписывает `rules_version` события и ПЕРЕСЧИТЫВАЕТ его `event_checksum` — иначе тест ловил
+   * бы существующую проверку целостности события, а не отсутствующую проверку bundle-ов.
+   */
+  const rewriteEventRulesVersion = async (
+    conn: DatabaseConnection,
+    eventId: string,
+    rulesVersion: string,
+  ): Promise<void> => {
+    const events = await loadWorldEvents(conn, FIXTURE_WORLD_ID);
+    const original = events.find((event) => event.event_id === eventId);
+    if (original === undefined) throw new Error(`тест: событие ${eventId} не найдено`);
+    const patched = { ...original, rules_version: rulesVersion };
+    await sql`
+      update world_events
+         set rules_version = ${rulesVersion},
+             event_checksum = ${requireChecksum(patched, `event(${eventId})`)}
+       where event_id = ${eventId}
+    `.execute(conn);
+  };
+
   it('C9: снимок на sequence K плюс суффикс журнала даёт то же состояние и checksum, что непрерывный прогон до N', async () => {
     await seed();
 
@@ -166,6 +188,44 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
     const replayed = await replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshot);
     expect(replayed.appliedEventCount).toBe(0);
     expect(replayed.state).toEqual(state);
+  });
+
+  /**
+   * m2 (аудит I02B): суффикс проверялся на непрерывность `sequence` и на checksum КАЖДОГО
+   * события, но не на то, что события порождены ТЕМИ ЖЕ bundle-ами, что объявляет снимок.
+   * Событие несёт `rules_version`/`content_version`; снимок несёт `bundles.rules.version` и
+   * `bundles.content.version`. Их расхождение означает, что состояние снимка и правила, по
+   * которым посчитан суффикс, относятся к разным мирам — доигрывание даёт не тот мир, и ни
+   * непрерывность sequence, ни checksum события этого не видят по построению.
+   */
+  it('m2: событие суффикса, порождённое другим rules bundle, чем объявляет снимок, — громкий отказ', async () => {
+    await seed();
+    const first = await executeCommand(db, startJourney(FIXTURE_AGENT_ID, 0));
+    expect(first.outcome).toBe('accepted');
+    const stateAtK = await loadWorldState(db, FIXTURE_WORLD_ID);
+    const snapshotAtK = await writeSnapshot(db, {
+      worldId: FIXTURE_WORLD_ID,
+      lastSequence: stateAtK!.sequence,
+      worldTime: stateAtK!.worldTime,
+      bundles: bundles(),
+      deterministicRuntimeProfile: runtimeProfile(),
+      prngStreamPositions: {},
+      canonicalState: stateAtK,
+    });
+
+    const second = await executeCommand(db, startJourney(FIXTURE_OTHER_AGENT_ID, 1));
+    expect(second.outcome).toBe('accepted');
+
+    // Правка В ОБХОД писателя, вместе с checksum: событие внутренне непротиворечиво, поэтому
+    // проверка `loadWorldEvents` его пропустит — ловить расхождение обязан именно replay.
+    const journal = await loadWorldEvents(db, FIXTURE_WORLD_ID);
+    const inSuffix = journal.find((event) => event.sequence > snapshotAtK.last_sequence);
+    expect(inSuffix).toBeDefined();
+    await rewriteEventRulesVersion(db, inSuffix!.event_id, '9.9.9');
+
+    await expect(replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshotAtK)).rejects.toThrow(
+      /rules_version/,
+    );
   });
 
   it('replayWorld без единого снимка отказывает по названной причине, а не берёт состояние из ниоткуда', async () => {

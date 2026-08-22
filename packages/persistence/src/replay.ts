@@ -100,6 +100,49 @@ const checksumOf = (state: WorldState): string => {
 };
 
 /**
+ * Суффикс обязан быть посчитан ТЕМИ ЖЕ bundle-ами, что объявляет снимок (m2 аудита I02B).
+ *
+ * Непрерывность `sequence` и `event_checksum` каждого события этого не видят по построению:
+ * событие с чужой `rules_version` внутренне непротиворечиво и стоит на своём месте в журнале.
+ * Но состояние снимка посчитано одними правилами, а суффикс — другими, и свёртка даёт мир,
+ * которого никогда не было. Для SIM-01 это то же самое, что дыра в журнале, только тише.
+ *
+ * `schema_version` события сюда НЕ входит: это версия конверта события, а `bundles.schema` —
+ * версия bundle JSON-схем. Разные величины; сравнивать их значило бы проверять совпадение
+ * чисел, не имеющих отношения друг к другу.
+ *
+ * Смена правил по ходу жизни мира сегодня невозможна (`worlds` держит одну `rules_version`),
+ * поэтому расхождение означает порчу или смешение историй. В тот день, когда версионный переход
+ * появится, эта проверка обязана стать сравнением с ИСТОРИЕЙ версий, а не с одной.
+ */
+const assertSuffixBundlesMatchSnapshot = (
+  worldId: string,
+  snapshot: Snapshot,
+  suffix: readonly WorldEvent[],
+): void => {
+  const expectedRules = snapshot.bundles.rules.version;
+  const expectedContent = snapshot.bundles.content.version;
+
+  for (const event of suffix) {
+    if (event.rules_version !== expectedRules) {
+      throw new Error(
+        `replay: событие ${event.event_id} (sequence ${String(event.sequence)}) мира ${worldId} ` +
+          `порождено rules_version ${event.rules_version}, а снимок объявляет ` +
+          `${expectedRules}. Состояние снимка и суффикс посчитаны разными правилами — ` +
+          'свёртка дала бы мир, которого не было (SIM-01).',
+      );
+    }
+    if (event.content_version !== expectedContent) {
+      throw new Error(
+        `replay: событие ${event.event_id} (sequence ${String(event.sequence)}) мира ${worldId} ` +
+          `порождено content_version ${event.content_version}, а снимок объявляет ` +
+          `${expectedContent}. Состояние снимка и суффикс относятся к разному контенту (SIM-01).`,
+      );
+    }
+  }
+};
+
+/**
  * Восстанавливает состояние мира из УЖЕ ЗАГРУЖЕННОГО и проверенного снимка плюс суффикс
  * журнала (C9). `snapshot` — то, что вернул {@link loadLatestSnapshot}/`loadSnapshotAt` из
  * `snapshot-store.ts`: checksum снимка уже сверен там, здесь это не повторяется.
@@ -117,6 +160,7 @@ export const replayFromSnapshot = async (
   }
 
   const suffix = await loadContinuousSuffix(db, worldId, snapshot.last_sequence);
+  assertSuffixBundlesMatchSnapshot(worldId, snapshot, suffix);
 
   let state = snapshot.canonical_state as WorldState;
   for (const event of suffix) {
