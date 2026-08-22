@@ -122,9 +122,26 @@ export const DeterministicRuntimeProfileSchema = Type.Object(
     }),
     icu_version: Type.String({ minLength: 1, description: 'Профиль ICU.' }),
     timezone: Type.String({ minLength: 1, description: 'Профиль timezone канонического worker.' }),
+    transaction_isolation_level: Type.String({
+      minLength: 1,
+      description:
+        'Уровень изоляции канонической транзакции (ADR-010 §10.1). Часть профиля, потому что ' +
+        'от него зависит НАБЛЮДАЕМАЯ семантика отказа: под repeatable read/serializable ' +
+        'конкурентная команда получает 40001 вместо названного stale_world_version.',
+    }),
   },
   { additionalProperties: false, description: 'Deterministic runtime profile (§9).' },
 );
+
+/**
+ * Уровень изоляции канонической транзакции.
+ *
+ * Живёт в контракте, а не в персистентности, потому что попадает в runtime profile снимка и
+ * участвует в проверке совместимости при восстановлении. Одно значение в одном месте: иначе
+ * строка появилась бы отдельно в handler-е, отдельно в снимке и отдельно в тестах, и разошлась
+ * бы молча.
+ */
+export const CANONICAL_TRANSACTION_ISOLATION_LEVEL = 'read committed';
 
 export type DeterministicRuntimeProfile = Static<typeof DeterministicRuntimeProfileSchema>;
 
@@ -280,6 +297,9 @@ export const EXACT_MATCH_PROFILE_FIELDS = [
   'numeric_rounding_policy_version',
   'icu_version',
   'timezone',
+  // Точное совпадение, а не major/minor: это дискретный режим, а не версия. «Почти тот же
+  // уровень изоляции» не бывает — другой уровень означает другую семантику отказа (ADR-010).
+  'transaction_isolation_level',
 ] as const;
 
 /**

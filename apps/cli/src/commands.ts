@@ -3,10 +3,11 @@
  *
  * `docs/10_ITERATION_MASTER_PLAN.md` names `world seed` and `world inspect` explicitly under I01
  * ("CLI in-memory `world seed` и `world inspect`") and `world replay` explicitly under I02B
- * ("replay/resimulation CLI"). `world run` (starting a journey, I02A: "CLI начинает путь") and
- * `world export` (exporting a replay/projection view, alongside I02B replay tooling) are not
- * literally named commands in the master plan; their iteration below is the closest documented
- * scope and should be corrected once those iterations define the CLI surface precisely.
+ * ("replay/resimulation CLI"). `world run` (starting a journey, I02A: "CLI начинает путь"),
+ * `world tick` (worker step, I02B PLAN §2 demo: "pnpm world tick") and `world export` (exporting
+ * a replay/projection view, alongside I02B replay tooling) are not literally named commands in
+ * the master plan; their iteration below is the closest documented scope and should be corrected
+ * once those iterations define the CLI surface precisely.
  *
  * No implementation is simulated here: every command in I00 is `status: 'planned'` and `runCli`
  * (apps/cli/src/main.ts) reports that honestly with exit code 1 instead of pretending to run.
@@ -14,8 +15,8 @@
  * I01 lands real implementations for `world seed`/`world inspect` (ACCEPTANCE A1/A2/A3/A10,
  * `apps/cli/src/world-cli.ts`) — their `status` flips to `'available'` here; `runCli` still
  * consults this registry for name/iteration lookup and to decide whether an unimplemented
- * command should say "planned" honestly. `world run`/`world replay`/`world export` stay
- * `'planned'`: out of scope for I01 (PLAN §5).
+ * command should say "planned" honestly. `world run`/`world tick`/`world replay`/`world export`
+ * stay `'planned'` through I01: out of scope for that iteration (PLAN §5).
  */
 
 /**
@@ -86,6 +87,13 @@ export const COMMANDS: readonly CliCommand[] = [
     summary: 'Print the durable canonical event log.',
     status: 'available',
     iteration: 'I02A',
+    requiresDatabase: true,
+  },
+  {
+    name: 'world tick',
+    summary: 'Run one worker step: claim and execute due scheduled actions.',
+    status: 'available',
+    iteration: 'I02B',
     requiresDatabase: true,
   },
   {

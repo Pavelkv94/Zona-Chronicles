@@ -5,8 +5,9 @@ const KNOWN_ITERATIONS = /^I\d{2}[AB]?$/;
 
 describe('COMMANDS registry', () => {
   it('lists the documented world commands in registry order', () => {
-    // I02A добавила четыре команды над durable-миром (PLAN §4.9); список остаётся точным, а не
-    // «хотя бы содержит», чтобы новая команда не появлялась в CLI без осознанной правки теста.
+    // I02A добавила четыре команды над durable-миром (PLAN §4.9), I02B добавила `world tick`
+    // (scheduler-шаг, PLAN §2/§4.7); список остаётся точным, а не «хотя бы содержит», чтобы
+    // новая команда не появлялась в CLI без осознанной правки теста.
     expect(COMMANDS.map((c) => c.name)).toEqual([
       'world seed',
       'world migrate',
@@ -14,13 +15,14 @@ describe('COMMANDS registry', () => {
       'world run',
       'world state',
       'world events',
+      'world tick',
       'world replay',
       'world inspect',
       'world export',
     ]);
   });
 
-  it('I01 дал seed/inspect, I02A — durable-команды; replay/export всё ещё planned', () => {
+  it('I01 дал seed/inspect, I02A — durable-команды, I02B — tick; replay/export всё ещё planned', () => {
     const byName = Object.fromEntries(COMMANDS.map((c) => [c.name, c.status] as const));
     expect(byName['world seed']).toBe('available');
     expect(byName['world inspect']).toBe('available');
@@ -29,12 +31,13 @@ describe('COMMANDS registry', () => {
     expect(byName['world run']).toBe('available');
     expect(byName['world state']).toBe('available');
     expect(byName['world events']).toBe('available');
-    // I02B: scheduler, завершение journey и replay.
+    expect(byName['world tick']).toBe('available');
+    // I02B: replay остаётся planned — вне scope этой задачи.
     expect(byName['world replay']).toBe('planned');
     expect(byName['world export']).toBe('planned');
   });
 
-  it('ровно команды I02A помечены requiresDatabase', () => {
+  it('ровно команды I02A + world tick (I02B) помечены requiresDatabase', () => {
     const needsDb = COMMANDS.filter((c) => c.requiresDatabase === true).map((c) => c.name);
     expect(needsDb).toEqual([
       'world migrate',
@@ -42,6 +45,7 @@ describe('COMMANDS registry', () => {
       'world run',
       'world state',
       'world events',
+      'world tick',
     ]);
     // In-memory команды I01 обязаны работать без базы вовсе (A10 остаётся в силе).
     const inMemory = COMMANDS.filter((c) => ['world seed', 'world inspect'].includes(c.name));

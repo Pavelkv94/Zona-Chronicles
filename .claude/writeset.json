@@ -16,11 +16,10 @@
         "packages/persistence/src/snapshot-store.ts",
         "packages/persistence/src/snapshot-store.integration.test.ts",
         "packages/persistence/src/prng-positions.ts",
-        "packages/persistence/src/prng-positions.test.ts",
-        "packages/contracts/src/snapshot.ts",
-        "packages/contracts/src/snapshot.contract.test.ts"
+        "packages/persistence/src/prng-positions.test.ts"
       ],
-      "allow_protected_paths": []
+      "allow_protected_paths": [],
+      "//": "Контрактная часть (уровень изоляции в runtime profile) сделана lead-ом: packages/contracts/** — protected path, и это правильно. Задаче остаётся persistence."
     }
   ]
 }

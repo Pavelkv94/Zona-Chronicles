@@ -28,6 +28,7 @@ import {
   runWorldMigrateCommand,
   runWorldRunCommand,
   runWorldStateCommand,
+  runWorldTickCommand,
 } from './world-db-cli.ts';
 
 export type { CliResult } from './commands.ts';
@@ -139,6 +140,8 @@ export async function runCliAsync(argv: readonly string[], config: CliConfig): P
         return await runWorldStateCommand(db);
       case 'world events':
         return await runWorldEventsCommand(db);
+      case 'world tick':
+        return await runWorldTickCommand(db, commandArgs);
       default:
         // Реестр пометил команду как требующую базу, но здесь её нет — честный отказ вместо
         // молчаливого падения в синхронный путь, который базу не откроет.

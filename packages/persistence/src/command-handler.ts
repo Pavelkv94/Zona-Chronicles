@@ -24,6 +24,7 @@
  */
 import { sql } from 'kysely';
 import {
+  CANONICAL_TRANSACTION_ISOLATION_LEVEL,
   compareByCodePoint,
   commandFingerprintSource,
   requireCanonical,
@@ -286,7 +287,7 @@ export const executeCommand = async (
   // репозитория молча менял наблюдаемую семантику отказа, и ни один тест этого не ловил.
   return db
     .transaction()
-    .setIsolationLevel('read committed')
+    .setIsolationLevel(CANONICAL_TRANSACTION_ISOLATION_LEVEL)
     .execute(async (trx) => {
       const locked = await trx
         .selectFrom('worlds')

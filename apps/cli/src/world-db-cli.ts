@@ -6,7 +6,14 @@
  * `DATABASE_URL` читает `main.ts` — единственное место, которому разрешено трогать окружение;
  * сюда строка приходит явным параметром (ADR-003: оболочка снаружи, зависимости внутрь).
  */
-import { RUNTIME_ID_PREFIXES, compareByCodePoint, type Command } from '@zona/contracts';
+import {
+  RUNTIME_ID_PREFIXES,
+  addMinutes,
+  compareByCodePoint,
+  isInstantError,
+  parseInstant,
+  type Command,
+} from '@zona/contracts';
 import { randomUUID } from 'node:crypto';
 import { DerivedIdFactory, testRulesetVersions } from '@zona/domain';
 import { PROTOTYPE_WORLD } from '@zona/content';
@@ -19,6 +26,7 @@ import {
   migrations,
   parseDatabaseConnectionUrl,
   runMigrations,
+  runWorldTick,
   applyGrants,
   ensureApplicationRoles,
   type DatabaseConnection,
@@ -223,6 +231,138 @@ export const runWorldRunCommand = async (
       `  версия мира: ${String(result.worldVersionBefore)} -> ${String(result.worldVersionAfter)}\n`,
     exitCode: 0,
   };
+};
+
+/**
+ * Горизонт для `world tick`: `--advance <минуты>` ИЛИ `--until <ISO>`, не оба сразу.
+ *
+ * Без явного горизонта `runWorldTick` двигает мир только до УЖЕ наступившего мирового времени
+ * (ACCEPTANCE C3) — это здесь выражено буквально: `horizon: undefined` в `TickOptions` и есть
+ * дефолт «текущее мировое время», а не отдельная ветка кода, которая могла бы с ним разойтись.
+ *
+ * `--advance` считается сдвигом от ТЕКУЩЕГО мирового времени через `requireAddMinutes`
+ * (`@zona/contracts`) — тем же путём, каким домен считает `expectedArrival` для `journey.start`
+ * (`decide.ts`), а не арифметикой над ISO-строкой или `Date`: секунда, потерянная на округлении
+ * здесь, разошлась бы с тем, что канонически посчитал бы домен для того же сдвига.
+ */
+type HorizonParseResult =
+  | { readonly kind: 'ok'; readonly horizon: string | undefined }
+  | { readonly kind: 'error'; readonly message: string };
+
+const parseHorizon = (args: readonly string[], worldTime: string): HorizonParseResult => {
+  const advanceRaw = flag(args, '--advance');
+  const untilRaw = flag(args, '--until');
+
+  if (advanceRaw !== undefined && untilRaw !== undefined) {
+    return {
+      kind: 'error',
+      message:
+        '--advance и --until взаимоисключающие — назовите ровно один горизонт, а не молчаливо ' +
+        'предпочтите один из двух',
+    };
+  }
+  if (advanceRaw === undefined && untilRaw === undefined) {
+    return { kind: 'ok', horizon: undefined };
+  }
+
+  if (untilRaw !== undefined) {
+    const parsed = parseInstant(untilRaw);
+    if (isInstantError(parsed)) return { kind: 'error', message: `--until: ${parsed.error}` };
+    return { kind: 'ok', horizon: parsed.iso };
+  }
+
+  // Дошли сюда — задан только --advance.
+  if (!INTEGER_PATTERN.test(advanceRaw!)) {
+    return {
+      kind: 'error',
+      message: `--advance ожидает целое число минут, получено ${JSON.stringify(advanceRaw)}`,
+    };
+  }
+  const minutes = Number(advanceRaw);
+  if (!Number.isSafeInteger(minutes)) {
+    return { kind: 'error', message: `--advance вне безопасного диапазона целых: ${advanceRaw}` };
+  }
+  if (minutes < 0) {
+    // C12: мировое время монотонно. Отрицательный сдвиг всегда даёт горизонт раньше текущего
+    // мирового времени, а `runWorldTick` отверг бы его позже той же причиной, но менее по-
+    // человечески — это флаговая ошибка, а не программная, и обязана остановиться здесь.
+    return {
+      kind: 'error',
+      message: `--advance не может быть отрицательным: ${advanceRaw} (мир не идёт назад, C12)`,
+    };
+  }
+
+  const base = parseInstant(worldTime);
+  if (isInstantError(base)) {
+    // Мировое время читается из БД и обязано быть каноническим по построению — это не ошибка
+    // пользователя, а сигнал о повреждённых данных.
+    throw new Error(`world tick: мировое время из БД неканонично: ${base.error}`);
+  }
+  const shifted = addMinutes(base, minutes);
+  if (isInstantError(shifted)) return { kind: 'error', message: `--advance: ${shifted.error}` };
+  return { kind: 'ok', horizon: shifted.iso };
+};
+
+/**
+ * Метка владельца аренды для `runWorldTick` (`ClaimOptions.owner`, `packages/persistence/src/scheduler.ts`).
+ *
+ * Обязана быть различимой между запусками (ACCEPTANCE C5/C6 требуют РАЗНЫХ worker-ов), а не
+ * константой вроде `'cli'`: два `world tick`, случайно запущенные одновременно на одном мире —
+ * например оператором и cron-ом — иначе делили бы одну метку владельца, и по логам вокруг
+ * зависшей аренды было бы не отличить, какой из процессов её держит. `pid` даёт то, что видно
+ * в `ps`/логах ОС сразу; `randomUUID` — гарантию уникальности, если pid переиспользуется другим
+ * процессом между двумя короткоживущими запусками CLI.
+ */
+const tickOwner = (): string => `cli:${String(process.pid)}:${randomUUID()}`;
+
+/**
+ * `world tick` — один шаг worker-а: захватить наступившие due actions и исполнить их.
+ *
+ * CLI, а не постоянный процесс (`apps/worker`) — здесь одна короткоживущая попытка сдвинуть мир,
+ * ровно как задумано PLAN §2 (`pnpm world tick` между стартом journey и проверкой состояния).
+ */
+export const runWorldTickCommand = async (
+  db: DatabaseConnection,
+  args: readonly string[],
+): Promise<CliResult> => {
+  const state = await loadWorldState(db, PROTOTYPE_WORLD.worldId);
+  if (state === null) {
+    return {
+      stdout: `world tick: мир ${PROTOTYPE_WORLD.worldId} не создан — сначала "world init --seed N".\n`,
+      exitCode: 2,
+    };
+  }
+
+  const horizonResult = parseHorizon(args, state.worldTime);
+  if (horizonResult.kind === 'error') {
+    return { stdout: `world tick: ${horizonResult.message}\n`, exitCode: 2 };
+  }
+
+  const result = await runWorldTick(db, {
+    worldId: state.worldId,
+    owner: tickOwner(),
+    ...(horizonResult.horizon === undefined ? {} : { horizon: horizonResult.horizon }),
+  });
+
+  if (result.claimed === 0) {
+    return {
+      stdout: `Нечего обрабатывать: наступивших действий нет (мировое время ${result.worldTime}).\n`,
+      exitCode: 0,
+    };
+  }
+
+  const lines = [`Захвачено действий: ${String(result.claimed)}`];
+  for (const execution of result.executed) {
+    if (execution.outcome === 'accepted') {
+      lines.push(`  ${execution.commandId} принята: события ${execution.eventIds.join(', ')}`);
+    } else {
+      lines.push(
+        `  ${execution.commandId} отклонена: ${execution.rejectionCode} — ${execution.rejectionMessage}`,
+      );
+    }
+  }
+  lines.push(`Мировое время: ${result.worldTime}`);
+  return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
 };
 
 /** `world state` — каноническое состояние мира из базы (B9: переживает перезапуск процесса). */

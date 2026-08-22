@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CANONICAL_TRANSACTION_ISOLATION_LEVEL,
   BundleRefSchema,
   DeterministicRuntimeProfileSchema,
   EXACT_MATCH_PROFILE_FIELDS,
@@ -42,6 +43,7 @@ const BASE_SNAPSHOT = {
     node_version: '24.14.0',
     icu_version: '77.1',
     timezone: 'UTC',
+    transaction_isolation_level: CANONICAL_TRANSACTION_ISOLATION_LEVEL,
   },
   prng_stream_positions: { 'agent:rook': 12, 'world:prototype': 3 },
   canonical_state: { agents: [{ id: 'agent:rook', location_id: 'loc:quiet-yard' }] },

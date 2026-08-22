@@ -20,6 +20,7 @@
 import {
   type Snapshot,
   CANONICAL_SERIALIZATION_VERSION,
+  CANONICAL_TRANSACTION_ISOLATION_LEVEL,
   SNAPSHOT_CHECKSUM_SCOPE_VERSION,
   bundleRefFor,
   isInstantError,
@@ -214,6 +215,9 @@ export function seedWorld(
       // В отличие от node/icu — это НЕ чтение окружения хоста, а фиксированное свойство
       // канонического мира (world time всегда UTC); литерал, а не `Intl`/`process.env.TZ`.
       timezone: CANONICAL_TIMEZONE,
+      // Как и timezone — свойство канонического ядра, а не машины: уровень изоляции задан
+      // явно в транзакции и не наследуется от настроек сервера (ADR-010 §10.1).
+      transaction_isolation_level: CANONICAL_TRANSACTION_ISOLATION_LEVEL,
     },
     prng_stream_positions: prngStreamPositions,
     canonical_state: state,
