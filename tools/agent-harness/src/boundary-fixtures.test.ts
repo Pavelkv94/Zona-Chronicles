@@ -208,6 +208,22 @@ const contentFiles: Readonly<Record<string, string>> = {
 const persistenceFiles: Readonly<Record<string, string>> = {
   'persistence-to-simulation.ts':
     "import { PACKAGE_NAME } from '@zona/simulation';\nexport const _x = PACKAGE_NAME;\n",
+  /**
+   * M6 (аудит I02B): запрет C10 «replay не решает заново» был привязан к ОДНОМУ файлу
+   * (`packages/persistence/src/replay.ts`) и не имел фикстуры — то есть по ADR-003 считался
+   * несуществующим. Обе фикстуры обязательны и проверяют РАЗНЫЕ направления: нарушение ловится,
+   * корректная свёртка проходит. Именно вторая сторона в прошлый раз не была проверена, и
+   * правило dependency-cruiser с `reachable: true` падало на правильном коде.
+   */
+  'replay.ts': "import { decide } from '@zona/domain';\nexport const bad = decide;\n",
+  'replay-fold.ts': "import { evolve } from '@zona/domain';\nexport const good = evolve;\n",
+  /**
+   * Третья фикстура появилась из-за дефекта, который вскрыло само расширение правила: блок C10
+   * переопределял `no-restricted-imports` ЦЕЛИКОМ, и запрет LLM SDK (ADR-006) внутри replay-файлов
+   * молча исчезал. Проверять надо не только то, что новое правило работает, но и то, что оно не
+   * отменило соседнее.
+   */
+  'replay-llm.ts': `import { Anthropic } from '${LLM_PACKAGE}';\nexport type _A = Anthropic;\n`,
 };
 
 /**
@@ -287,7 +303,16 @@ beforeAll(() => {
       writeFileSync(resolve(API_DIR, name), content);
     }
 
-    const eslintRaw = runCapture('pnpm', ['exec', 'eslint', '--format', 'json', DOMAIN_DIR]);
+    // PERSISTENCE_DIR попадает в прогон eslint ради фикстур C10 (M6): правила `files` смотрят на
+    // путь файла, поэтому фикстура обязана лежать внутри пакета, к которому правило применяется.
+    const eslintRaw = runCapture('pnpm', [
+      'exec',
+      'eslint',
+      '--format',
+      'json',
+      DOMAIN_DIR,
+      PERSISTENCE_DIR,
+    ]);
     eslintResults = JSON.parse(eslintRaw) as readonly EslintFileResult[];
 
     const depcruiseRaw = runCapture('pnpm', [
@@ -385,6 +410,29 @@ describe('boundary fixtures — eslint (A2, DEV-02, SIM-01)', () => {
     ],
   ] as const)('%s -> %s срабатывает и указывает на нужное правило', (file, ruleId, fragment) => {
     expect(hasEslintMessage(file, ruleId, fragment)).toBe(true);
+  });
+});
+
+describe('boundary fixtures — C10: replay не принимает решений заново (M6)', () => {
+  it('replay.ts с импортом decide ловится правилом и названным сообщением', () => {
+    expect(hasEslintMessage('replay.ts', 'no-restricted-imports', 'ACCEPTANCE C10')).toBe(true);
+  });
+
+  it('запрет LLM SDK (ADR-006) не исчезает в replay-файлах: правила eslint переопределяются целиком', () => {
+    expect(
+      hasEslintMessage(
+        'replay-llm.ts',
+        'no-restricted-imports',
+        `'${LLM_PACKAGE}' import is restricted`,
+      ),
+    ).toBe(true);
+  });
+
+  it('вторая сторона: свёртка через evolve проходит — правило не запрещает корректный replay', () => {
+    const c10 = findEslintResult('replay-fold.ts').messages.filter((m) =>
+      m.message.includes('ACCEPTANCE C10'),
+    );
+    expect(c10).toEqual([]);
   });
 });
 
