@@ -105,8 +105,20 @@ export const ensureApplicationRoles = async (
 
     const attributes = found.rows[0];
     if (attributes === undefined) {
-      await sql`${sql.raw(`create role ${role} login password ${literal(password)}`)}`.execute(db);
-      created.push(role);
+      try {
+        await sql`${sql.raw(`create role ${role} login password ${literal(password)}`)}`.execute(
+          db,
+        );
+        created.push(role);
+      } catch (error) {
+        // Роль — объект КЛАСТЕРА, а `world migrate` может идти одновременно в нескольких базах
+        // того же кластера (две параллельные task-сессии, два деплоя). Проверка «есть ли роль»
+        // и её создание — check-then-act, поэтому гонка реальна: второй получает
+        // `duplicate_object`. Это не ошибка, а именно тот исход, которого мы и добивались —
+        // роль существует. Любой другой код пробрасывается.
+        if ((error as { code?: unknown }).code !== '42710') throw error;
+        existing.push(role);
+      }
       continue;
     }
     if (
