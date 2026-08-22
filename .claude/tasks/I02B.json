@@ -1,6 +1,6 @@
 {
   "iteration_id": "I02B",
-  "base_commit": "2e34600",
+  "base_commit": "c535aed",
   "//": "Карта владения путями I02B. Закоммичена ДО запуска исполнителей. Write set-ы задач T1 и T2 не пересекаются НИ ОДНИМ файлом: они работают параллельно в собственных worktree.",
   "lead_paths": [
     ".claude/**",
@@ -39,14 +39,14 @@
     {
       "task_id": "I02B-T1",
       "owner_role": "tooling-implementer",
-      "//": "CLI над scheduler-ом: world tick. Плюс acceptance-проверка C7 настоящими процессами. Персистентность и контракты НЕ трогает — они принадлежат T2 и lead-у.",
+      "//": "СДАНА И ПРИНЯТА в раунде реализации I02B.",
       "write_paths": ["apps/cli/**", "tests/acceptance/**"],
       "allow_protected_paths": ["tests/acceptance/**"]
     },
     {
       "task_id": "I02B-T2",
       "owner_role": "persistence-implementer",
-      "//": "Снимки и позиции PRNG: C8, C11. Только новые файлы снимков в persistence и поле уровня изоляции в runtime profile контракта. CLI не трогает.",
+      "//": "СДАНА И ПРИНЯТА в раунде реализации I02B.",
       "write_paths": [
         "packages/persistence/src/snapshot-store.ts",
         "packages/persistence/src/snapshot-store.integration.test.ts",
@@ -60,9 +60,10 @@
     {
       "task_id": "I02B-VERIFY",
       "owner_role": "reviewer",
-      "//": "Единая read-only задача для обеих ролей верификации. Worktree создаётся от проверяемого коммита (--base).",
+      "//": "Единая read-only задача для обеих ролей верификации I02B.",
       "write_paths": [],
-      "allow_protected_paths": []
+      "allow_protected_paths": [],
+      "agent_types": ["i02b-test-reviewer", "i02b-arch-reviewer", "reviewer"]
     }
   ]
 }

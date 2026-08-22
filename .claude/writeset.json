@@ -1,24 +1,12 @@
 {
-  "//": "I02B: две ПАРАЛЛЕЛЬНЫЕ задачи. Сессия выбирает свою по agent_type из hook payload. Внимание: платформа кладёт туда ИМЯ сессии, а не тип subagent-а, поэтому привязка задана явным agent_types, а owner_role остаётся смыслом задачи. Роль вне списка прав не получает (fail-closed).",
+  "//": "I02B, раунд верификации. Обе роли read-only: пустой write_paths запрещает любую запись. Привязка по agent_types — платформа кладёт в hook payload ИМЯ сессии, а не роль.",
   "tasks": [
     {
-      "task_id": "I02B-T1",
-      "owner_role": "tooling-implementer",
-      "agent_types": ["i02b-t1-cli", "tooling-implementer"],
-      "write_paths": ["apps/cli/**", "tests/acceptance/**"],
-      "allow_protected_paths": ["tests/acceptance/**"],
-      "//": "СДАНА И ПРИНЯТА. Права оставлены на случай правок по замечаниям верификации."
-    },
-    {
-      "task_id": "I02B-T3",
-      "owner_role": "persistence-implementer",
-      "agent_types": ["i02b-t2-snapshots", "persistence-implementer"],
-      "write_paths": [
-        "packages/persistence/src/replay.ts",
-        "packages/persistence/src/replay.integration.test.ts"
-      ],
-      "allow_protected_paths": [],
-      "//": "Replay: C9 и C10. Снимки (C8/C11) сданы и приняты. Контракты и правила границ — lead."
+      "task_id": "I02B-VERIFY",
+      "owner_role": "reviewer",
+      "agent_types": ["i02b-test-reviewer", "i02b-arch-reviewer", "reviewer"],
+      "write_paths": [],
+      "allow_protected_paths": []
     }
   ]
 }
