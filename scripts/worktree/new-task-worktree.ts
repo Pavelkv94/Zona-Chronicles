@@ -44,9 +44,16 @@ const fail = (message: string): never => {
 };
 
 const usage =
-  'Использование: node scripts/worktree/new-task-worktree.ts <карта-задач.json> <task-id> [каталог]';
+  'Использование: node scripts/worktree/new-task-worktree.ts <карта-задач.json> <task-id> ' +
+  '[каталог] [--base <ref>]';
 
-const [, , tasksPathArg, taskIdArg, dirArg] = process.argv;
+const argv = process.argv.slice(2);
+const baseFlagIndex = argv.indexOf('--base');
+const baseFromFlag = baseFlagIndex === -1 ? undefined : argv[baseFlagIndex + 1];
+if (baseFlagIndex !== -1 && baseFromFlag === undefined) fail('--base требует значение (ref)');
+const positional =
+  baseFlagIndex === -1 ? argv : [...argv.slice(0, baseFlagIndex), ...argv.slice(baseFlagIndex + 2)];
+const [tasksPathArg, taskIdArg, dirArg] = positional;
 if (tasksPathArg === undefined || taskIdArg === undefined) fail(usage);
 
 const projectRoot = process.cwd();
@@ -60,7 +67,11 @@ try {
   fail(`Карта задач не является валидным JSON: ${String(error)}`);
 }
 
-const map = parsed as { readonly iteration_id?: unknown; readonly tasks?: unknown };
+const map = parsed as {
+  readonly iteration_id?: unknown;
+  readonly base_commit?: unknown;
+  readonly tasks?: unknown;
+};
 if (!Array.isArray(map.tasks)) fail('Карта задач: обязательное поле tasks (список).');
 
 const task = (map.tasks as readonly TaskDeclaration[]).find((item) => item.task_id === taskIdArg);
@@ -77,9 +88,24 @@ if (existsSync(worktreeDir)) fail(`Каталог уже существует: $
 const git = (args: readonly string[], cwd = projectRoot): string =>
   execFileSync('git', [...args], { cwd, encoding: 'utf8' });
 
-const branch = `task/${taskIdArg}`;
-process.stdout.write(`Создаю worktree ${worktreeDir} на ветке ${branch}\n`);
-git(['worktree', 'add', '-b', branch, worktreeDir]);
+/**
+ * Reviewer-сессии тоже получают worktree — и это не симметрия ради симметрии.
+ *
+ * `PLAN.md` §8.6 I02A: изоляция была введена для исполнителей, а верификация продолжала идти в
+ * общем дереве. Живой прогон I02A показал цену: пока reviewer работал, lead коммитил, и
+ * SubagentStop дважды приписал ему чужие правки — вторая блокировка едва не потеряла его отчёт.
+ * Это тот же F5-3, просто с другой ролью.
+ *
+ * Отличие от worktree исполнителя одно, но существенное: reviewer создаётся от КОММИТА, который
+ * он проверяет, а не от текущего HEAD. Тогда последующая работа lead-а физически не попадает в
+ * его дерево, а `git diff <base>..HEAD` внутри worktree описывает ровно проверяемый диапазон.
+ */
+const isReviewer = task!.owner_role === 'reviewer';
+const baseRef =
+  baseFromFlag ?? (typeof map.base_commit === 'string' ? map.base_commit : undefined) ?? 'HEAD';
+const branch = `${isReviewer ? 'review' : 'task'}/${taskIdArg}`;
+process.stdout.write(`Создаю worktree ${worktreeDir} на ветке ${branch} от ${baseRef}\n`);
+git(['worktree', 'add', '-b', branch, worktreeDir, baseRef]);
 
 // Bootstrap делает lead, а не агент: установка зависимостей — операция orchestrator/lead
 // (ADR-008), и запрет на неё для task-сессии остаётся в силе внутри worktree.
@@ -105,10 +131,19 @@ writeFileSync(
 // Незакоммиченный файл разблокировал бы работу и завалил завершение как untracked путь
 // в .claude/**.
 git(['add', '.claude/writeset.json'], worktreeDir);
-git(
-  ['commit', '-q', '-m', `${taskIdArg}: declare write set for the isolated worktree`],
-  worktreeDir,
-);
+// Коммит только если файл действительно изменился: у reviewer-сессии, созданной от коммита, в
+// котором её write set уже объявлен, коммитить нечего, и `git commit` там падает с «nothing to
+// commit» — найдено исполнением при первой же пробе.
+const staged = git(['status', '--porcelain', '--', '.claude/writeset.json'], worktreeDir).trim();
+if (staged.length > 0) {
+  git(
+    ['commit', '-q', '-m', `${taskIdArg}: declare write set for the isolated worktree`],
+    worktreeDir,
+  );
+  process.stdout.write('Write set объявлен и закоммичен.\n');
+} else {
+  process.stdout.write('Write set уже объявлен в базовом коммите — коммитить нечего.\n');
+}
 
 process.stdout.write(
   [
@@ -117,8 +152,12 @@ process.stdout.write(
     `  каталог: ${worktreeDir}`,
     `  ветка:   ${branch}`,
     `  write_paths: ${task!.write_paths.join(', ') || '(пусто — только чтение)'}`,
+    `  база:    ${baseRef}`,
     '',
-    'Diff этого worktree и есть работа сессии: атрибуция больше не требует догадок (F5-3).',
+    isReviewer
+      ? 'Дерево зафиксировано на проверяемом коммите: работа lead-а сюда не попадёт, и вердикт\n' +
+        'о владении путями относится к сессии, а не к общему дереву (PLAN §8.6 I02A).'
+      : 'Diff этого worktree и есть работа сессии: атрибуция больше не требует догадок (F5-3).',
     '',
   ].join('\n'),
 );

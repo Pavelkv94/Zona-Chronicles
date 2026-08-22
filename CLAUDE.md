@@ -100,6 +100,17 @@ pnpm task:worktree .claude/tasks/<итерация>.json <task-id>
 фактический `git diff` сверяется с write set. Роль `reviewer` объявляется явно: `owner_role`
 = `"reviewer"` с пустым `write_paths` даёт read-only Bash и запрещает любую запись.
 
+**Reviewer-сессия тоже работает в worktree**, и создаётся он от ПРОВЕРЯЕМОГО коммита, а не от
+текущего HEAD:
+
+```sh
+pnpm task:worktree .claude/tasks/<итерация>.json <task-id> --base <проверяемый-коммит>
+```
+
+По умолчанию база берётся из `base_commit` карты итерации. Без этого работа lead-а, идущая
+параллельно, попадает в дерево ревьюера, и контроль владения приписывает её ему: в I02A так
+дважды произошло, и вторая блокировка едва не потеряла отчёт (`PLAN.md` §8.6 итерации I02A).
+
 ## Definition of Done
 
 Полный список — §13 [08_TDD_AND_AGENT_WORKFLOW](docs/08_TDD_AND_AGENT_WORKFLOW.md). Минимум:
