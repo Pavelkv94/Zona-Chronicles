@@ -66,12 +66,27 @@ export type LicensePolicy = {
   readonly min_blocking_severity: Severity;
 };
 
+/**
+ * Значения, которые НЕ являются секретами: локальные dev-заглушки, уже отредактированный
+ * пароль (`***`), формы, текстуально не являющиеся литералом (подстановка `${…}`).
+ *
+ * Единственный источник правды (n-8 аудита I02A). Раньше этот список существовал в трёх
+ * копиях — комментарием в policy.json и внутри двух регулярок, — которые могли разойтись
+ * молча, причём разошлись бы в сторону «скан молчит». Теперь паттерн пишет
+ * {@link NON_SECRET_PLACEHOLDERS_TOKEN}, а подстановку делает загрузчик политики.
+ */
+export type NonSecretPlaceholders = {
+  readonly values: readonly string[];
+  readonly regex_alternatives: readonly string[];
+};
+
 export type SecretPolicy = {
   readonly owner: string;
   readonly requirement: string;
   readonly patterns: readonly NamedPattern[];
   readonly allowlisted_paths: readonly string[];
   readonly min_blocking_severity: Severity;
+  readonly non_secret_placeholders?: NonSecretPlaceholders;
 };
 
 export type StaticPolicy = {
@@ -210,6 +225,15 @@ export const parsePolicy = (raw: string): PolicyParseResult => {
       'policy.json: secret_policy требует owner/requirement/patterns/allowlisted_paths/min_blocking_severity',
     );
   }
+  const placeholders = secret['non_secret_placeholders'];
+  if (placeholders !== undefined) {
+    const record = placeholders as Record<string, unknown>;
+    if (!isStringArray(record['values']) || !isStringArray(record['regex_alternatives'])) {
+      return invalid(
+        'policy.json: non_secret_placeholders требует values и regex_alternatives (списки строк)',
+      );
+    }
+  }
 
   const staticPolicy = root['static_policy'];
   if (typeof staticPolicy !== 'object' || staticPolicy === null) {
@@ -271,5 +295,30 @@ export const loadPolicy = (repoRoot: string): PolicyParseResult => {
 };
 
 /** Компилирует именованный паттерн в RegExp. */
-export const compilePattern = (pattern: NamedPattern): RegExp =>
-  new RegExp(pattern.regex, pattern.flags);
+/** Токен в `regex`, на место которого подставляется альтернация не-секретных заглушек. */
+export const NON_SECRET_PLACEHOLDERS_TOKEN = '{{NON_SECRET_PLACEHOLDERS}}';
+
+const escapeForRegex = (value: string): string => value.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Строит альтернацию из объявленных заглушек. Пустой список даёт заведомо непустое совпадение
+ *  `(?!)`, то есть паттерн перестаёт что-либо исключать — безопасная сторона. */
+export const buildPlaceholderAlternation = (
+  placeholders: NonSecretPlaceholders | undefined,
+): string => {
+  const values = (placeholders?.values ?? []).map(escapeForRegex);
+  const alternatives = placeholders?.regex_alternatives ?? [];
+  const all = [...values, ...alternatives];
+  return all.length === 0 ? '(?!)' : all.join('|');
+};
+
+export const compilePattern = (
+  pattern: NamedPattern,
+  placeholders?: NonSecretPlaceholders,
+): RegExp =>
+  new RegExp(
+    pattern.regex.replaceAll(
+      NON_SECRET_PLACEHOLDERS_TOKEN,
+      buildPlaceholderAlternation(placeholders),
+    ),
+    pattern.flags,
+  );

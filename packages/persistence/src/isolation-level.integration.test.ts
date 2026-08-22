@@ -45,6 +45,23 @@ const command = (actorId: string): Command => ({
 
 const SERVER_DEFAULTS = ['read committed', 'repeatable read', 'serializable'] as const;
 
+/** Блокирует, пока в базе не появится backend, ожидающий замка. Верхняя граница — не таймаут
+ *  ожидания, а защита от зависания самого теста: если ожидание не наступило, тест обязан
+ *  упасть с названной причиной, а не молча продолжить без окна. */
+const waitForLockWaiter = async (db: DatabaseConnection): Promise<void> => {
+  for (let attempt = 0; attempt < 2_000; attempt += 1) {
+    const waiting = await sql<{ n: number }>`
+      select count(*)::int as n from pg_stat_activity
+       where datname = current_database()
+         and wait_event_type = 'Lock'
+         and pid <> pg_backend_pid()
+    `.execute(db);
+    if ((waiting.rows[0]?.n ?? 0) > 0) return;
+    await new Promise<void>((done) => setTimeout(done, 5));
+  }
+  throw new Error('вторая транзакция так и не упёрлась в замок — окно пересечения не создано');
+};
+
 describe('M-1 — уровень изоляции задан явно', () => {
   let migrated: MigratedDatabase;
 
@@ -119,7 +136,16 @@ describe('M-1 — уровень изоляции задан явно', () => {
 
         // Вторая команда стартует внутри окна, пока замок держит первая.
         const second = executeCommand(db, command(FIXTURE_OTHER_AGENT_ID));
-        await new Promise<void>((done) => setTimeout(done, 200));
+
+        // Ждём ФАКТ ожидания замка, а не фиксированные миллисекунды (n-10 аудита). Прежние
+        // `setTimeout(200)` были единственным недоказанным допущением во всём наборе: на
+        // медленном runner-е вторая транзакция могла не успеть войти, окно было бы упущено, и
+        // тест прошёл бы, ничего не проверив — то есть вернулся бы ровно тот класс, который
+        // этим тестом и закрывается.
+        //
+        // Ожидание row-level замка видно в `pg_stat_activity` как `wait_event_type = 'Lock'`,
+        // а НЕ как negranted lock в `pg_locks` (проверено пробой: там оно не появляется).
+        await waitForLockWaiter(db);
         releaseFirst();
 
         const [a, b] = await Promise.all([firstResult, second]);

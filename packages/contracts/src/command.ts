@@ -72,6 +72,58 @@ export const COMMAND_ENVELOPE_KEYS = [
   'payload',
 ] as const;
 
+/**
+ * Поля, по которым считается ОТПЕЧАТОК команды — то, что делает две команды «одной и той же»
+ * для идемпотентности (N-4 повторного архитектурного аудита I02A).
+ *
+ * Список живёт здесь, а не в персистентности, ровно по той причине, по которой область checksum
+ * снимка живёт в контракте: добавленное поле команды обязано заставить принять решение явно, а
+ * не тихо попасть или не попасть в сравнение. Контрактный тест требует, чтобы объединение
+ * включённых и исключённых полей совпадало с {@link COMMAND_ENVELOPE_KEYS}.
+ *
+ * Исключения и причины:
+ *
+ * - `command_id` — по нему строка и ищется, отличаться он не может никогда: включение вхолостую;
+ * - `correlation_id` — id трассировки. `decide` его не читает, на смысл команды он не влияет.
+ *   Его включение означало бы требование «ретрай обязан побайтово воспроизвести трассировочный
+ *   id», из-за которого добросовестный повтор, пересобранный другим клиентом, объявлялся бы
+ *   подменой. Такого требования в `09_EVENT_AND_COMMAND_CONTRACTS` нет и быть не должно;
+ * - `issued_at_world_time` — отметка НАМЕРЕНИЯ, тоже не читается `decide`. В I02A мировое время
+ *   не движется; в I02B будет, и клиент, пересобравший команду позже, не должен получать отказ
+ *   вместо идемпотентного повтора.
+ *
+ * `caused_by_event_id` включён намеренно: это причинность, а не трассировка.
+ */
+export const COMMAND_FINGERPRINT_KEYS = [
+  'world_id',
+  'type',
+  'schema_version',
+  'actor_id',
+  'expected_world_version',
+  'caused_by_event_id',
+  'payload',
+] as const satisfies readonly (typeof COMMAND_ENVELOPE_KEYS)[number][];
+
+export const COMMAND_FINGERPRINT_EXCLUDED_KEYS = [
+  'command_id',
+  'correlation_id',
+  'issued_at_world_time',
+] as const satisfies readonly (typeof COMMAND_ENVELOPE_KEYS)[number][];
+
+/**
+ * Проекция команды на поля отпечатка. Отсутствующие необязательные поля не попадают в объект,
+ * поэтому команда без `caused_by_event_id` и команда с ним дают разные отпечатки — как и должно
+ * быть: причина у них разная.
+ */
+export function commandFingerprintSource(command: Command): Record<string, unknown> {
+  const source: Record<string, unknown> = {};
+  for (const key of COMMAND_FINGERPRINT_KEYS) {
+    const value = (command as Record<string, unknown>)[key];
+    if (value !== undefined) source[key] = value;
+  }
+  return source;
+}
+
 /** `journey.start`: намерение выйти на маршрут (§2, §11). */
 export const JourneyStartPayloadSchema = Type.Object(
   {

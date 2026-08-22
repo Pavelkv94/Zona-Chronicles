@@ -23,6 +23,7 @@
  * защищает от команды, собранной по устаревшему прочтению мира вне транзакции.
  */
 import {
+  commandFingerprintSource,
   requireCanonical,
   requireChecksum,
   type Command,
@@ -124,11 +125,16 @@ const jsonOrNull = (value: unknown, label: string): string | null =>
   value === null || value === undefined ? null : requireCanonical(value, label);
 
 /**
- * Отпечаток тела команды: канонический checksum всего envelope, включая `command_id`.
+ * Отпечаток тела команды — канонический checksum её СЕМАНТИЧЕСКИХ полей.
  *
- * Именно всего, а не выбранных полей: любое поле команды влияет на её смысл, а перечисление
- * «значимых» полей вручную рано или поздно разойдётся с контрактом (тот же довод, что у
- * области checksum снимка в I01).
+ * Состав задан в контракте (`COMMAND_FINGERPRINT_KEYS`), а не здесь: перечисление, живущее
+ * рядом с самой командой, не может разойтись с ней незамеченным — контрактный тест требует,
+ * чтобы включённые и исключённые поля в сумме давали весь envelope.
+ *
+ * Первая редакция хешировала envelope целиком. N-4 повторного аудита показал цену: в отпечаток
+ * попадал `correlation_id`, поэтому добросовестный повтор, пересобранный другим клиентом со
+ * свежим id трассировки, объявлялся бы подменой — то есть ровно противоположное тому, ради чего
+ * journal существует.
  */
 /**
  * Ключ происхождения id событий, порождённых командой (m-3 аудита I02A).
@@ -142,7 +148,7 @@ export const eventIdOriginKey = (worldId: string, sequence: number): string =>
   `${worldId}:${String(sequence)}`;
 
 export const commandFingerprint = (command: Command): string =>
-  requireChecksum(command, `command(${command.command_id})`);
+  requireChecksum(commandFingerprintSource(command), `command(${command.command_id})`);
 
 const readStoredResult = async (
   db: DatabaseConnection,
@@ -189,6 +195,27 @@ const readStoredResult = async (
     worldVersionAfter: after,
     replayed: true,
   };
+};
+
+/** Отпечаток, записанный при первой попытке под этим `command_id` (для аудита отказа). */
+const readStoredFingerprint = async (
+  db: DatabaseConnection,
+  worldId: string,
+  commandId: string,
+): Promise<string> => {
+  const row = await db
+    .selectFrom('command_results')
+    .select('command_fingerprint')
+    .where('world_id', '=', worldId)
+    .where('command_id', '=', commandId)
+    .executeTakeFirst();
+  if (row === undefined) {
+    throw new Error(
+      `persistence: строка command_results ${commandId} исчезла между проверкой отпечатка и ` +
+        'записью аудита — это невозможно внутри одной транзакции',
+    );
+  }
+  return row.command_fingerprint;
 };
 
 const changedAgents = (before: WorldState, after: WorldState): readonly AgentState[] =>
@@ -242,24 +269,47 @@ export const executeCommand = async (
       await afterStep('world-locked');
 
       // Идемпотентность проверяется ДО optimistic-версии: повтор уже исполненной команды обязан
-      // вернуть прежний ответ, даже когда мир с тех пор ушёл вперёд (B3). Но «повтор» — это ТА ЖЕ
-      // команда, а не тот же `command_id` (M-2): чужое тело под записанным id — не идемпотентность,
-      // а подмена, и она получает названный отказ без единой записи.
+      // вернуть прежний ответ, даже когда мир с тех пор ушёл вперёд (B3). Но «повтор» — это ТА
+      // ЖЕ команда, а не тот же `command_id` (M-2): чужое тело под записанным id — подмена, и
+      // она получает названный отказ и запись в аудит попыток (N-3).
       const fingerprint = commandFingerprint(command);
       const stored = await readStoredResult(trx, command.world_id, command.command_id, fingerprint);
+
       if (stored === 'fingerprint-mismatch') {
+        const worldVersion = requireSafeInteger(locked.version, 'worlds.version');
+        const recordedFingerprint = await readStoredFingerprint(
+          trx,
+          command.world_id,
+          command.command_id,
+        );
+        // Записать в `command_results` нельзя: первичный ключ `(world_id, command_id)` занят
+        // исходной командой, и перезапись потеряла бы её результат. Поэтому у попытки
+        // собственный приёмник аудита — это не command journal и в идемпотентности не участвует.
+        await trx
+          .insertInto('command_attempt_rejections')
+          .values({
+            world_id: command.world_id,
+            command_id: command.command_id,
+            rejection_code: 'precondition_failed',
+            recorded_fingerprint: recordedFingerprint,
+            attempted_fingerprint: fingerprint,
+            recorded_at: now(),
+          })
+          .execute();
         return {
           outcome: 'rejected',
           commandId: command.command_id,
           rejectionCode: 'precondition_failed',
           rejectionMessage:
             `command_id ${command.command_id} уже записан в journal этого мира с ДРУГИМ телом ` +
-            'команды. Идемпотентность требует той же команды, а не только того же идентификатора.',
-          worldVersionBefore: requireSafeInteger(locked.version, 'worlds.version'),
-          worldVersionAfter: requireSafeInteger(locked.version, 'worlds.version'),
+            'команды. Идемпотентность требует той же команды, а не только того же ' +
+            'идентификатора. Попытка записана в command_attempt_rejections.',
+          worldVersionBefore: worldVersion,
+          worldVersionAfter: worldVersion,
           replayed: false,
         };
       }
+
       if (stored !== null) return stored;
 
       const [state, meta] = await Promise.all([
@@ -410,7 +460,21 @@ export const executeCommand = async (
       // поле агента молча не персистилось бы — и ни один тест бы этого не заметил.
       // Перечитываем состояние ВНУТРИ той же транзакции и сверяем с тем, что вычислил домен:
       // расхождение значит, что запись потеряла часть состояния, и коммитить его нельзя.
+      //
+      // Граница защиты (n-6): она ловит «писатель забыл» только когда «читатель помнит». Для
+      // ОБЯЗАТЕЛЬНОГО нового поля `AgentState` цепочка замыкается через typecheck —
+      // `loadWorldState` не скомпилируется без него, и тогда guard поймает писателя. Для
+      // НЕОБЯЗАТЕЛЬНОГО поля промолчат обе стороны, а значит и guard.
       const persisted = await loadWorldState(trx, command.world_id);
+      if (persisted === null) {
+        // n-5: внутри транзакции недостижимо, но без этой ветки `requireChecksum(null)` дал бы
+        // checksum строки "null", и вместо «мир исчез» диагностика сказала бы «состояние не
+        // совпало» — правдоподобно и неверно.
+        throw new Error(
+          `persistence: мир ${command.world_id} исчез между записью и перечитыванием внутри ` +
+            'одной транзакции',
+        );
+      }
       const expectedChecksum = requireChecksum(nextState, 'состояние после evolve');
       const persistedChecksum = requireChecksum(persisted, 'состояние, прочитанное из БД');
       if (persistedChecksum !== expectedChecksum) {

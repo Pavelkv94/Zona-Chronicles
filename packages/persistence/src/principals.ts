@@ -46,6 +46,7 @@ export const GRANT_MATRIX: Readonly<Record<RoleName, Readonly<Record<string, rea
     [ROLE_NAMES.worker]: {
       world_events: ['SELECT', 'INSERT'],
       command_results: ['SELECT', 'INSERT'],
+      command_attempt_rejections: ['SELECT', 'INSERT'],
       worlds: ['SELECT', 'INSERT', 'UPDATE'],
       agents: ['SELECT', 'INSERT', 'UPDATE'],
       locations: ['SELECT', 'INSERT'],
@@ -72,6 +73,11 @@ export interface EnsureRolesResult {
  * Уже существующая роль проверяется по АТРИБУТАМ, а не только по имени: `superuser`,
  * `createrole`, `createdb` или `bypassrls` у роли с нашим именем — это чужой principal, и
  * выдавать ему права нельзя.
+ *
+ * Пароль СУЩЕСТВУЮЩЕЙ роли не меняется (n-12 аудита): `ZONA_ROLE_PASSWORD` действует только в
+ * момент создания. Тихая ротация пароля из переменной окружения была бы хуже — она незаметно
+ * ломала бы уже работающие подключения. Ротация — операция оператора, а не побочный эффект
+ * `world migrate`.
  */
 export const ensureApplicationRoles = async (
   db: DatabaseConnection,
@@ -118,29 +124,55 @@ export const ensureApplicationRoles = async (
   return { created, existing };
 };
 
-/** Экранирует строковый литерал для SQL. Пароль не параметризуется: `create role` не принимает bind. */
+/**
+ * Экранирует строковый литерал для SQL. Пароль не параметризуется: `create role` не принимает
+ * bind-параметры. Следствие (n-13 аудита): при `log_statement='ddl'` полный `create role …
+ * password '…'` попадёт в серверный лог PostgreSQL. Пароль вне git и вне `dist`, но настройка
+ * логирования кластера — пункт runbook-а развёртывания, а не свойство этого кода.
+ */
 const literal = (value: string): string => `'${value.replaceAll("'", "''")}'`;
 
 /**
  * Применяет матрицу грантов. Идемпотентно и выполняется при КАЖДОМ `world migrate`, а не один
  * раз в журнале — иначе restore базы в кластер без ролей оставил бы права невосстановленными.
  */
+/**
+ * ПОРЯДОК: вызывается ПОСЛЕ применения миграций, никогда до. Матрица описывает текущую схему,
+ * и на базе предыдущей поставки `grant … on <новая таблица>` упадёт с «relation does not
+ * exist». Это правильное fail-closed поведение — гранты не должны молча пропускать таблицу, —
+ * но означает, что порядок в `world migrate` является частью контракта, а не удобством.
+ */
 export const applyGrants = async (db: DatabaseConnection): Promise<void> => {
-  for (const role of APPLICATION_ROLES) {
-    await sql`${sql.raw(`grant connect on database ${quoteIdent(await currentDatabase(db))} to ${role}`)}`.execute(
-      db,
-    );
-    await sql`${sql.raw(`grant usage on schema public to ${role}`)}`.execute(db);
-    // Сначала снимаем всё, потом выдаём объявленное: матрица описывает ИТОГОВОЕ состояние,
-    // поэтому убранное из неё право действительно исчезает, а не остаётся с прошлого прогона.
-    await sql`${sql.raw(`revoke all on all tables in schema public from ${role}`)}`.execute(db);
-    await sql`${sql.raw(`revoke create on schema public from ${role}`)}`.execute(db);
+  const database = await currentDatabase(db);
 
-    for (const [table, privileges] of Object.entries(GRANT_MATRIX[role])) {
-      if (privileges.length === 0) continue;
-      await sql`${sql.raw(`grant ${privileges.join(', ')} on ${table} to ${role}`)}`.execute(db);
+  // ОДНА транзакция на всё (N-2 повторного аудита I02A и собственная находка lead-а L6).
+  // Каждый оператор в autocommit давал наблюдаемое окно: `revoke all on all tables` фиксировался
+  // немедленно, а семь `grant`-ов доезжали позже и по одному. Измерено на работающем читателе:
+  //
+  //   autocommit:    ok=119, permission denied=9
+  //   транзакция:    ok=161, permission denied=0
+  //
+  // Второй, худший сценарий той же причины: падение между `revoke` и `grant` (например по
+  // `lock_timeout` — `revoke all on all tables` берёт блокировки на все таблицы) оставляло роль
+  // без прав НАСОВСЕМ. `GRANT`/`REVOKE` в PostgreSQL транзакционны, поэтому промежуточное
+  // состояние перестаёт быть наблюдаемым снаружи, а падение откатывает снятие.
+  await db.transaction().execute(async (trx) => {
+    for (const role of APPLICATION_ROLES) {
+      await sql`${sql.raw(`grant connect on database ${quoteIdent(database)} to ${role}`)}`.execute(
+        trx,
+      );
+      await sql`${sql.raw(`grant usage on schema public to ${role}`)}`.execute(trx);
+      // Сначала снимаем всё, потом выдаём объявленное: матрица описывает ИТОГОВОЕ состояние,
+      // поэтому убранное из неё право действительно исчезает, а не остаётся с прошлого прогона.
+      await sql`${sql.raw(`revoke all on all tables in schema public from ${role}`)}`.execute(trx);
+      await sql`${sql.raw(`revoke create on schema public from ${role}`)}`.execute(trx);
+
+      for (const [table, privileges] of Object.entries(GRANT_MATRIX[role])) {
+        if (privileges.length === 0) continue;
+        await sql`${sql.raw(`grant ${privileges.join(', ')} on ${table} to ${role}`)}`.execute(trx);
+      }
     }
-  }
+  });
 };
 
 const quoteIdent = (name: string): string => `"${name.replaceAll('"', '""')}"`;

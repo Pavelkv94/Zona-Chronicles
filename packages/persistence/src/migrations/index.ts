@@ -4,6 +4,7 @@ import { canonicalCoreMigration } from './0002-canonical-core.ts';
 import { revokePublicDefaultsMigration } from './0003-revoke-public-defaults.ts';
 import { commandFingerprintMigration } from './0004-command-fingerprint.ts';
 import { eventChecksumMigration } from './0005-event-checksum.ts';
+import { commandAttemptRejectionsMigration } from './0006-command-attempt-rejections.ts';
 
 export type { Migration } from './types.ts';
 
@@ -22,4 +23,5 @@ export const migrations: readonly Migration[] = [
   revokePublicDefaultsMigration,
   commandFingerprintMigration,
   eventChecksumMigration,
+  commandAttemptRejectionsMigration,
 ];

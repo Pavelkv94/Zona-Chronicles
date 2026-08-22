@@ -165,6 +165,34 @@ describe('B2/B3/B4 — атомарный старт journey', () => {
     expect(result.rejectionMessage).toMatch(/command_id/);
     // Ни события, ни второй строки journal: подделка не меняет мир и не переписывает результат.
     expect(await counts()).toEqual({ world_events: 1, outbox: 1, command_results: 1 });
+
+    // N-3: но след она оставляет. Это единственный отказ, значимый для безопасности —
+    // попытка подставить чужой command_id обязана быть видна, а не исчезать бесследно.
+    const attempts = await db.selectFrom('command_attempt_rejections').selectAll().execute();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.command_id).toBe(original.command_id);
+    expect(attempts[0]?.rejection_code).toBe('precondition_failed');
+    expect(attempts[0]?.recorded_fingerprint).not.toBe(attempts[0]?.attempted_fingerprint);
+    expect(attempts[0]?.recorded_at).toBeInstanceOf(Date);
+  });
+
+  it('N-4: повтор со свежим correlation_id остаётся идемпотентным, а не подменой', async () => {
+    // Отпечаток считается по СЕМАНТИЧЕСКИМ полям. Клиент, пересобравший команду при ретрае со
+    // свежим id трассировки, обязан получить записанный результат, а не precondition_failed:
+    // иначе journal защищал бы от добросовестного повтора, ради которого он и существует.
+    await seedWorld();
+    const original = command();
+    const first = await executeCommand(db, original);
+    expect(first.outcome).toBe('accepted');
+
+    const retried = await executeCommand(db, {
+      ...original,
+      correlation_id: ids.next(RUNTIME_ID_PREFIXES.correlation),
+      issued_at_world_time: '2028-04-26T09:30:00.000Z',
+    });
+    expect(retried).toEqual({ ...first, replayed: true });
+    expect(await counts()).toEqual({ world_events: 1, outbox: 1, command_results: 1 });
+    expect(await db.selectFrom('command_attempt_rejections').selectAll().execute()).toHaveLength(0);
   });
 
   it.each([
@@ -265,5 +293,60 @@ describe('M-3 — точность round-trip события через jsonb', 
     await expect(loadWorldEvents(db, FIXTURE_WORLD_ID)).rejects.toThrow(
       /не совпадающей с checksum/,
     );
+  });
+});
+
+describe('m-4 — сверка перечитанного состояния действительно срабатывает', () => {
+  let migrated: MigratedDatabase;
+  let db: DatabaseConnection;
+
+  beforeAll(async () => {
+    migrated = await createMigratedDatabase('readback_guard');
+    db = migrated.db;
+  });
+
+  afterAll(async () => {
+    await migrated.close();
+  });
+
+  it('запись, потерявшая часть состояния, отменяет транзакцию', async () => {
+    // Замечание независимой проверки тестов (п.3): guard выполняется на каждом accepted-пути,
+    // но «сработает ли он, если сломается» было доказано рассуждением, а не пробой.
+    //
+    // Механизм расхождения — ВНЕШНИЙ: триггер БД, молча возвращающий старые значения. Это
+    // ровно тот класс дефекта, ради которого guard существует (забытое поле в `changedAgents`,
+    // чужой триггер, правило), и он не требует расширять шов `afterStep` в production-коде.
+    await initializeWorld(db, fixtureInitialization());
+    await sql`
+      create function probe_swallow_agent_update() returns trigger as $$
+      begin
+        new.route_id := old.route_id;
+        new.status := old.status;
+        return new;
+      end;
+      $$ language plpgsql
+    `.execute(db);
+    await sql`
+      create trigger probe_swallow_agent_update before update on agents
+      for each row execute function probe_swallow_agent_update()
+    `.execute(db);
+
+    try {
+      await expect(executeCommand(db, command())).rejects.toThrow(
+        /записанное состояние мира .* не совпадает с результатом evolve/,
+      );
+
+      // Транзакция отменена целиком: события нет, версия мира не сдвинулась.
+      expect(await db.selectFrom('world_events').selectAll().execute()).toHaveLength(0);
+      const world = await db
+        .selectFrom('worlds')
+        .selectAll()
+        .where('world_id', '=', FIXTURE_WORLD_ID)
+        .executeTakeFirstOrThrow();
+      expect(Number(world.version)).toBe(0);
+    } finally {
+      await sql`drop trigger probe_swallow_agent_update on agents`.execute(db);
+      await sql`drop function probe_swallow_agent_update()`.execute(db);
+    }
   });
 });

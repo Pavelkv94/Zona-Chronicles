@@ -38,6 +38,7 @@ describe('B1 — канонические таблицы I02A', () => {
       );
       expect(tables.rows.map((row) => row.table_name)).toEqual([
         'agents',
+        'command_attempt_rejections',
         'command_results',
         'locations',
         'outbox',

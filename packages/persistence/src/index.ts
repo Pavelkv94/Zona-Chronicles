@@ -6,6 +6,7 @@ export { migrations } from './migrations/index.ts';
 
 export type {
   AgentsTable,
+  CommandAttemptRejectionsTable,
   CommandResultsTable,
   Database,
   DatabaseConnection,

@@ -103,6 +103,20 @@ export interface CommandResultsTable {
   recorded_at: ColumnType<Date, Date, Date>;
 }
 
+/**
+ * Аудит отклонённых попыток под занятым `command_id` (N-3). НЕ command journal: в
+ * идемпотентности не участвует, каноническим фактом мира не является.
+ */
+export interface CommandAttemptRejectionsTable {
+  attempt_id: Generated<BigIntColumn>;
+  world_id: string;
+  command_id: string;
+  rejection_code: string;
+  recorded_fingerprint: string;
+  attempted_fingerprint: string;
+  recorded_at: ColumnType<Date, Date, Date>;
+}
+
 export interface OutboxTable {
   outbox_id: Generated<BigIntColumn>;
   world_id: string;
@@ -122,6 +136,7 @@ export interface Database {
   agents: AgentsTable;
   world_events: WorldEventsTable;
   command_results: CommandResultsTable;
+  command_attempt_rejections: CommandAttemptRejectionsTable;
   outbox: OutboxTable;
 }
 

@@ -32,6 +32,7 @@ export const findSecrets = (files: readonly ScannedFile[], policy: SecurityPolic
     patterns,
     allowlisted_paths: allowlistedPaths,
     min_blocking_severity: minBlockingSeverity,
+    non_secret_placeholders: placeholders,
   } = policy.secret_policy;
   const findings: Finding[] = [];
 
@@ -40,10 +41,13 @@ export const findSecrets = (files: readonly ScannedFile[], policy: SecurityPolic
 
     for (const pattern of patterns) {
       if (!meetsMinSeverity(pattern.severity, minBlockingSeverity)) continue;
-      const regex = compilePattern({
-        ...pattern,
-        flags: pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
-      });
+      const regex = compilePattern(
+        {
+          ...pattern,
+          flags: pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`,
+        },
+        placeholders,
+      );
       let match: RegExpExecArray | null;
       while ((match = regex.exec(file.content)) !== null) {
         findings.push({

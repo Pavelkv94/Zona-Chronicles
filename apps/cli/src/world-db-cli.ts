@@ -14,10 +14,10 @@ import {
   createDatabase,
   executeCommand,
   initializeWorld,
+  loadWorldEvents,
   loadWorldState,
   migrations,
   parseDatabaseConnectionUrl,
-  requireSafeInteger,
   runMigrations,
   applyGrants,
   ensureApplicationRoles,
@@ -248,23 +248,22 @@ export const runWorldStateCommand = async (db: DatabaseConnection): Promise<CliR
   return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
 };
 
-/** `world events` — канонический журнал в порядке sequence. */
+/**
+ * `world events` — канонический журнал в порядке sequence.
+ *
+ * Читает через `loadWorldEvents`, а не прямым `select` (n-11 аудита): оператор должен видеть
+ * ПРОВЕРЕННЫЕ строки. Событие, чья форма разошлась с checksum, снятым при записи, обязано
+ * остановить вывод громкой ошибкой, а не быть показанным как обычный факт.
+ */
 export const runWorldEventsCommand = async (db: DatabaseConnection): Promise<CliResult> => {
-  const rows = await db
-    .selectFrom('world_events')
-    .select(['event_id', 'sequence', 'type', 'world_time', 'actor_ids'])
-    .where('world_id', '=', PROTOTYPE_WORLD.worldId)
-    .orderBy('sequence')
-    .execute();
+  const events = await loadWorldEvents(db, PROTOTYPE_WORLD.worldId);
+  if (events.length === 0) return { stdout: 'Событий нет.\n', exitCode: 0 };
 
-  if (rows.length === 0) return { stdout: 'Событий нет.\n', exitCode: 0 };
-
-  const lines = [`Событий: ${String(rows.length)}`];
-  for (const row of rows) {
-    const sequence = requireSafeInteger(row.sequence, 'world_events.sequence');
+  const lines = [`Событий: ${String(events.length)}`];
+  for (const event of events) {
     lines.push(
-      `  ${String(sequence).padStart(4)}  ${row.type.padEnd(18)} ${row.world_time}  ` +
-        `${row.actor_ids.join(',')}  ${row.event_id}`,
+      `  ${String(event.sequence).padStart(4)}  ${event.type.padEnd(18)} ${event.world_time}  ` +
+        `${event.actor_ids.join(',')}  ${event.event_id}`,
     );
   }
   return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
