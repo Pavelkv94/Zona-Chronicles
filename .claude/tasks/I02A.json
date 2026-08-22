@@ -37,16 +37,9 @@
   ],
   "tasks": [
     {
-      "task_id": "I02A-VERIFY-TESTS",
+      "task_id": "I02A-VERIFY",
       "owner_role": "reviewer",
-      "//": "Независимая проверка тестов: ложноположительные тесты, пропущенные отказы, идемпотентность, детерминизм. Только чтение.",
-      "write_paths": [],
-      "allow_protected_paths": []
-    },
-    {
-      "task_id": "I02A-VERIFY-ARCH",
-      "owner_role": "reviewer",
-      "//": "Независимая проверка границ, событийной семантики, миграций и транзакционной целостности. Только чтение.",
+      "//": "Единая read-only задача для обеих ролей верификации (test-reviewer и architecture-reviewer). Одна задача, а не две: writeset.json в репозитории один, а права у обеих ролей одинаковые — ноль записи. Две записи с разными task_id дали бы одной из сессий fail-closed на SubagentStop.",
       "write_paths": [],
       "allow_protected_paths": []
     }
