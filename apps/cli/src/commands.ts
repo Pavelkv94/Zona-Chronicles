@@ -38,6 +38,12 @@ export type CliCommand = {
   readonly status: CommandStatus;
   /** Iteration id from `docs/10_ITERATION_MASTER_PLAN.md` that introduces this command. */
   readonly iteration: string;
+  /**
+   * I02A: the command talks to PostgreSQL, so it is async and needs `DATABASE_URL`. Kept as
+   * DATA here rather than as a check inside each command, so `main.ts` can decide once whether
+   * to open a connection at all — and so `--help` can say which commands need a database.
+   */
+  readonly requiresDatabase?: boolean;
 };
 
 export const COMMANDS: readonly CliCommand[] = [
@@ -48,10 +54,39 @@ export const COMMANDS: readonly CliCommand[] = [
     iteration: 'I01',
   },
   {
+    name: 'world migrate',
+    summary: 'Apply pending database migrations.',
+    status: 'available',
+    iteration: 'I02A',
+    requiresDatabase: true,
+  },
+  {
+    name: 'world init',
+    summary: 'Create a durable world in the database from a seed.',
+    status: 'available',
+    iteration: 'I02A',
+    requiresDatabase: true,
+  },
+  {
     name: 'world run',
     summary: 'Start a journey/command against the running world.',
-    status: 'planned',
+    status: 'available',
     iteration: 'I02A',
+    requiresDatabase: true,
+  },
+  {
+    name: 'world state',
+    summary: 'Print the durable canonical state stored in the database.',
+    status: 'available',
+    iteration: 'I02A',
+    requiresDatabase: true,
+  },
+  {
+    name: 'world events',
+    summary: 'Print the durable canonical event log.',
+    status: 'available',
+    iteration: 'I02A',
+    requiresDatabase: true,
   },
   {
     name: 'world replay',
@@ -77,8 +112,9 @@ export const COMMANDS: readonly CliCommand[] = [
 export function renderCommandList(): string {
   const lines = ['Available commands:', ''];
   for (const command of COMMANDS) {
+    const database = command.requiresDatabase === true ? ' (needs DATABASE_URL)' : '';
     lines.push(
-      `  ${command.name.padEnd(16)} [${command.status}, ${command.iteration}]  ${command.summary}`,
+      `  ${command.name.padEnd(16)} [${command.status}, ${command.iteration}]  ${command.summary}${database}`,
     );
   }
   return `${lines.join('\n')}\n`;

@@ -45,16 +45,26 @@ outbox и записанный результат команды никогда 
 
 ```sh
 docker compose up -d postgres
-pnpm world migrate                       # схема с нуля
-pnpm world init --seed 42                # мир 42 в БД
-pnpm world journey start --agent agent_marten --route route_yard_to_ford
-pnpm world state                         # агент в статусе traveling
-# перезапуск процесса — состояние на месте:
-pnpm world state
-# повтор той же команды с тем же command_id — прежний результат, второго события нет:
-pnpm world journey start --agent agent_marten --route route_yard_to_ford --command-id <тот же>
-pnpm world events                        # ровно одно journey.started
+export DATABASE_URL=postgres://zona:zona_local_dev_only@localhost:5432/zona
+
+pnpm world migrate                 # схема с нуля
+pnpm world init --seed 42          # мир 42 в БД
+pnpm world state                   # все агенты idle, версия 0
+
+pnpm world run --agent agent:rook --route route:yard-to-bridge
+pnpm world state                   # agent:rook traveling, версия 1
+pnpm world events                  # ровно одно journey.started
+
+# перезапуск процесса ничего не теряет — каждая строка выше это отдельный процесс
+
+# повтор ТОЙ ЖЕ команды по её command_id: прежний результат, второго события нет
+pnpm world run --agent agent:rook --route route:yard-to-bridge --command-id <id из вывода>
+pnpm world events
 ```
+
+Без `--command-id` id выводится из (мир, агент, маршрут, версия мира), поэтому повтор при уже
+изменившемся мире — это ДРУГАЯ команда, и она получает честный отказ `actor_not_actionable`.
+Идемпотентность демонстрируется явным `--command-id`: это разные свойства, и demo показывает оба.
 
 ## 3. Требования (`11_REQUIREMENTS_TRACEABILITY`)
 

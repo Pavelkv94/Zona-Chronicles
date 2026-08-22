@@ -45,6 +45,23 @@ const ALLOWED: Record<string, readonly string[]> = {
   '@zona/security-scan': [],
 };
 
+/**
+ * Внешние зависимости, запрещённые каноническому ядру (ADR-003, I02A ACCEPTANCE B10).
+ *
+ * dependency-cruiser ловит фактический ИМПОРТ такого пакета, но не его объявление: манифест
+ * с `pg` в `dependencies` и без единого импорта проходил бы обе проверки, а первый же
+ * implementer читал бы его как разрешение. Здесь закрывается именно декларация.
+ *
+ * Список — только про драйверы/фреймворки оболочки. Запрет часов, случайности и `process`
+ * держат eslint-правила (`nondeterminismRestrictions`), а не этот файл.
+ */
+const FORBIDDEN_EXTERNAL: Record<string, readonly string[]> = {
+  '@zona/contracts': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
+  '@zona/domain': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
+  '@zona/simulation': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
+  '@zona/content': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
+};
+
 const WORKSPACE_ROOTS = ['apps', 'packages', 'tools'] as const;
 const violations: string[] = [];
 
@@ -76,6 +93,19 @@ for (const root of WORKSPACE_ROOTS) {
     for (const dependency of declared) {
       if (!allowed.includes(dependency)) {
         violations.push(`${name} -> ${dependency}: запрещённая зависимость по ADR-002`);
+      }
+    }
+
+    const forbiddenExternal = FORBIDDEN_EXTERNAL[name] ?? [];
+    const declaredExternal = [
+      ...Object.keys(manifest.dependencies ?? {}),
+      ...Object.keys(manifest.devDependencies ?? {}),
+    ];
+    for (const dependency of declaredExternal) {
+      if (forbiddenExternal.includes(dependency)) {
+        violations.push(
+          `${name} -> ${dependency}: каноническому ядру запрещён драйвер/фреймворк оболочки (ADR-003)`,
+        );
       }
     }
   }

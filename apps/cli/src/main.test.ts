@@ -19,14 +19,23 @@ describe('runCli', () => {
   });
 
   it('reports a still-planned command as not implemented and exits 1, without simulating work', () => {
-    // `world run` stays out of scope for I01 (PLAN §5); `world seed`/`world inspect` flipped to
-    // 'available' when I01-T4 implemented them (was `runCli(['world', 'seed'])` in I00 — that
-    // command is real now, see the tests below).
+    // `world replay` stays out of scope until I02B. Раньше здесь стояла `world run`, но I02A
+    // её реализовала — тест переехал на команду, которая ДЕЙСТВИТЕЛЬНО ещё не реализована,
+    // а не был ослаблен под новое поведение.
+    const result = runCli(['world', 'replay']);
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toContain('world replay');
+    expect(result.stdout.toLowerCase()).toMatch(/not implemented|planned/);
+    expect(result.stdout).toContain('I02B');
+  });
+
+  it('команда с базой не исполняется синхронным runCli и говорит об этом прямо', () => {
     const result = runCli(['world', 'run']);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain('world run');
-    expect(result.stdout.toLowerCase()).toMatch(/not implemented|planned/);
-    expect(result.stdout).toContain('I02A');
+    expect(result.stdout).toContain('runCliAsync');
+    expect(result.stdout).toContain('DATABASE_URL');
+    // Именно НЕ «не реализовано»: команда реализована, просто путь исполнения другой.
+    expect(result.stdout.toLowerCase()).not.toMatch(/not implemented|planned/);
   });
 
   it('reports an unknown command with a clear error and exits 2', () => {

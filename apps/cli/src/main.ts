@@ -19,7 +19,16 @@
  */
 import { pathToFileURL } from 'node:url';
 import { COMMANDS, type CliResult, renderCommandList } from './commands.ts';
+import { loadCliConfig } from './config.ts';
 import { runWorldInspectCommand, runWorldSeedCommand } from './world-cli.ts';
+import {
+  connect,
+  runWorldEventsCommand,
+  runWorldInitCommand,
+  runWorldMigrateCommand,
+  runWorldRunCommand,
+  runWorldStateCommand,
+} from './world-db-cli.ts';
 
 export type { CliResult } from './commands.ts';
 
@@ -53,6 +62,18 @@ export function runCli(argv: readonly string[]): CliResult {
       break;
   }
 
+  if (command.requiresDatabase === true) {
+    // Не «не реализовано»: команда реализована, но она асинхронна и требует подключения.
+    // `runCli` обязан остаться чистым и синхронным, поэтому здесь — честное указание пути,
+    // а не тихий возврат пустого результата.
+    return {
+      stdout:
+        `"${command.name}" работает с базой и исполняется через runCliAsync ` +
+        `(нужен DATABASE_URL); runCli остаётся чистым и синхронным.\n`,
+      exitCode: 1,
+    };
+  }
+
   if (command.status === 'planned') {
     return {
       stdout: `"${command.name}" is planned for ${command.iteration} and not implemented yet.\n`,
@@ -68,13 +89,64 @@ export function runCli(argv: readonly string[]): CliResult {
   };
 }
 
+/**
+ * I02A: команды над durable-миром асинхронны и требуют подключения. `runCli` намеренно остаётся
+ * ЧИСТЫМ и синхронным — он по-прежнему решает всё, что решается без базы (help, неизвестная
+ * команда, in-memory `world seed`/`world inspect`), и его юнит-тесты не поднимают PostgreSQL.
+ * Асинхронный слой добавляется здесь и только для команд, помеченных `requiresDatabase`.
+ *
+ * Подключение открывается и закрывается вокруг ОДНОЙ команды: CLI — короткоживущий процесс, и
+ * оставленный пул не давал бы ему завершиться (что и проверяет B9, порождая настоящие процессы).
+ */
+export async function runCliAsync(
+  argv: readonly string[],
+  databaseUrl: string | undefined,
+): Promise<CliResult> {
+  const commandName = argv.slice(0, 2).join(' ');
+  const command = COMMANDS.find((c) => c.name === commandName);
+  if (command?.requiresDatabase !== true) return runCli(argv);
+
+  if (databaseUrl === undefined || databaseUrl.length === 0) {
+    return {
+      stdout: `"${command.name}" требует DATABASE_URL (см. docker-compose.yml).\n`,
+      exitCode: 2,
+    };
+  }
+
+  const commandArgs = argv.slice(2);
+  const db = connect(databaseUrl);
+  try {
+    switch (command.name) {
+      case 'world migrate':
+        return await runWorldMigrateCommand(db);
+      case 'world init':
+        return await runWorldInitCommand(db, commandArgs);
+      case 'world run':
+        return await runWorldRunCommand(db, commandArgs);
+      case 'world state':
+        return await runWorldStateCommand(db);
+      case 'world events':
+        return await runWorldEventsCommand(db);
+      default:
+        // Реестр пометил команду как требующую базу, но здесь её нет — честный отказ вместо
+        // молчаливого падения в синхронный путь, который базу не откроет.
+        return {
+          stdout: `"${command.name}" помечена requiresDatabase, но не подключена в runCliAsync.\n`,
+          exitCode: 1,
+        };
+    }
+  } finally {
+    await db.destroy();
+  }
+}
+
 function isMainModule(): boolean {
   const entry = process.argv[1];
   return entry !== undefined && import.meta.url === pathToFileURL(entry).href;
 }
 
 if (isMainModule()) {
-  const result = runCli(process.argv.slice(2));
+  const result = await runCliAsync(process.argv.slice(2), loadCliConfig().databaseUrl);
   process.stdout.write(result.stdout);
   process.exitCode = result.exitCode;
 }
