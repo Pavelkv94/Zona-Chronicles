@@ -47,6 +47,9 @@ export {
 export type { CommandAccepted, CommandExecution, CommandRejected } from './command-handler.ts';
 export { commandFingerprint, eventIdOriginKey, executeCommand } from './command-handler.ts';
 
+export type { ReplayResult } from './replay.ts';
+export { replayFromSnapshot, replayWorld } from './replay.ts';
+
 export type { LoadSnapshotContext, SnapshotContent } from './snapshot-store.ts';
 export { loadLatestSnapshot, loadSnapshotAt, writeSnapshot } from './snapshot-store.ts';
 
