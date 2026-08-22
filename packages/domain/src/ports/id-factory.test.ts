@@ -1,6 +1,6 @@
 import { RUNTIME_ID_PREFIXES, isRuntimeId } from '@zona/contracts';
 import { describe, expect, it } from 'vitest';
-import { SequentialIdFactory } from './id-factory.ts';
+import { DerivedIdFactory, SequentialIdFactory } from './id-factory.ts';
 
 describe('SequentialIdFactory', () => {
   it('выдаёт id в формате ULID с верным префиксом', () => {
@@ -55,5 +55,64 @@ describe('SequentialIdFactory', () => {
 
   it('отвергает небезопасный целочисленный seed на границе конструктора', () => {
     expect(() => new SequentialIdFactory(1.5)).toThrow(/seed/);
+  });
+
+  /**
+   * Golden-значения (I02A).
+   *
+   * С I02A `event_id` попадает в НЕВОСПОЛНИМЫЙ журнал и обязан воспроизводиться при
+   * пересимуляции того же seed (SIM-01). Пока id жили только в памяти, «тот же seed даёт те же
+   * id» проверялось сравнением двух инстансов — такая проверка остаётся зелёной, даже если
+   * алгоритм изменился целиком, потому что сравнивает его сам с собой. Литералы ниже привязывают
+   * выход к КОНКРЕТНЫМ значениям: их изменение — это изменение формата уже записанной истории,
+   * то есть migration, а не рефакторинг. Обновлять их без такого объяснения запрещено.
+   *
+   * Значения сняты с реализации на коммите 7ca3800 и совпадают с реализацией до введения
+   * `DerivedIdFactory` (проба lead-а: 1000 id × 5 seed, расхождений нет).
+   */
+  it('golden: выданные id не менялись между версиями реализации', () => {
+    const ids = new SequentialIdFactory(42);
+    expect([
+      ids.next(RUNTIME_ID_PREFIXES.event),
+      ids.next(RUNTIME_ID_PREFIXES.command),
+      ids.next(RUNTIME_ID_PREFIXES.correlation),
+    ]).toStrictEqual([
+      'evt_EXFA9RBPBTHMWXAYM6XQ8QN051',
+      'cmd_E43Y8PVG0ZHCGWR7WY0Q41Z5XS',
+      'corr_JAHVJVMKMEXG3453PS4938XQVE',
+    ]);
+  });
+});
+
+describe('DerivedIdFactory', () => {
+  it('строковый ключ происхождения даёт воспроизводимые id', () => {
+    const a = new DerivedIdFactory('world:prototype:1');
+    const b = new DerivedIdFactory('world:prototype:1');
+    expect(a.next(RUNTIME_ID_PREFIXES.event)).toBe(b.next(RUNTIME_ID_PREFIXES.event));
+  });
+
+  it('разные ключи дают разные id на той же позиции счётчика', () => {
+    const a = new DerivedIdFactory('world:prototype:1').next(RUNTIME_ID_PREFIXES.event);
+    const b = new DerivedIdFactory('world:prototype:2').next(RUNTIME_ID_PREFIXES.event);
+    expect(a).not.toBe(b);
+  });
+
+  it('совпадает с SequentialIdFactory на числовом ключе — один алгоритм, не два', () => {
+    const derived = new DerivedIdFactory('42').next(RUNTIME_ID_PREFIXES.event);
+    const sequential = new SequentialIdFactory(42).next(RUNTIME_ID_PREFIXES.event);
+    expect(derived).toBe(sequential);
+  });
+
+  /** Тот же довод, что у golden выше: ключ `<world_id>:<sequence>` — формат журнала I02A. */
+  it('golden: id команды журнала не менялись', () => {
+    const ids = new DerivedIdFactory('world:prototype:1');
+    expect([
+      ids.next(RUNTIME_ID_PREFIXES.event),
+      ids.next(RUNTIME_ID_PREFIXES.correlation),
+    ]).toStrictEqual(['evt_D2ETY739KPRAYTMXP916Q7DKTN', 'corr_BSSE7Q2ZEBJPYR3JWW162WQ8JN']);
+  });
+
+  it('пустой ключ отвергается на границе конструктора', () => {
+    expect(() => new DerivedIdFactory('')).toThrow(/ключ/);
   });
 });
