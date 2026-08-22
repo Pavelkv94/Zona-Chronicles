@@ -77,6 +77,14 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'world-prng-positions',
     checksum: 'f21fb7b8a77e1f591722546890158805c96ef46c31cec183b920e14afcf37e2b',
   },
+  // B1 второго раунда верификации: 0009 обнулила позиции PRNG у миров прежней поставки,
+  // потому что её обоснование не учло розыгрыши генезиса. Выпущенная миграция не правится —
+  // исправление отдельной строкой.
+  {
+    id: '0010',
+    name: 'backfill-prng-positions',
+    checksum: '47f41675ecaa496103f170ef27d9f961dc2480e377a8d96d9c035b8ec6f057e5',
+  },
 ];
 
 describe('реестр миграций', () => {

@@ -8,6 +8,7 @@ import { commandAttemptRejectionsMigration } from './0006-command-attempt-reject
 import { schedulerAndSnapshotsMigration } from './0007-scheduler-and-snapshots.ts';
 import { scheduledActionFailureMigration } from './0008-scheduled-action-failure.ts';
 import { worldPrngPositionsMigration } from './0009-world-prng-positions.ts';
+import { backfillPrngPositionsMigration } from './0010-backfill-prng-positions.ts';
 
 export type { Migration } from './types.ts';
 
@@ -30,4 +31,5 @@ export const migrations: readonly Migration[] = [
   schedulerAndSnapshotsMigration,
   scheduledActionFailureMigration,
   worldPrngPositionsMigration,
+  backfillPrngPositionsMigration,
 ];

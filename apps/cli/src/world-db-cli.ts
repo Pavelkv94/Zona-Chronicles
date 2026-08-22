@@ -26,10 +26,12 @@ import {
   loadWorldEvents,
   loadWorldMeta,
   loadWorldState,
+  loadWorldsWithEmptyPrngPositions,
   migrations,
   parseDatabaseConnectionUrl,
   replayFromSnapshot,
   runMigrations,
+  repairWorldPrngPositions,
   runWorldTick,
   writeSnapshot,
   applyGrants,
@@ -70,6 +72,49 @@ export const connect = (databaseUrl: string): DatabaseConnection =>
  * под `zona_worker` (BL-2 аудита I02A). Если `MIGRATION_DATABASE_URL` не задана и команда
  * пошла под рантайм-строкой, это ГОВОРИТСЯ вслух, а не подразумевается.
  */
+/**
+ * Починка позиций PRNG у миров прежней поставки, которых не достаёт миграция 0010 (B1, второй
+ * раунд верификации I02B).
+ *
+ * Миграция 0009 объявила позиции пустыми у всех существующих миров, обосновав это тем, что
+ * команды розыгрышей не делали. Розыгрыши делает ГЕНЕЗИС: `seedAgents` распределяет агентов по
+ * локациям, по розыгрышу на агента. 0010 восстанавливает то, что можно восстановить из снимка —
+ * там позиции записаны фактом. Мир БЕЗ снимка чинится только здесь: его позиции детерминированная
+ * функция seed, а `statements` миграции по контракту не имеет доступа к PRNG (`types.ts`).
+ *
+ * Живёт в `world migrate`, а не отдельной командой: оператору не с чего знать, что после
+ * обновления нужен ещё один шаг, а забытый шаг оставил бы мир с неверными позициями молча.
+ * Операция идемпотентна — записывает только там, где сейчас пусто, и печатает, что сделала.
+ *
+ * Пересчёт верен ровно потому, что до 0009 ни одна КОМАНДА розыгрыша сделать не могла
+ * (`UnavailableRandomSource` бросал исключение): значит позиции такого мира и есть генезисные.
+ * Для мира, созданного после 0009, условие «позиции пусты» не выполняется, и починка его не
+ * тронет.
+ */
+const repairGenesisPrngPositions = async (db: DatabaseConnection): Promise<readonly string[]> => {
+  const worlds = await loadWorldsWithEmptyPrngPositions(db);
+  const repaired: string[] = [];
+  for (const world of worlds) {
+    if (world.worldId !== PROTOTYPE_WORLD.worldId) {
+      // Пересчёт генезиса знает ровно один контент. Чужой мир не трогаем и молчать о нём тоже
+      // нельзя: неверные позиции хуже честного «не починил».
+      repaired.push(
+        `ВНИМАНИЕ: у мира ${world.worldId} пустые позиции PRNG, но он не из контента ` +
+          `${PROTOTYPE_WORLD.worldId} — пересчитать генезис нечем, позиции остаются пустыми.`,
+      );
+      continue;
+    }
+    const positions = seedWorld(world.seed).snapshot.prng_stream_positions;
+    if (await repairWorldPrngPositions(db, world.worldId, positions)) {
+      repaired.push(
+        `Позиции PRNG мира ${world.worldId} восстановлены из генезиса seed=${String(world.seed)} ` +
+          `(миграция 0009 обнулила их у миров прежней поставки).`,
+      );
+    }
+  }
+  return repaired;
+};
+
 export const runWorldMigrateCommand = async (
   db: DatabaseConnection,
   databaseUrl: string,
@@ -101,6 +146,8 @@ export const runWorldMigrateCommand = async (
   }
   await applyGrants(db);
   lines.push('Гранты применены.');
+
+  lines.push(...(await repairGenesisPrngPositions(db)));
 
   lines.push(`Подключение: ${describeDatabaseTarget(databaseUrl)}`);
   if (usedRuntimeConnection) {

@@ -31,6 +31,8 @@ export {
   loadWorldEvents,
   loadWorldMeta,
   loadWorldState,
+  loadWorldsWithEmptyPrngPositions,
+  repairWorldPrngPositions,
 } from './world-repository.ts';
 
 /**

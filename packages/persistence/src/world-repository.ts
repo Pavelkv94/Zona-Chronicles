@@ -6,6 +6,7 @@
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
 import { requireCanonical, requireChecksum, type WorldEvent } from '@zona/contracts';
+import { sql } from 'kysely';
 import type {
   AgentState,
   RouteDefinition,
@@ -236,6 +237,61 @@ export const loadWorldMeta = async (
     },
     prngStreamPositions: world.prng_stream_positions as Readonly<Record<string, number>>,
   };
+};
+
+/**
+ * Миры, у которых позиции PRNG пусты, вместе с их `seed` (B1, второй раунд верификации I02B).
+ *
+ * Нужна ровно одному потребителю — починке после миграции 0009, которая объявила позиции
+ * пустыми у миров прежней поставки, хотя генезис делает по розыгрышу на агента. Миграция 0010
+ * восстанавливает то, что можно восстановить из снимка; миры БЕЗ снимка чинить чистым SQL
+ * нельзя — их позиции детерминированная функция `seed`, а `statements` миграции по контракту не
+ * имеет доступа к PRNG.
+ *
+ * Пустая карта — надёжный признак «мир прежней поставки»: `world init` после 0009 всегда пишет
+ * генезисные позиции, а они непусты, пока в контенте есть хотя бы один агент. Мир без агентов
+ * `seedWorld` создать не даёт (`seedAgents` требует локаций, а `PROTOTYPE_WORLD` — агентов).
+ */
+export const loadWorldsWithEmptyPrngPositions = async (
+  db: DatabaseConnection,
+): Promise<readonly { readonly worldId: string; readonly seed: number }[]> => {
+  const rows = await db
+    .selectFrom('worlds')
+    .select(['world_id', 'seed'])
+    .where(sql<boolean>`prng_stream_positions = '{}'::jsonb`)
+    .execute();
+  return rows.map((row) => ({
+    worldId: row.world_id,
+    seed: requireSafeInteger(row.seed, `worlds.seed(${row.world_id})`),
+  }));
+};
+
+/**
+ * Записывает позиции PRNG мира. Отдельная от `executeCommand` операция и только для починки
+ * (B1): обычный путь двигает позиции ВНУТРИ транзакции команды, вместе с `last_sequence`, и
+ * подменять его отдельной записью нельзя — она разошлась бы с журналом.
+ *
+ * Условие `prng_stream_positions = '{}'` в WHERE, а не проверка в коде: между чтением списка и
+ * этой записью мир мог получить настоящие позиции, и затирать их починкой нельзя. Возвращает,
+ * произошла ли запись.
+ */
+export const repairWorldPrngPositions = async (
+  db: DatabaseConnection,
+  worldId: string,
+  positions: Readonly<Record<string, number>>,
+): Promise<boolean> => {
+  const result = await db
+    .updateTable('worlds')
+    .set({
+      prng_stream_positions: requireCanonical(
+        positions,
+        `worlds.prng_stream_positions(${worldId})`,
+      ),
+    })
+    .where('world_id', '=', worldId)
+    .where(sql<boolean>`prng_stream_positions = '{}'::jsonb`)
+    .executeTakeFirst();
+  return (result.numUpdatedRows ?? 0n) > 0n;
 };
 
 /**

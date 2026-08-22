@@ -36,48 +36,48 @@ const PREVIOUS_RELEASE_WORLD_COLUMNS =
   'world_id, seed, version, last_sequence, world_time, rules_version, content_version, ' +
   'schema_version, created_at';
 
+/**
+ * Пишет мир так, как это делала бы ПРЕДЫДУЩАЯ поставка: перечислением её колонок, без единого
+ * поля, добавленного последней миграцией. Использовать здесь `initializeWorld` нельзя — это
+ * писатель текущей поставки (см. докстринг файла).
+ */
+const writePreviousReleaseWorld = async (db: DatabaseConnection): Promise<void> => {
+  const init = fixtureInitialization();
+  const state = init.state;
+  await sql`
+    insert into worlds (${sql.raw(PREVIOUS_RELEASE_WORLD_COLUMNS)})
+    values (
+      ${state.worldId}, ${init.seed}, ${state.worldVersion}, ${state.sequence},
+      ${state.worldTime}, ${init.versions.rulesVersion}, ${init.versions.contentVersion},
+      ${init.versions.schemaVersion}, now()
+    )
+  `.execute(db);
+
+  for (const location of init.content.locations) {
+    await sql`
+      insert into locations (world_id, location_id, name, description)
+      values (${state.worldId}, ${location.id}, ${location.name}, ${location.description})
+    `.execute(db);
+  }
+  for (const route of Object.values(state.routes)) {
+    await sql`
+      insert into routes (world_id, route_id, from_location_id, to_location_id, travel_minutes)
+      values (${state.worldId}, ${route.id}, ${route.fromLocationId}, ${route.toLocationId},
+              ${route.travelMinutes})
+    `.execute(db);
+  }
+  for (const agent of Object.values(state.agents)) {
+    await sql`
+      insert into agents (world_id, agent_id, name, location_id, status, route_id)
+      values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
+              ${agent.locationId}, ${agent.status}, ${agent.routeId})
+    `.execute(db);
+  }
+};
+
 describe('N-1 — обновление с предыдущей поставки', () => {
   let testDb: TestDatabase;
   let db: DatabaseConnection;
-
-  /**
-   * Пишет мир так, как это делала бы ПРЕДЫДУЩАЯ поставка: перечислением её колонок, без единого
-   * поля, добавленного последней миграцией. Использовать здесь `initializeWorld` нельзя — это
-   * писатель текущей поставки (см. докстринг файла).
-   */
-  const writePreviousReleaseWorld = async (): Promise<void> => {
-    const init = fixtureInitialization();
-    const state = init.state;
-    await sql`
-      insert into worlds (${sql.raw(PREVIOUS_RELEASE_WORLD_COLUMNS)})
-      values (
-        ${state.worldId}, ${init.seed}, ${state.worldVersion}, ${state.sequence},
-        ${state.worldTime}, ${init.versions.rulesVersion}, ${init.versions.contentVersion},
-        ${init.versions.schemaVersion}, now()
-      )
-    `.execute(db);
-
-    for (const location of init.content.locations) {
-      await sql`
-        insert into locations (world_id, location_id, name, description)
-        values (${state.worldId}, ${location.id}, ${location.name}, ${location.description})
-      `.execute(db);
-    }
-    for (const route of Object.values(state.routes)) {
-      await sql`
-        insert into routes (world_id, route_id, from_location_id, to_location_id, travel_minutes)
-        values (${state.worldId}, ${route.id}, ${route.fromLocationId}, ${route.toLocationId},
-                ${route.travelMinutes})
-      `.execute(db);
-    }
-    for (const agent of Object.values(state.agents)) {
-      await sql`
-        insert into agents (world_id, agent_id, name, location_id, status, route_id)
-        values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
-                ${agent.locationId}, ${agent.status}, ${agent.routeId})
-      `.execute(db);
-    }
-  };
 
   beforeAll(async () => {
     testDb = await createTestDatabase('upgrade_path');
@@ -100,7 +100,7 @@ describe('N-1 — обновление с предыдущей поставки'
     // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
     // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
     // а не изобретать свой (найдено исполнением при написании теста).
-    await writePreviousReleaseWorld();
+    await writePreviousReleaseWorld(db);
 
     const appliedBefore = await db
       .selectFrom('schema_migrations')
@@ -174,5 +174,59 @@ describe('N-1 — обновление с предыдущей поставки'
     return expect(runMigrations({ db, migrations, logger: SILENT })).resolves.toMatchObject({
       applied: [],
     });
+  });
+});
+
+/**
+ * Отдельная база: `upgrade-path` выше уже создал мир с тем же `world_id`, а B1 обязан начинать
+ * с ПУСТОЙ схемы прежней поставки. Метка базы своя и по той же причине, по которой их вообще
+ * различают — два процесса с одинаковой меткой уничтожают базы друг друга.
+ */
+describe('B1 — восстановление позиций PRNG при обновлении', () => {
+  let testDb: TestDatabase;
+  let db: DatabaseConnection;
+
+  beforeAll(async () => {
+    testDb = await createTestDatabase('upgrade_path_prng');
+    db = createDatabase(parseDatabaseConnectionUrl(testDb.url));
+  });
+
+  afterAll(async () => {
+    await db.destroy();
+    await testDb.drop();
+  });
+
+  /**
+   * B1 второго раунда верификации. Миграция 0009 добавила `worlds.prng_stream_positions` со
+   * значением по умолчанию `'{}'`, обосновав это тем, что «у любого существующего мира позиции
+   * пусты по факту». Это неверно: розыгрыши делают не команды, а ГЕНЕЗИС — `seedAgents`
+   * распределяет агентов по локациям через `DeterministicRandomSource`, по розыгрышу на агента.
+   * Значит мир прежней поставки получал `{}` вместо своих настоящих позиций, и первый будущий
+   * розыгрыш по потоку агента повторил бы генезисный при том же seed (SIM-01), молча: позиции не
+   * входят в `WorldState`, поэтому ни сверка checksum в `world replay`, ни checksum снимка
+   * (внутренне непротиворечивый с неверным значением) этого не видят.
+   */
+  it('B1: позиции PRNG мира прежней поставки восстанавливаются из его снимка, а не обнуляются', async () => {
+    const previous = migrations.slice(0, -1);
+    await runMigrations({ db, migrations: previous, logger: SILENT });
+    await ensureApplicationRoles(db, TEST_ROLE_PASSWORD);
+    await writePreviousReleaseWorld(db);
+
+    // Снимок прежней поставки: позиции жили ТОЛЬКО в нём (до 0009 другого дома у них не было).
+    const genesisPositions = { 'agent:rook': 1, 'agent:kite': 1 };
+    await sql`
+      insert into world_snapshots (world_id, last_sequence, world_time, checksum,
+                                   prng_stream_positions, canonical_state,
+                                   deterministic_runtime_profile, created_at)
+      values (${FIXTURE_WORLD_ID}, 0, '2028-04-26T06:00:00.000Z', 'sha256:fixture',
+              ${JSON.stringify(genesisPositions)}::jsonb, '{}'::jsonb, '{}'::jsonb, now())
+    `.execute(db);
+
+    await runMigrations({ db, migrations, logger: SILENT });
+
+    const row = await sql<{
+      readonly prng_stream_positions: unknown;
+    }>`select prng_stream_positions from worlds where world_id = ${FIXTURE_WORLD_ID}`.execute(db);
+    expect(row.rows[0]?.prng_stream_positions).toEqual(genesisPositions);
   });
 });
