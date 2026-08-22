@@ -1,0 +1,5 @@
+Событий: 4
+     1  journey.started    2028-04-26T06:00:00.000Z  agent:rook  evt_D2ETY739KPRAYTMXP916Q7DKTN
+     2  journey.started    2028-04-26T06:00:00.000Z  agent:kite  evt_4YDB3796KAR0M9CTNSVJ96NCWG
+     3  journey.completed  2028-04-26T06:40:00.000Z  agent:kite  evt_RK5B2KP5SASE3GPANRMC7JNFQF
+     4  journey.completed  2028-04-26T06:40:00.000Z  agent:rook  evt_GV2XKFW5RQC2S265VKJRFHEVAA

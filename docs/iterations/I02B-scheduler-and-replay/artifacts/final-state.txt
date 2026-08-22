@@ -1,0 +1,9 @@
+Мир world:prototype
+Версия: 4   sequence: 4
+Мировое время: 2028-04-26T06:40:00.000Z
+
+Агенты:
+  agent:finch    idle       в loc:bridge
+  agent:kite     idle       в loc:bridge
+  agent:rook     idle       в loc:bridge
+  agent:swift    idle       в loc:checkpoint
