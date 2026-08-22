@@ -1,0 +1,54 @@
+{
+  "iteration_id": "I02A",
+  "base_commit": "c2e83ff",
+  "//": "Карта владения путями I02A. Реализацию вёл lead (PLAN §8, отклонение 2); здесь объявлены только read-only reviewer-сессии верификации.",
+  "lead_paths": [
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "ops/**",
+    "tests/**",
+    "scripts/boundaries/**",
+    "scripts/worktree/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "tsconfig.depcruise.json",
+    "vitest.config.ts",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".gitignore",
+    ".nvmrc",
+    ".tool-versions",
+    ".dockerignore",
+    "docker-compose.yml",
+    "eslint.config.mjs",
+    ".dependency-cruiser.cjs",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "tools/agent-harness/**",
+    "tools/security-scan/**",
+    "security/**",
+    "scripts/security/**"
+  ],
+  "tasks": [
+    {
+      "task_id": "I02A-VERIFY-TESTS",
+      "owner_role": "reviewer",
+      "//": "Независимая проверка тестов: ложноположительные тесты, пропущенные отказы, идемпотентность, детерминизм. Только чтение.",
+      "write_paths": [],
+      "allow_protected_paths": []
+    },
+    {
+      "task_id": "I02A-VERIFY-ARCH",
+      "owner_role": "reviewer",
+      "//": "Независимая проверка границ, событийной семантики, миграций и транзакционной целостности. Только чтение.",
+      "write_paths": [],
+      "allow_protected_paths": []
+    }
+  ]
+}
