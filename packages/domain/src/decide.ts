@@ -83,7 +83,87 @@ export function decide(state: WorldState, command: Command, context: DecideConte
   switch (command.type) {
     case 'journey.start':
       return decideJourneyStart(state, command, context);
+    case 'journey.complete':
+      return decideJourneyComplete(state, command, context);
+    default:
+      return assertNeverCommand(command);
   }
+}
+
+/**
+ * Завершение пути (I02B).
+ *
+ * Идёт тем же путём, что внешняя команда, и это решение, а не удобство: у мира должен быть
+ * ОДИН способ измениться. Отдельная ветка «домен для scheduled actions» дала бы второй, со
+ * своими правилами и своими отказами, и расхождение между ними было бы невидимым.
+ *
+ * Отказы здесь — обычные доменные отказы, а не ошибки scheduler-а: due action мог устареть,
+ * пока ждал своей очереди (агент уже завершил путь другим способом, маршрут изменился), и это
+ * нормальный исход, который обязан быть записан, а не брошен.
+ */
+function decideJourneyComplete(
+  state: WorldState,
+  command: Extract<Command, { type: 'journey.complete' }>,
+  context: DecideContext,
+): DecideResult {
+  if (command.expected_world_version !== state.worldVersion) {
+    return rejected(
+      'stale_world_version',
+      `команда ожидала версию мира ${command.expected_world_version}, текущая версия ${state.worldVersion}`,
+    );
+  }
+
+  const agent = state.agents[command.actor_id];
+  if (agent === undefined) {
+    return rejected('actor_not_actionable', `актор ${command.actor_id} неизвестен миру`);
+  }
+  if (agent.status !== 'traveling' || agent.routeId !== command.payload.route_id) {
+    return rejected(
+      'precondition_failed',
+      agent.status !== 'traveling'
+        ? `актор ${command.actor_id} не в пути (статус "${agent.status}")`
+        : `актор ${command.actor_id} идёт по маршруту ${String(agent.routeId)}, а не по ` +
+            `${command.payload.route_id}`,
+    );
+  }
+
+  const route = state.routes[command.payload.route_id];
+  if (route === undefined) {
+    return rejected('route_unavailable', `маршрут ${command.payload.route_id} неизвестен миру`);
+  }
+
+  const worldTime = context.clock.now();
+  const versions = context.ruleset.versions;
+
+  const event: Omit<JourneyCompletedEvent, 'recorded_at'> = {
+    event_id: context.ids.next(RUNTIME_ID_PREFIXES.event),
+    world_id: state.worldId,
+    sequence: state.sequence + 1,
+    world_time: toCanonicalIso(worldTime),
+    type: 'journey.completed',
+    schema_version: versions.schemaVersion,
+    rules_version: versions.rulesVersion,
+    content_version: versions.contentVersion,
+    actor_ids: [command.actor_id],
+    subject_ids: [],
+    location_id: route.toLocationId,
+    correlation_id: command.correlation_id,
+    caused_by: command.caused_by_event_id === undefined ? [] : [command.caused_by_event_id],
+    command_id: command.command_id,
+    random_audit: null,
+    payload: { route_id: route.id },
+  };
+
+  return { kind: 'accepted', events: [event] };
+}
+
+/**
+ * Исчерпывающая обработка типов команд проверяется КОМПИЛЯТОРОМ (тот же приём, что в `evolve`):
+ * новый тип команды без ветки здесь не сузится до `never`, и `pnpm typecheck` упадёт раньше,
+ * чем код дойдёт до review.
+ */
+function assertNeverCommand(command: never): never {
+  throw new Error(`decide: необработанный тип команды ${JSON.stringify(command)}`);
 }
 
 function decideJourneyStart(

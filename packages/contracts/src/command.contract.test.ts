@@ -50,8 +50,12 @@ describe('command envelope v1 (§2)', () => {
     expect(decoded(VALID_COMMAND)).toEqual(VALID_COMMAND);
   });
 
-  it('перечисляет типы команд первого slice и ничего сверх них (§11, §12)', () => {
-    expect([...COMMAND_TYPES]).toEqual(['journey.start']);
+  it('перечисляет ровно объявленные типы команд и ничего сверх них (§11, §12)', () => {
+    // I02B добавила `journey.complete`: завершение пути — намерение, которое формирует
+    // scheduler, и оно идёт тем же путём, что внешняя команда (`03_TECHNICAL_DESIGN` §5).
+    // Список остаётся точным, а не «хотя бы содержит»: тип команды не должен появляться в
+    // контракте без осознанной правки этого теста.
+    expect([...COMMAND_TYPES]).toEqual(['journey.start', 'journey.complete']);
   });
 
   it('объявляет версию схемы envelope', () => {
@@ -270,5 +274,37 @@ describe('§4: payload-схемы не объявляют полей envelope', 
 
   it('payload-схема закрыта: именно это делает контроль на данных излишним', () => {
     expect(JourneyStartPayloadSchema.additionalProperties).toBe(false);
+  });
+});
+
+describe('journey.complete (I02B)', () => {
+  const COMPLETE = {
+    command_id: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    world_id: 'world:prototype',
+    type: 'journey.complete' as const,
+    schema_version: 1,
+    actor_id: 'agent:rook',
+    issued_at_world_time: '2028-04-26T06:40:00.000Z',
+    expected_world_version: 1,
+    correlation_id: 'corr_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    caused_by_event_id: 'evt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    payload: { route_id: 'route:yard-to-bridge' },
+  };
+
+  it('декодируется как самостоятельный вариант', () => {
+    const result = decodeCommand(COMPLETE);
+    expect('errors' in result ? result.errors : null).toBeNull();
+  });
+
+  it('payload варианта не принимает поля чужого варианта', () => {
+    // Дискриминированный union обязан РАЗДЕЛЯТЬ варианты, а не быть объединением всех полей:
+    // иначе `additionalProperties: false` декоративен, и опечатка в типе команды проходит.
+    const result = decodeCommand({ ...COMPLETE, payload: { route_id: 'route:a', extra: 1 } });
+    expect('errors' in result).toBe(true);
+  });
+
+  it('неизвестный тип команды отвергается по дискриминатору', () => {
+    const result = decodeCommand({ ...COMPLETE, type: 'journey.abandon' });
+    expect('errors' in result).toBe(true);
   });
 });

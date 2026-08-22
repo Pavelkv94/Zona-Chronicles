@@ -58,9 +58,14 @@ describe('M3: schema bundle адресуется по содержимому с�
   });
 
   it('добавление поля в схему команды меняет checksum', () => {
+    // С I02B `CommandSchema` — дискриминированный union, поэтому поля живут в вариантах, а не
+    // на верхнем уровне. Правка идёт в первый вариант: свойство «изменение схемы меняет
+    // checksum» обязано держаться и для union, иначе bundle перестал бы адресовать содержимое.
     const mutated = clone();
     const command = mutated[CommandSchema.$id!] as Record<string, unknown>;
-    const properties = command['properties'] as Record<string, unknown>;
+    const variants = command['anyOf'] as Record<string, unknown>[];
+    expect(variants.length).toBeGreaterThan(1);
+    const properties = variants[0]!['properties'] as Record<string, unknown>;
     expect(Object.keys(properties)).toContain('command_id');
     properties['lease_owner'] = { type: 'string' };
     expect(checksumOf(mutated)).not.toBe(checksumOf(schemaBundleContent()));

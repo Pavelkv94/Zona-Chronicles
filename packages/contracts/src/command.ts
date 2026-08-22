@@ -32,8 +32,16 @@ import {
 /** Мажорная версия envelope. Чужая мажорная версия требует upcaster (§4), а не догадок. */
 export const ENVELOPE_SCHEMA_VERSION = 1;
 
-/** Типы команд первого slice (§11). Расширяется только вместе с итерацией из §12. */
-export const COMMAND_TYPES = ['journey.start'] as const;
+/**
+ * Типы команд. Расширяется только вместе с итерацией, которая их вводит (§12).
+ *
+ * `journey.complete` добавлен в I02B: завершение пути — это НАМЕРЕНИЕ, которое формирует
+ * scheduler по наступившему due action, и оно обязано пройти тот же путь, что внешняя команда
+ * (`03_TECHNICAL_DESIGN` §5, шаг 4: «сформировать допустимые команды и вызвать чистый domain
+ * handler»). Отдельная ветка «домен для scheduled actions» дала бы второй способ менять мир —
+ * с собственными правилами, собственной идемпотентностью и собственными отказами.
+ */
+export const COMMAND_TYPES = ['journey.start', 'journey.complete'] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -135,44 +143,84 @@ export const JourneyStartPayloadSchema = Type.Object(
   },
 );
 
-export const CommandSchema = Type.Object(
+/** `journey.complete`: намерение завершить начатый путь (I02B). */
+export const JourneyCompletePayloadSchema = Type.Object(
   {
-    command_id: RuntimeIdSchema(
-      RUNTIME_ID_PREFIXES.command,
-      'Уникальный id команды; одновременно idempotency key на границе приложения (§1).',
-    ),
-    world_id: NamespacedIdSchema,
-    type: Type.Union(
-      COMMAND_TYPES.map((type) => Type.Literal(type)),
-      { description: 'Тип команды из первого contract slice.' },
-    ),
-    schema_version: SchemaVersionSchema,
-    actor_id: Type.Unsafe<string>({
-      ...NamespacedIdSchema,
-      description: 'Инициатор; системные команды используют явного актора вида system:* (§2).',
-    }),
-    issued_at_world_time: InstantSchema,
-    expected_world_version: WorldVersionSchema,
-    correlation_id: RuntimeIdSchema(
-      RUNTIME_ID_PREFIXES.correlation,
-      'Весь workflow/scene/plan, которому принадлежит команда (§3).',
-    ),
-    caused_by_event_id: Type.Optional(
-      RuntimeIdSchema(
-        RUNTIME_ID_PREFIXES.event,
-        'Событие-причина, если команда порождена фактом мира; отсутствует у внешнего намерения.',
-      ),
-    ),
-    payload: JourneyStartPayloadSchema,
+    route_id: NamespacedIdSchema,
   },
   {
-    $id: 'zona:command/1',
     additionalProperties: false,
-    description: 'Command envelope v1 (09_EVENT_AND_COMMAND_CONTRACTS §2).',
+    description: 'Маршрут, который агент завершает. Проверяется против состояния актора.',
   },
 );
 
-export type Command = Static<typeof CommandSchema>;
+const COMMAND_PAYLOAD_SCHEMAS = {
+  'journey.start': JourneyStartPayloadSchema,
+  'journey.complete': JourneyCompletePayloadSchema,
+} as const;
+
+const commandEnvelopeFields = {
+  command_id: RuntimeIdSchema(
+    RUNTIME_ID_PREFIXES.command,
+    'Уникальный id команды; одновременно idempotency key на границе приложения (§1).',
+  ),
+  world_id: NamespacedIdSchema,
+  schema_version: SchemaVersionSchema,
+  actor_id: Type.Unsafe<string>({
+    ...NamespacedIdSchema,
+    description: 'Инициатор; системные команды используют явного актора вида system:* (§2).',
+  }),
+  issued_at_world_time: InstantSchema,
+  expected_world_version: WorldVersionSchema,
+  correlation_id: RuntimeIdSchema(
+    RUNTIME_ID_PREFIXES.correlation,
+    'Весь workflow/scene/plan, которому принадлежит команда (§3).',
+  ),
+  caused_by_event_id: Type.Optional(
+    RuntimeIdSchema(
+      RUNTIME_ID_PREFIXES.event,
+      'Событие-причина, если команда порождена фактом мира; отсутствует у внешнего намерения.',
+    ),
+  ),
+} as const;
+
+function commandVariant<T extends CommandType>(type: T) {
+  return Type.Object(
+    {
+      ...commandEnvelopeFields,
+      type: Type.Literal(type),
+      payload: COMMAND_PAYLOAD_SCHEMAS[type],
+    },
+    {
+      $id: `zona:command/${type}/1`,
+      additionalProperties: false,
+      description: `Command ${type} v1 (09_EVENT_AND_COMMAND_CONTRACTS §2).`,
+    },
+  );
+}
+
+export const JourneyStartCommandSchema = commandVariant('journey.start');
+export const JourneyCompleteCommandSchema = commandVariant('journey.complete');
+
+const COMMAND_VARIANT_SCHEMAS = {
+  'journey.start': JourneyStartCommandSchema,
+  'journey.complete': JourneyCompleteCommandSchema,
+} as const;
+
+export const CommandSchema = Type.Union([JourneyStartCommandSchema, JourneyCompleteCommandSchema], {
+  $id: 'zona:command/1',
+  description: 'Command envelope v1, дискриминированный по type (§2, §11).',
+});
+
+export type JourneyStartCommand = Static<typeof JourneyStartCommandSchema>;
+export type JourneyCompleteCommand = Static<typeof JourneyCompleteCommandSchema>;
+
+/**
+ * Перечисление вариантов, а не `Static<typeof CommandSchema>` — по тому же доводу, что у
+ * `WorldEvent`: `Static` от `Type.Union` «плющит» дискриминированный union, и `payload`
+ * перестаёт сужаться по `type`.
+ */
+export type Command = JourneyStartCommand | JourneyCompleteCommand;
 
 /**
  * Валидирует и нормализует команду. Возвращает типизированные ошибки, а не бросает: отказ
@@ -188,7 +236,7 @@ export function decodeCommand(input: unknown): ValidationResult<Command> {
     return { errors: [discriminator] };
   }
 
-  const issues = schemaIssues(CommandSchema, input);
+  const issues = schemaIssues(COMMAND_VARIANT_SCHEMAS[input['type'] as CommandType], input);
   if (issues.length > 0) {
     return { errors: issues };
   }
