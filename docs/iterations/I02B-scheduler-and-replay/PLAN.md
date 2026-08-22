@@ -31,7 +31,8 @@ pnpm world migrate && pnpm world init --seed 42
 
 pnpm world run --agent agent:rook --route route:yard-to-bridge
 pnpm world state            # traveling, запланировано завершение
-pnpm world tick             # worker обрабатывает due actions
+pnpm world tick             # ничего: горизонт по умолчанию = текущее мировое время
+pnpm world tick --advance 40   # мир доводится до момента прибытия
 pnpm world state            # agent:rook уже в loc:bridge, idle
 pnpm world events           # journey.started, journey.completed
 
@@ -41,8 +42,14 @@ pnpm world run --agent agent:kite --route route:yard-to-bridge
 pnpm world tick
 pnpm world events           # ровно одно journey.completed на каждое journey.started
 
-pnpm world replay           # пересимуляция из снимка: checksum совпадает
+pnpm world replay           # пересимуляция: checksum совпадает, exit 0
 ```
+
+Голый `pnpm world tick` в этом скрипте намеренно ничего не делает: горизонт по умолчанию равен
+текущему мировому времени, и наступивших действий нет. Это не оплошность демо, а само свойство
+дискретно-событийного времени — мир не идёт «сам по себе с частотой тика», его двигают события,
+а до какого момента их доигрывать, решает вызывающий (замечание исполнителя I02B-T1 при живом
+прогоне; строка оставлена, потому что показывает границу лучше, чем её описание).
 
 ## 3. Требования (`11_REQUIREMENTS_TRACEABILITY`)
 
