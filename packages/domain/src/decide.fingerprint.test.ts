@@ -33,6 +33,7 @@ const state = (): WorldState => ({
       travelMinutes: 40,
     },
   },
+  scheduledActions: {},
 });
 
 const context = () => ({

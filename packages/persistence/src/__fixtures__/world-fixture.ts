@@ -50,6 +50,7 @@ export const fixtureState = (): WorldState => ({
       travelMinutes: 40,
     },
   },
+  scheduledActions: {},
 });
 
 export const fixtureInitialization = (): WorldInitialization => ({

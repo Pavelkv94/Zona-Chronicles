@@ -16,7 +16,14 @@ export { DerivedIdFactory, SequentialIdFactory } from './ports/id-factory.ts';
 export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
 export { FixedRuleset, testRulesetVersions } from './ports/ruleset.ts';
 
-export type { AgentState, AgentStatus, RouteDefinition, WorldState } from './state.ts';
+export type {
+  AgentState,
+  AgentStatus,
+  RouteDefinition,
+  ScheduledAction,
+  WorldState,
+} from './state.ts';
+export { SCHEDULED_ACTION_PRIORITY } from './state.ts';
 
 export type { DecideContext, DecideRejection, DecideResult, DraftWorldEvent } from './decide.ts';
 export { decide } from './decide.ts';

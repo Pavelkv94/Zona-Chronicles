@@ -52,6 +52,9 @@ export const GRANT_MATRIX: Readonly<Record<RoleName, Readonly<Record<string, rea
       locations: ['SELECT', 'INSERT'],
       routes: ['SELECT', 'INSERT'],
       outbox: ['SELECT', 'INSERT', 'UPDATE'],
+      // I02B: worker ведёт расписание и пишет снимки; удалять не может ничего.
+      scheduled_actions: ['SELECT', 'INSERT', 'UPDATE'],
+      world_snapshots: ['SELECT', 'INSERT'],
     },
     [ROLE_NAMES.projection]: {
       world_events: ['SELECT'],

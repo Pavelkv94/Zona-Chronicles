@@ -127,7 +127,37 @@ export interface OutboxTable {
   published_at: ColumnType<Date | null, Date | null, Date | null>;
 }
 
-/** Схема, известная пакету persistence на текущей итерации (I00 + I02A). */
+/**
+ * Зеркало канонического расписания плюс операционные поля (I02B, миграция 0007).
+ *
+ * Канонические: `kind`, `due_at`, `priority`, `entity_id`, `route_id` — выводятся `evolve` из
+ * событий. Операционные: `lease_owner`, `lease_until`, `completed_at` — в checksum не входят.
+ */
+export interface ScheduledActionsTable {
+  world_id: string;
+  action_id: string;
+  kind: 'journey.complete';
+  due_at: string;
+  priority: number;
+  entity_id: string;
+  route_id: string;
+  lease_owner: ColumnType<string | null, string | null, string | null>;
+  lease_until: ColumnType<Date | null, Date | null, Date | null>;
+  completed_at: ColumnType<Date | null, Date | null, Date | null>;
+}
+
+export interface WorldSnapshotsTable {
+  world_id: string;
+  last_sequence: BigIntColumn;
+  world_time: string;
+  checksum: string;
+  prng_stream_positions: ColumnType<unknown, string, string>;
+  canonical_state: ColumnType<unknown, string, string>;
+  deterministic_runtime_profile: ColumnType<unknown, string, string>;
+  created_at: ColumnType<Date, Date, Date>;
+}
+
+/** Схема, известная пакету persistence на текущей итерации (I00 + I02A + I02B). */
 export interface Database {
   schema_migrations: SchemaMigrationsTable;
   worlds: WorldsTable;
@@ -137,6 +167,8 @@ export interface Database {
   world_events: WorldEventsTable;
   command_results: CommandResultsTable;
   command_attempt_rejections: CommandAttemptRejectionsTable;
+  scheduled_actions: ScheduledActionsTable;
+  world_snapshots: WorldSnapshotsTable;
   outbox: OutboxTable;
 }
 

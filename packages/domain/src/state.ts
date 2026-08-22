@@ -30,6 +30,39 @@ export interface RouteDefinition {
   readonly travelMinutes: number;
 }
 
+/**
+ * Запланированное действие — ЧАСТЬ канонического состояния, а не операционная очередь (I02B).
+ *
+ * Это решение, и оно неочевидное. Альтернатива — таблица задач, которую наполняет адаптер
+ * персистентности, прочитав `expected_arrival` из события. Она короче, но переносит доменное
+ * знание («начатый путь обязан завершиться») в оболочку, и тогда replay журнала перестаёт
+ * восстанавливать расписание: его пришлось бы восстанавливать отдельным механизмом, который
+ * может разойтись с событиями молча.
+ *
+ * Здесь расписание выводится из событий чистой функцией `evolve`, поэтому пересимуляция
+ * восстанавливает его бесплатно и по построению не может разойтись с историей. Таблица в БД —
+ * зеркало этого состояния плюс операционные поля аренды, которые каноническими не являются и в
+ * checksum не входят.
+ *
+ * `id` — это `event_id` события-причины: детерминирован, уникален и делает связь «действие ↔
+ * факт, который его породил» прямой, без отдельного справочника.
+ */
+export interface ScheduledAction {
+  readonly id: string;
+  readonly kind: 'journey.complete';
+  /** Каноническая ISO-метка МИРОВОГО времени, когда действие становится доступным. */
+  readonly dueAt: string;
+  /** Меньше — раньше. Разводит действия с одинаковым `dueAt` до сравнения id (C4). */
+  readonly priority: number;
+  readonly entityId: string;
+  readonly routeId: string;
+}
+
+/** Приоритеты по видам действий. Данные, а не магические числа внутри `evolve`. */
+export const SCHEDULED_ACTION_PRIORITY: Readonly<Record<ScheduledAction['kind'], number>> = {
+  'journey.complete': 100,
+};
+
 export interface WorldState {
   readonly worldId: string;
   /** Версия мира для optimistic concurrency (`expected_world_version` команды, §2). */
@@ -40,4 +73,6 @@ export interface WorldState {
   readonly sequence: number;
   readonly agents: Readonly<Record<string, AgentState>>;
   readonly routes: Readonly<Record<string, RouteDefinition>>;
+  /** Ключ — `id` действия. Порядок вставки смысла не несёт: `canonicalize` сортирует ключи. */
+  readonly scheduledActions: Readonly<Record<string, ScheduledAction>>;
 }

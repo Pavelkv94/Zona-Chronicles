@@ -181,6 +181,9 @@ export function seedWorld(
     sequence: 0,
     agents,
     routes,
+    // Свежепорождённый мир событий не имел, поэтому и расписания у него нет: оно выводится
+    // из событий (`evolve`), а не задаётся при создании.
+    scheduledActions: {},
   };
 
   const rulesetVersions = testRulesetVersions();

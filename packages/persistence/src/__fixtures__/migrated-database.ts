@@ -59,6 +59,8 @@ export const createMigratedDatabase = async (
 /** Очищает данные, не трогая схему: порядок обратный зависимостям внешних ключей. */
 export const truncateWorldData = async (db: DatabaseConnection): Promise<void> => {
   await db.deleteFrom('outbox').execute();
+  await db.deleteFrom('world_snapshots').execute();
+  await db.deleteFrom('scheduled_actions').execute();
   await db.deleteFrom('command_attempt_rejections').execute();
   await db.deleteFrom('command_results').execute();
   await db.deleteFrom('world_events').execute();

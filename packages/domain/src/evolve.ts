@@ -11,7 +11,7 @@
  * доменной логике и replay (§3 контракта, комментарий `world-event.ts`).
  */
 import { type WorldEvent, assertNeverWorldEvent } from '@zona/contracts';
-import type { WorldState } from './state.ts';
+import { SCHEDULED_ACTION_PRIORITY, type ScheduledAction, type WorldState } from './state.ts';
 
 export function evolve(state: WorldState, event: WorldEvent): WorldState {
   const bumped: WorldState = {
@@ -64,12 +64,25 @@ function applyJourneyStarted(
     // доменный отказ. Громкий сбой вместо тихой порчи состояния.
     throw new Error(`evolve: journey.started ссылается на неизвестного актора ${actorId}`);
   }
+  // Начатый путь ОБЯЗАН завершиться, и это доменное знание, а не операционная деталь: поэтому
+  // расписание выводится здесь, из события, а не наполняется адаптером персистентности. Тогда
+  // пересимуляция журнала восстанавливает его бесплатно (см. `ScheduledAction` в `state.ts`).
+  const action: ScheduledAction = {
+    id: event.event_id,
+    kind: 'journey.complete',
+    dueAt: event.payload.expected_arrival,
+    priority: SCHEDULED_ACTION_PRIORITY['journey.complete'],
+    entityId: actorId,
+    routeId: event.payload.route_id,
+  };
+
   return {
     ...state,
     agents: {
       ...state.agents,
       [actorId]: { ...agent, status: 'traveling', routeId: event.payload.route_id },
     },
+    scheduledActions: { ...state.scheduledActions, [action.id]: action },
   };
 }
 
@@ -88,11 +101,21 @@ function applyJourneyCompleted(
       `evolve: journey.completed ссылается на неизвестный маршрут ${event.payload.route_id}`,
     );
   }
+  // Выполненное действие уходит из расписания. Снимается ПО АКТОРУ и маршруту, а не по id
+  // события-причины: `journey.completed` не обязано знать, каким событием был начат путь, а
+  // инвариант «у агента не больше одного незавершённого пути» держит `decide`.
+  const remaining = Object.fromEntries(
+    Object.entries(state.scheduledActions).filter(
+      ([, action]) => !(action.entityId === actorId && action.routeId === route.id),
+    ),
+  );
+
   return {
     ...state,
     agents: {
       ...state.agents,
       [actorId]: { ...agent, status: 'idle', routeId: null, locationId: route.toLocationId },
     },
+    scheduledActions: remaining,
   };
 }

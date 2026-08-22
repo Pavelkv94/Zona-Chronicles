@@ -50,6 +50,7 @@ export const TRANSACTION_STEPS = [
   'world-locked',
   'attempt-recorded',
   'event-inserted',
+  'schedule-updated',
   'agent-updated',
   'world-updated',
   'outbox-inserted',
@@ -74,6 +75,7 @@ export const MAX_ATTEMPTS_PER_COMMAND = 10;
 export const ACCEPTED_PATH_STEPS: readonly TransactionStep[] = [
   'world-locked',
   'event-inserted',
+  'schedule-updated',
   'agent-updated',
   'world-updated',
   'outbox-inserted',
@@ -443,6 +445,42 @@ export const executeCommand = async (
         nextState = evolve(nextState, event);
       }
       await afterStep('event-inserted');
+
+      // Расписание — часть канонического состояния (`ScheduledAction` в домене), поэтому
+      // записывается в той же транзакции, что событие: ACCEPTANCE C1 требует, чтобы не было ни
+      // события без запланированного завершения, ни завершения без события.
+      //
+      // Появившиеся действия вставляются, исчезнувшие ПОМЕЧАЮТСЯ выполненными, а не удаляются
+      // (C2): каноническим является только незавершённое расписание, а история обработки нужна
+      // для расследования «почему это произошло тогда, а не раньше».
+      for (const action of Object.values(nextState.scheduledActions)) {
+        if (state.scheduledActions[action.id] !== undefined) continue;
+        await trx
+          .insertInto('scheduled_actions')
+          .values({
+            world_id: command.world_id,
+            action_id: action.id,
+            kind: action.kind,
+            due_at: action.dueAt,
+            priority: action.priority,
+            entity_id: action.entityId,
+            route_id: action.routeId,
+            lease_owner: null,
+            lease_until: null,
+            completed_at: null,
+          })
+          .execute();
+      }
+      for (const action of Object.values(state.scheduledActions)) {
+        if (nextState.scheduledActions[action.id] !== undefined) continue;
+        await trx
+          .updateTable('scheduled_actions')
+          .set({ completed_at: recordedAt, lease_owner: null, lease_until: null })
+          .where('world_id', '=', command.world_id)
+          .where('action_id', '=', action.id)
+          .execute();
+      }
+      await afterStep('schedule-updated');
 
       for (const agent of changedAgents(state, nextState)) {
         await trx

@@ -43,9 +43,11 @@ describe('B1 — канонические таблицы I02A', () => {
         'locations',
         'outbox',
         'routes',
+        'scheduled_actions',
         'schema_migrations',
         'spatial_ref_sys', // из postgis, миграция 0001
         'world_events',
+        'world_snapshots',
         'worlds',
       ]);
     } finally {

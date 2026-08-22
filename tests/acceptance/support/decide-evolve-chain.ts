@@ -55,6 +55,7 @@ const initialState: WorldState = {
       travelMinutes: 40,
     },
   },
+  scheduledActions: {},
 };
 
 const command: Command = {

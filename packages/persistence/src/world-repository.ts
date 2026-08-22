@@ -6,7 +6,13 @@
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
 import { requireChecksum, type WorldEvent } from '@zona/contracts';
-import type { RulesetVersions, WorldState, AgentState, RouteDefinition } from '@zona/domain';
+import type {
+  AgentState,
+  RouteDefinition,
+  RulesetVersions,
+  ScheduledAction,
+  WorldState,
+} from '@zona/domain';
 import { requireSafeInteger, type DatabaseConnection } from './database.ts';
 
 export interface WorldContent {
@@ -123,7 +129,7 @@ export const loadWorldState = async (
     .executeTakeFirst();
   if (world === undefined) return null;
 
-  const [agentRows, routeRows] = await Promise.all([
+  const [agentRows, routeRows, actionRows] = await Promise.all([
     db
       .selectFrom('agents')
       .selectAll()
@@ -135,6 +141,15 @@ export const loadWorldState = async (
       .selectAll()
       .where('world_id', '=', worldId)
       .orderBy('route_id')
+      .execute(),
+    // Каноническим является только НЕЗАВЕРШЁННОЕ расписание: выполненные строки остаются в
+    // таблице как история обработки (ACCEPTANCE C2) и в состояние мира не входят.
+    db
+      .selectFrom('scheduled_actions')
+      .selectAll()
+      .where('world_id', '=', worldId)
+      .where('completed_at', 'is', null)
+      .orderBy('action_id')
       .execute(),
   ]);
 
@@ -158,6 +173,18 @@ export const loadWorldState = async (
     };
   }
 
+  const scheduledActions: Record<string, ScheduledAction> = {};
+  for (const row of actionRows) {
+    scheduledActions[row.action_id] = {
+      id: row.action_id,
+      kind: row.kind,
+      dueAt: row.due_at,
+      priority: row.priority,
+      entityId: row.entity_id,
+      routeId: row.route_id,
+    };
+  }
+
   return {
     worldId: world.world_id,
     worldVersion: requireSafeInteger(world.version, `worlds.version(${worldId})`),
@@ -165,6 +192,7 @@ export const loadWorldState = async (
     sequence: requireSafeInteger(world.last_sequence, `worlds.last_sequence(${worldId})`),
     agents,
     routes,
+    scheduledActions,
   };
 };
 

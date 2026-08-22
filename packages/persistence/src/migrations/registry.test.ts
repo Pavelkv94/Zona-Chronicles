@@ -53,6 +53,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'command-attempt-rejections',
     checksum: 'cf947e2c33854955b07bd1854e2dd0464263fe009da32ff063b9cd1b17722f83',
   },
+  {
+    id: '0007',
+    name: 'scheduler-and-snapshots',
+    checksum: 'd24c42c6a2c65d274d3c520c80a66f5715522d763bc938b429831c9f4c56519d',
+  },
 ];
 
 describe('реестр миграций', () => {
