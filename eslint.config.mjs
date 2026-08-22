@@ -373,7 +373,6 @@ export default tseslint.config(
           // Тот же довод о переопределении, но уже про базовый слой: без явного повторения
           // `llmImportRestrictions` запрет ADR-006 молча исчезал бы именно в replay-файлах.
           // Так и было до M6 — для единственного `packages/persistence/src/replay.ts`.
-          patterns: [...llmImportRestrictions.patterns],
           paths: [
             {
               name: '@zona/domain',
@@ -382,6 +381,30 @@ export default tseslint.config(
                 'ACCEPTANCE C10: replay применяет записанные факты, а не принимает решения ' +
                 'заново. Повторный decide означал бы, что outcome вычисляется снова, и ' +
                 'одинаковый журнал перестал бы давать одинаковый мир (SIM-01).',
+            },
+            // M-B (второй раунд верификации I02B): источник случайности живёт уже НЕ только в
+            // домене. M4 создал `PersistentRandomSource` в том же пакете, что replay, и
+            // экспортировал из публичного индекса — оба пути к нему правило пропускало молча,
+            // хотя запрещало ровно это же имя из `@zona/domain`. Контроль был не на том пути.
+            {
+              name: '@zona/persistence',
+              importNames: ['PersistentRandomSource'],
+              message:
+                'ACCEPTANCE C10: replay не бросает кости. Источник случайности из самого ' +
+                'persistence — тот же запрет, что и доменный: розыгрыш при свёртке журнала ' +
+                'означал бы, что одинаковый журнал даёт разный мир (SIM-01).',
+            },
+          ],
+          patterns: [
+            ...llmImportRestrictions.patterns,
+            {
+              // Относительный путь к тому же модулю: `../prng-positions.ts`, './prng-positions.ts'.
+              // Без него запрет обходится сменой формы импорта, а не намерения.
+              group: ['**/prng-positions.ts', '**/prng-positions.js', '**/prng-positions'],
+              importNames: ['PersistentRandomSource'],
+              message:
+                'ACCEPTANCE C10: replay не бросает кости — источник случайности не импортируется ' +
+                'и относительным путём тоже (SIM-01).',
             },
           ],
         },

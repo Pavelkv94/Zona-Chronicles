@@ -7,6 +7,7 @@
  * сюда строка приходит явным параметром (ADR-003: оболочка снаружи, зависимости внутрь).
  */
 import {
+  CANONICAL_TRANSACTION_ISOLATION_LEVEL,
   RUNTIME_ID_PREFIXES,
   addMinutes,
   compareByCodePoint,
@@ -487,14 +488,38 @@ export const runWorldEventsCommand = async (db: DatabaseConnection): Promise<Cli
  * про то, почему replay обязан оставаться read-only.
  */
 export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<CliResult> => {
-  const state = await loadWorldState(db, PROTOTYPE_WORLD.worldId);
-  if (state === null) {
+  // M-D (второй раунд верификации I02B): состояние и метаданные читаются в ОДНОЙ транзакции.
+  // Раньше это были два независимых чтения по разным соединениям пула под `read committed`, и
+  // между ними могла закоммититься команда — тогда в снимок попадали `last_sequence` и
+  // `canonical_state` версии N вместе с `prng_stream_positions` версии N+k. Перекос позиций, в
+  // отличие от перекоса состояния, не ловится ничем: они не входят в `WorldState`, поэтому
+  // сверка `world replay` их не видит, а checksum снимка их накрывает и потому остаётся
+  // внутренне непротиворечивым с рассогласованной парой.
+  //
+  // Комментарий в `command-handler.ts` требует, чтобы позиция двигалась там же, где
+  // `last_sequence`; здесь эта пара впервые ФОТОГРАФИРУЕТСЯ, и требование обязано выполняться
+  // и на снимке тоже.
+  //
+  // Остаток долга: сам `loadWorldState` внутри делает четыре отдельных запроса (BLOCKER 2
+  // первого раунда). Транзакция здесь их накрывает, но общий долг закрывается в I03 вместе с
+  // проекциями, которые читают то же состояние.
+  const snapshotSource = await db
+    .transaction()
+    .setIsolationLevel(CANONICAL_TRANSACTION_ISOLATION_LEVEL)
+    .execute(async (trx) => {
+      const state = await loadWorldState(trx, PROTOTYPE_WORLD.worldId);
+      if (state === null) return null;
+      const meta = await loadWorldMeta(trx, state.worldId);
+      return { state, meta };
+    });
+
+  if (snapshotSource === null) {
     return {
       stdout: `world snapshot: мир ${PROTOTYPE_WORLD.worldId} не создан — сначала "world init --seed N".\n`,
       exitCode: 2,
     };
   }
-  const meta = await loadWorldMeta(db, state.worldId);
+  const { state, meta } = snapshotSource;
   if (meta === null) {
     // `loadWorldState` уже нашёл мир — строка `worlds` обязана существовать. Недостижимо на
     // практике, но рассогласование двух чтений одного мира не должно быть тихим.

@@ -224,6 +224,16 @@ const persistenceFiles: Readonly<Record<string, string>> = {
    * отменило соседнее.
    */
   'replay-llm.ts': `import { Anthropic } from '${LLM_PACKAGE}';\nexport type _A = Anthropic;\n`,
+  /**
+   * M-B (второй раунд): M4 положил `PersistentRandomSource` в ТОТ ЖЕ пакет, где живёт replay, и
+   * экспортировал из публичного индекса. Правило C10 запрещало только импорты из `@zona/domain`,
+   * поэтому оба пути к источнику случайности внутри `persistence` проходили молча — контроль
+   * есть, но не на том пути. Ровно тот класс, который M6 и закрывал.
+   */
+  'replay-local-random.ts':
+    "import { PersistentRandomSource } from '../prng-positions.ts';\nexport const bad = PersistentRandomSource;\n",
+  'replay-package-random.ts':
+    "import { PersistentRandomSource } from '@zona/persistence';\nexport const bad = PersistentRandomSource;\n",
 };
 
 /**
@@ -427,6 +437,16 @@ describe('boundary fixtures — C10: replay не принимает решени
       ),
     ).toBe(true);
   });
+
+  it.each([
+    ['replay-local-random.ts', 'относительным путём внутри пакета'],
+    ['replay-package-random.ts', 'через публичный индекс пакета'],
+  ] as const)(
+    'M-B: источник случайности из самого persistence (%s) тоже запрещён — %s',
+    (file, _how) => {
+      expect(hasEslintMessage(file, 'no-restricted-imports', 'ACCEPTANCE C10')).toBe(true);
+    },
+  );
 
   it('вторая сторона: свёртка через evolve проходит — правило не запрещает корректный replay', () => {
     const c10 = findEslintResult('replay-fold.ts').messages.filter((m) =>
