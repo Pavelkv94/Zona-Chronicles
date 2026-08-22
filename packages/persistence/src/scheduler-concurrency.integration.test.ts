@@ -150,6 +150,7 @@ describe('C5/C6 — конкуренция и аренда', () => {
       worldTime: ARRIVAL,
       owner: 'worker-dead',
       leaseMs: 1_000,
+      batchSize: AGENTS,
       now: () => new Date(Date.now() - 60_000),
     });
     expect(dead.length).toBeGreaterThan(0);
