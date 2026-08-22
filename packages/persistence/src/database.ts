@@ -37,6 +37,12 @@ export interface WorldsTable {
   rules_version: string;
   content_version: string;
   schema_version: number;
+  /**
+   * Позиции потоков PRNG (M4, миграция 0009). Читается как разобранный `jsonb`, пишется
+   * канонической строкой — тем же приёмом, что `canonical_state` снимка: `jsonb` не сохраняет
+   * канонический порядок ключей, и полагаться на обратное чтение байтов нельзя (ADR-010 §10.2).
+   */
+  prng_stream_positions: ColumnType<unknown, string, string>;
   created_at: ColumnType<Date, Date, Date>;
 }
 

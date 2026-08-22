@@ -70,6 +70,13 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'scheduled-action-failure',
     checksum: '57fd3de27540308b02a9e46b4d7b1f4896a28c468e9705b8e8994da8e734613a',
   },
+  // Новая миграция I02B (M4): позиции PRNG становятся колонкой `worlds`. Golden дополнен, а не
+  // переписан — существующие строки не тронуты, что и требуется от неизменности выпущенного.
+  {
+    id: '0009',
+    name: 'world-prng-positions',
+    checksum: 'f21fb7b8a77e1f591722546890158805c96ef46c31cec183b920e14afcf37e2b',
+  },
 ];
 
 describe('реестр миграций', () => {

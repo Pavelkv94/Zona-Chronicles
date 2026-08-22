@@ -8,9 +8,18 @@
  *
  * «Предыдущая поставка» здесь моделируется честно: применяются ТОЛЬКО первые N-1 миграций
  * реестра, в базу пишется настоящий мир, и только потом накатывается полный реестр.
+ *
+ * Мир до обновления пишется ЯВНЫМ SQL прежней поставки, а не текущим `initializeWorld` (M4).
+ * Раньше здесь стоял он, и это работало ровно пока писатель не менялся: миграция 0009 добавила
+ * `worlds.prng_stream_positions`, текущий писатель стал его заполнять, и тест упал на схеме N-1 —
+ * то есть модель «предыдущей поставки» использовала писателя ПОСЛЕДУЮЩЕЙ. Смысл фазы `expand`
+ * ровно обратный: старый писатель обязан работать против новой схемы, а не новый против старой.
+ * Обещание теста («данные предыдущей поставки переживают обновление») не изменилось и не
+ * ослаблено — изменилось только то, чем эти данные создаются.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
+import { sql } from 'kysely';
 import { createDatabase, parseDatabaseConnectionUrl, type DatabaseConnection } from './database.ts';
 import { createTestDatabase, type TestDatabase } from './__fixtures__/test-database.ts';
 import { fixtureInitialization, FIXTURE_WORLD_ID } from './__fixtures__/world-fixture.ts';
@@ -18,13 +27,57 @@ import { migrations } from './migrations/index.ts';
 import { runMigrations, type Logger } from './migration-runner.ts';
 import { applyGrants, ensureApplicationRoles } from './principals.ts';
 import { TEST_ROLE_PASSWORD } from './__fixtures__/migrated-database.ts';
-import { initializeWorld, loadWorldState } from './world-repository.ts';
+import { loadWorldState } from './world-repository.ts';
 
 const SILENT: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+
+/** Колонки `worlds` в поставке N-1: ровно те, что были до миграции 0009. */
+const PREVIOUS_RELEASE_WORLD_COLUMNS =
+  'world_id, seed, version, last_sequence, world_time, rules_version, content_version, ' +
+  'schema_version, created_at';
 
 describe('N-1 — обновление с предыдущей поставки', () => {
   let testDb: TestDatabase;
   let db: DatabaseConnection;
+
+  /**
+   * Пишет мир так, как это делала бы ПРЕДЫДУЩАЯ поставка: перечислением её колонок, без единого
+   * поля, добавленного последней миграцией. Использовать здесь `initializeWorld` нельзя — это
+   * писатель текущей поставки (см. докстринг файла).
+   */
+  const writePreviousReleaseWorld = async (): Promise<void> => {
+    const init = fixtureInitialization();
+    const state = init.state;
+    await sql`
+      insert into worlds (${sql.raw(PREVIOUS_RELEASE_WORLD_COLUMNS)})
+      values (
+        ${state.worldId}, ${init.seed}, ${state.worldVersion}, ${state.sequence},
+        ${state.worldTime}, ${init.versions.rulesVersion}, ${init.versions.contentVersion},
+        ${init.versions.schemaVersion}, now()
+      )
+    `.execute(db);
+
+    for (const location of init.content.locations) {
+      await sql`
+        insert into locations (world_id, location_id, name, description)
+        values (${state.worldId}, ${location.id}, ${location.name}, ${location.description})
+      `.execute(db);
+    }
+    for (const route of Object.values(state.routes)) {
+      await sql`
+        insert into routes (world_id, route_id, from_location_id, to_location_id, travel_minutes)
+        values (${state.worldId}, ${route.id}, ${route.fromLocationId}, ${route.toLocationId},
+                ${route.travelMinutes})
+      `.execute(db);
+    }
+    for (const agent of Object.values(state.agents)) {
+      await sql`
+        insert into agents (world_id, agent_id, name, location_id, status, route_id)
+        values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
+                ${agent.locationId}, ${agent.status}, ${agent.routeId})
+      `.execute(db);
+    }
+  };
 
   beforeAll(async () => {
     testDb = await createTestDatabase('upgrade_path');
@@ -47,7 +100,7 @@ describe('N-1 — обновление с предыдущей поставки'
     // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
     // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
     // а не изобретать свой (найдено исполнением при написании теста).
-    await initializeWorld(db, fixtureInitialization());
+    await writePreviousReleaseWorld();
 
     const appliedBefore = await db
       .selectFrom('schema_migrations')

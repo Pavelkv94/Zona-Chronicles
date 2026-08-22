@@ -120,7 +120,8 @@ export const runWorldInitCommand = async (
   const seed = parseSeed(args);
   if (typeof seed === 'string') return { stdout: `world init: ${seed}\n`, exitCode: 2 };
 
-  const { state } = seedWorld(seed);
+  const seeded = seedWorld(seed);
+  const { state } = seeded;
   const existing = await loadWorldState(db, state.worldId);
   if (existing !== null) {
     // Не идемпотентность, а защита истории: перезапись существующего мира стёрла бы его журнал.
@@ -137,6 +138,9 @@ export const runWorldInitCommand = async (
       seed,
       state,
       versions: testRulesetVersions(),
+      // Генезис уже сделал розыгрыши, распределяя агентов по локациям: начать потоки с нуля
+      // после этого значило бы выдать те же значения второй раз (M4).
+      prngStreamPositions: seeded.snapshot.prng_stream_positions,
       content: {
         locations: PROTOTYPE_WORLD.locations.map((location) => ({
           id: location.id,
@@ -431,19 +435,6 @@ export const runWorldEventsCommand = async (db: DatabaseConnection): Promise<Cli
 };
 
 /**
- * Мир, ещё не имевший НИ ОДНОГО снимка, не имеет и записанных позиций PRNG-потоков (они живут
- * только внутри `Snapshot`, не в `WorldState`/`worlds`, см. `snapshot-store.ts`). Ни одна из двух
- * команд I02B (`journey.start`/`journey.complete`) розыгрыша не делает — `UnavailableRandomSource`
- * в `command-handler.ts` подтверждает это структурно: любой розыгрыш падал бы там с названной
- * причиной. Поэтому позиции после genesis НЕ МЕНЯЮТСЯ, и первый снимок мира безопасно берёт их
- * оттуда же, откуда их взял бы `world init` — из `seedWorld(seed)` на ТОМ ЖЕ seed: тот же seed
- * детерминированно даёт побайтово тот же снимок (доказано B8 durable-мира). Это допущение обязано
- * быть пересмотрено в тот день, когда появится команда, которая действительно бросает кости.
- */
-const genesisPrngStreamPositions = (seed: number): Readonly<Record<string, number>> =>
-  seedWorld(seed).snapshot.prng_stream_positions;
-
-/**
  * `world snapshot` — записывает точку восстановления ТЕКУЩЕГО состояния durable-мира (ACCEPTANCE
  * C8, OPS-04). Отдельная команда, а не флаг `world replay` — см. докстринг {@link runWorldReplayCommand}
  * про то, почему replay обязан оставаться read-only.
@@ -465,9 +456,12 @@ export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<C
 
   const bundles = currentBundles();
   const runtimeProfile = currentDeterministicRuntimeProfile();
-  const latest = await loadLatestSnapshot(db, state.worldId, { bundles, runtimeProfile });
-  const prngStreamPositions =
-    latest?.prng_stream_positions ?? genesisPrngStreamPositions(meta.seed);
+  // Позиции PRNG берутся из САМОГО МИРА (M4, миграция 0009), а не восстанавливаются обходным
+  // путём. Прежняя редакция брала их из последнего снимка, а при его отсутствии пересчитывала
+  // `seedWorld(seed)` — и то, и другое верно ровно пока ни одна команда не бросает кости.
+  // Допущение было записано честно, но оставалось допущением; теперь позиция двигается в
+  // транзакции команды, и снимок её просто фотографирует.
+  const prngStreamPositions = meta.prngStreamPositions;
 
   try {
     const snapshot = await writeSnapshot(db, {

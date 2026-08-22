@@ -5,7 +5,7 @@
  * ни одного `if` о том, можно ли выйти на маршрут. Это граница ADR-003 — императивная оболочка
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
-import { requireChecksum, type WorldEvent } from '@zona/contracts';
+import { requireCanonical, requireChecksum, type WorldEvent } from '@zona/contracts';
 import type {
   AgentState,
   RouteDefinition,
@@ -30,6 +30,12 @@ export interface WorldInitialization {
   readonly state: WorldState;
   readonly versions: RulesetVersions;
   readonly content: WorldContent;
+  /**
+   * Позиции потоков PRNG на момент создания мира (M4). Не пусты, когда сам генезис уже сделал
+   * розыгрыши — например, распределяя агентов по локациям: продолжить поток с нуля после этого
+   * значило бы выдать те же значения второй раз.
+   */
+  readonly prngStreamPositions?: Readonly<Record<string, number>>;
   /** Операционная отметка создания; по умолчанию — реальные часы этого процесса. */
   readonly createdAt?: Date;
 }
@@ -38,6 +44,8 @@ export interface WorldMeta {
   readonly worldId: string;
   readonly seed: number;
   readonly versions: RulesetVersions;
+  /** Позиции потоков PRNG мира — то, с чего продолжает источник случайности команды (M4). */
+  readonly prngStreamPositions: Readonly<Record<string, number>>;
 }
 
 /**
@@ -64,6 +72,10 @@ export const initializeWorld = async (
         rules_version: versions.rulesVersion,
         content_version: versions.contentVersion,
         schema_version: versions.schemaVersion,
+        prng_stream_positions: requireCanonical(
+          init.prngStreamPositions ?? {},
+          `worlds.prng_stream_positions(${state.worldId})`,
+        ),
         created_at: createdAt,
       })
       .execute();
@@ -203,7 +215,14 @@ export const loadWorldMeta = async (
 ): Promise<WorldMeta | null> => {
   const world = await db
     .selectFrom('worlds')
-    .select(['world_id', 'seed', 'rules_version', 'content_version', 'schema_version'])
+    .select([
+      'world_id',
+      'seed',
+      'rules_version',
+      'content_version',
+      'schema_version',
+      'prng_stream_positions',
+    ])
     .where('world_id', '=', worldId)
     .executeTakeFirst();
   if (world === undefined) return null;
@@ -215,6 +234,7 @@ export const loadWorldMeta = async (
       rulesVersion: world.rules_version,
       contentVersion: world.content_version,
     },
+    prngStreamPositions: world.prng_stream_positions as Readonly<Record<string, number>>,
   };
 };
 

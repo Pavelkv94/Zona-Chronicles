@@ -40,12 +40,11 @@ import {
   decide,
   evolve,
   type AgentState,
-  type RandomDraw,
-  type RandomSource,
   type WorldState,
 } from '@zona/domain';
 import { requireSafeInteger, type DatabaseConnection } from './database.ts';
-import { loadWorldMeta, loadWorldState } from './world-repository.ts';
+import { PersistentRandomSource } from './prng-positions.ts';
+import { loadWorldMeta, loadWorldState, type WorldMeta } from './world-repository.ts';
 
 /** Точки, после которых можно инъектировать сбой (B5). Порядок совпадает с порядком записи. */
 export const TRANSACTION_STEPS = [
@@ -142,22 +141,22 @@ export interface ExecuteCommandOptions {
 }
 
 /**
- * PRNG, который отказывается работать.
+ * Источник случайности команды (M4, PLAN §4.6).
  *
- * Позиции потоков PRNG ещё НЕ персистятся — это I02B (`scheduled actions, snapshots и PRNG
- * positions`). Собрать здесь `DeterministicRandomSource(seed)` заново на каждую команду значило
- * бы выдавать одно и то же значение всю жизнь мира и не заметить этого: `journey.start` розыгрышей
- * не делает, поэтому тест бы не упал. Отказ вместо тихого повтора превращает будущую ошибку в
- * громкую: первая же команда, которой понадобится случайность, упадёт здесь с названной причиной.
+ * Раньше здесь стоял `UnavailableRandomSource`, бросавший исключение: позиции PRNG не были
+ * durable, а собирать `DeterministicRandomSource(seed)` заново на каждую команду значило бы
+ * выдавать одно и то же значение всю жизнь мира — и не заметить этого, потому что ни одна
+ * команда I02A/I02B розыгрышей не делает.
+ *
+ * Позиции теперь живут в строке `worlds` (миграция 0009) и двигаются в ТОЙ ЖЕ транзакции, что
+ * событие. Поэтому источник можно построить честно: он продолжает потоки ровно с той точки, где
+ * их оставила предыдущая принятая команда.
+ *
+ * Позиции читаются ВНУТРИ транзакции команды и записываются обратно там же — иначе два
+ * параллельных исполнителя прочитали бы одну позицию и сделали бы один и тот же розыгрыш.
  */
-class UnavailableRandomSource implements RandomSource {
-  draw(streamKey: string): RandomDraw {
-    throw new Error(
-      `persistence: розыгрыш по потоку "${streamKey}" невозможен — позиции PRNG ещё не ` +
-        'персистятся (I02B). Команда, которой нужна случайность, не должна исполняться до этого.',
-    );
-  }
-}
+const commandRandomSource = (meta: WorldMeta): PersistentRandomSource =>
+  new PersistentRandomSource({ seed: meta.seed, startPositions: meta.prngStreamPositions });
 
 const jsonOrNull = (value: unknown, label: string): string | null =>
   value === null || value === undefined ? null : requireCanonical(value, label);
@@ -387,9 +386,10 @@ export const executeCommand = async (
       }
 
       const nextSequence = state.sequence + 1;
+      const random = commandRandomSource(meta);
       const result = decide(state, command, {
         clock: new FixedClock(worldTime),
-        random: new UnavailableRandomSource(),
+        random,
         // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
         // уникально между командами, потому что принятая команда всегда двигает sequence.
         ids: new DerivedIdFactory(eventIdOriginKey(state.worldId, nextSequence)),
@@ -518,6 +518,15 @@ export const executeCommand = async (
           version: nextState.worldVersion,
           last_sequence: nextState.sequence,
           world_time: nextState.worldTime,
+          // Позиции двигаются ТОЛЬКО на принятой команде, и это не деталь реализации.
+          // Отвергнутая команда событий не порождает, а replay проигрывает только события —
+          // значит, розыгрыш, сделанный перед отказом, при пересимуляции не повторится. Если
+          // бы позиция при отказе сдвигалась, replay разошёлся бы с непрерывным прогоном,
+          // причём тем сильнее, чем чаще мир отвергает команды (SIM-01).
+          prng_stream_positions: requireCanonical(
+            random.positions(),
+            `worlds.prng_stream_positions(${command.world_id})`,
+          ),
         })
         .where('world_id', '=', command.world_id)
         .execute();

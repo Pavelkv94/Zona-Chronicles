@@ -7,6 +7,7 @@ import { eventChecksumMigration } from './0005-event-checksum.ts';
 import { commandAttemptRejectionsMigration } from './0006-command-attempt-rejections.ts';
 import { schedulerAndSnapshotsMigration } from './0007-scheduler-and-snapshots.ts';
 import { scheduledActionFailureMigration } from './0008-scheduled-action-failure.ts';
+import { worldPrngPositionsMigration } from './0009-world-prng-positions.ts';
 
 export type { Migration } from './types.ts';
 
@@ -28,4 +29,5 @@ export const migrations: readonly Migration[] = [
   commandAttemptRejectionsMigration,
   schedulerAndSnapshotsMigration,
   scheduledActionFailureMigration,
+  worldPrngPositionsMigration,
 ];
