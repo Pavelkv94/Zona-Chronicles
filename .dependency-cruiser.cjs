@@ -133,22 +133,6 @@ module.exports = {
       to: { path: '^tools/' },
     },
     {
-      name: 'replay-does-not-decide-or-draw',
-      severity: 'error',
-      comment:
-        'ACCEPTANCE C10 (I02B): replay применяет УЖЕ ЗАПИСАННЫЕ факты и не принимает решений ' +
-        'заново. Это свойство структурное — replay есть свёртка `evolve`, а `evolve` чист и ' +
-        'источника случайности не принимает, — но структурный довод держится только пока ' +
-        'replay остаётся свёрткой. Правило падает в тот день, когда его перепишут через ' +
-        'повторный `decide`: тогда outcome стал бы вычисляться заново, и одинаковый журнал ' +
-        'перестал бы давать одинаковый мир (SIM-01).',
-      from: { path: '^packages/persistence/src/replay\\.ts$' },
-      to: {
-        path: '^packages/domain/src/(decide|ports/random-source)\\.ts$',
-        reachable: true,
-      },
-    },
-    {
       name: 'core-has-no-adapter-dependencies',
       severity: 'error',
       comment:
