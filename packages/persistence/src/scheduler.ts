@@ -52,12 +52,34 @@ export const DEFAULT_BATCH_SIZE = 32;
  * не зависит ни от плана запроса, ни от скорости процесса. `FOR UPDATE SKIP LOCKED` даёт второму
  * worker-у пропустить строки, которые прямо сейчас захватывает первый, вместо ожидания (C5).
  */
+/**
+ * Выражение срока аренды: часы СЕРВЕРА БД (M1), либо инъектированные часы в тестовой пробе.
+ * Один источник времени на всех worker-ов — расхождение часов в кластере это норма.
+ */
+const leaseExpression = (options: {
+  readonly leaseMs?: number | undefined;
+  readonly now?: (() => Date) | undefined;
+}) =>
+  options.now === undefined
+    ? sql<Date>`now() + make_interval(secs => ${(options.leaseMs ?? DEFAULT_LEASE_MS) / 1000})`
+    : sql<Date>`${new Date(options.now().getTime() + (options.leaseMs ?? DEFAULT_LEASE_MS))}::timestamptz`;
+
 export const claimDueActions = async (
   db: DatabaseConnection,
   options: ClaimOptions,
 ): Promise<readonly ClaimedAction[]> => {
-  const now = options.now ?? ((): Date => new Date());
-  const leaseUntil = new Date(now().getTime() + options.leaseMs);
+  // M1 аудита: срок аренды и сравнение с ним берутся из ЧАСОВ СЕРВЕРА БД, а не из часов
+  // процесса. Раньше и то, и другое приходило из `new Date()` вызывающего: worker с часами на
+  // минуту вперёд уводил живую аренду у соседа. Пока писатель был один, это было безобидно —
+  // спасала идемпотентность; со вторым писателем это вход в потерю пути.
+  //
+  // Один источник времени на всех worker-ов — свойство, которое нельзя получить настройкой
+  // машин: расхождение часов в кластере это норма, а не сбой. `options.now` остаётся
+  // ТЕСТОВЫМ переопределением: когда он задан, время берётся из него, и проба может состарить
+  // аренду детерминированно.
+  const leaseUntil = leaseExpression(options);
+  const nowExpression =
+    options.now === undefined ? sql<Date>`now()` : sql<Date>`${options.now()}::timestamptz`;
 
   const claimed = await sql<{
     action_id: string;
@@ -76,7 +98,7 @@ export const claimDueActions = async (
            and completed_at is null
            and failed_at is null
            and due_at <= ${options.worldTime}
-           and (lease_owner is null or lease_until <= ${now()})
+           and (lease_owner is null or lease_until <= ${nowExpression})
          order by due_at, priority, entity_id, action_id
          limit ${options.batchSize}
          for update skip locked
@@ -245,6 +267,34 @@ const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Prom
 
   const executed: CommandExecution[] = [];
   for (const action of claimed) {
+    // M2 аудита: аренда бралась один раз на всю пачку, а действия исполняются последовательно
+    // отдельными транзакциями. При `batchSize` 32 и аренде 30 секунд она истекает на середине,
+    // и остаток параллельно подхватывает другой worker — то есть worker работает над тем, что
+    // ему уже не принадлежит.
+    //
+    // Владение перепроверяется и ПРОДЛЕВАЕТСЯ перед каждым действием, одним оператором: если
+    // строка больше не наша (аренду перехватили), обновится ноль строк, и действие
+    // пропускается — его уже ведёт другой. Дубля события не будет в любом случае
+    // (идемпотентность по `command_id`), но делать двойную работу незачем, а рассинхрон
+    // владения — источник будущих гонок.
+    //
+    // ЧЕСТНАЯ ГРАНИЦА: тестом это не покрыто, и покрыть без шва в продукте нельзя. Перехват
+    // должен произойти МЕЖДУ захватом и исполнением внутри одного тика; снаружи в это окно не
+    // попасть, а добавлять `afterClaim`-хук ради теста значило бы вернуть в публичный код шов,
+    // существующий только чтобы его проверяли, — ровно то, что уже убиралось из этого пакета
+    // однажды. Попытка написать такой тест снаружи дала тест, проходивший по неверной причине,
+    // и он удалён, а не оставлен зелёным.
+    const held = await db
+      .updateTable('scheduled_actions')
+      .set({ lease_until: leaseExpression(options) })
+      .where('world_id', '=', options.worldId)
+      .where('action_id', '=', action.actionId)
+      .where('lease_owner', '=', options.owner)
+      .where('completed_at', 'is', null)
+      .where('failed_at', 'is', null)
+      .executeTakeFirst();
+    if ((held.numUpdatedRows ?? 0n) === 0n) continue;
+
     const command = commandFor(action, {
       worldId: options.worldId,
       schemaVersion: meta.versions.schemaVersion,

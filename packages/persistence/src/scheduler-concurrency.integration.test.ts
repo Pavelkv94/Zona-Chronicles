@@ -220,4 +220,33 @@ describe('C5/C6 — конкуренция и аренда', () => {
     // Главное: журнал не изменился ни в одном из двух случаев.
     expect(await loadWorldEvents(db, FIXTURE_WORLD_ID)).toEqual(before);
   });
+
+  it('срок аренды выставлен по часам сервера, а не по часам вызывающего', async () => {
+    // Раньше и срок, и сравнение с ним приходили из `new Date()` процесса. Worker с
+    // убежавшими часами уводил живую аренду у соседа. Расхождение часов в кластере — норма,
+    // а не сбой, поэтому источник времени обязан быть один, и он на сервере.
+    await seedJourneys();
+
+    const claimed = await claimDueActions(db, {
+      worldId: FIXTURE_WORLD_ID,
+      worldTime: ARRIVAL,
+      owner: 'server-clock',
+      leaseMs: 60_000,
+      batchSize: 1,
+    });
+    expect(claimed).toHaveLength(1);
+
+    const rows = await sql<{ lease_until: Date; server_now: Date }>`
+      select lease_until, now() as server_now
+        from scheduled_actions
+       where world_id = ${FIXTURE_WORLD_ID} and action_id = ${claimed[0]!.actionId}
+    `.execute(db);
+    const row = rows.rows[0]!;
+
+    // Срок отстоит от времени СЕРВЕРА примерно на leaseMs. Проверяется с широким допуском:
+    // утверждение здесь не про точность, а про то, ЧЬИ часы использованы.
+    const deltaMs = row.lease_until.getTime() - row.server_now.getTime();
+    expect(deltaMs).toBeGreaterThan(50_000);
+    expect(deltaMs).toBeLessThan(70_000);
+  });
 });
