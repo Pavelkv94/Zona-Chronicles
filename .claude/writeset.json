@@ -1,10 +1,17 @@
 {
-  "//": "I02B, раунд верификации. Обе роли read-only: пустой write_paths запрещает любую запись. Привязка по agent_types — платформа кладёт в hook payload ИМЯ сессии, а не роль.",
+  "//": "I02B, раунд верификации 2 (узкий: только diff 2c645e7..HEAD). Обе роли read-only: пустой write_paths запрещает любую запись. Привязка по agent_types — платформа кладёт в hook payload ИМЯ сессии, а не роль. Две ОТДЕЛЬНЫЕ записи, а не одна на двоих (закрывает m7 первого раунда): приём «одна запись на несколько сессий» безвреден только при пустых правах и не должен закрепляться как образец.",
   "tasks": [
     {
-      "task_id": "I02B-VERIFY",
+      "task_id": "I02B-VERIFY-R2-ARCH",
       "owner_role": "reviewer",
-      "agent_types": ["i02b-test-reviewer", "i02b-arch-reviewer", "reviewer"],
+      "agent_types": ["i02b-r2-arch-reviewer", "architecture-reviewer"],
+      "write_paths": [],
+      "allow_protected_paths": []
+    },
+    {
+      "task_id": "I02B-VERIFY-R2-TEST",
+      "owner_role": "reviewer",
+      "agent_types": ["i02b-r2-test-reviewer", "test-reviewer"],
       "write_paths": [],
       "allow_protected_paths": []
     }
