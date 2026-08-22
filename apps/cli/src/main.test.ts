@@ -19,12 +19,12 @@ describe('runCli', () => {
   });
 
   it('reports a still-planned command as not implemented and exits 1, without simulating work', () => {
-    // `world replay` stays out of scope until I02B. Раньше здесь стояла `world run`, но I02A
-    // её реализовала — тест переехал на команду, которая ДЕЙСТВИТЕЛЬНО ещё не реализована,
-    // а не был ослаблен под новое поведение.
-    const result = runCli(['world', 'replay']);
+    // Раньше здесь стояла `world run`, потом `world replay` — обе реализованы (I02A, I02B).
+    // Тест переехал на `world export`, которая ДЕЙСТВИТЕЛЬНО ещё не реализована (I03: projections/
+    // HTTP API/UI, PLAN §5), а не был ослаблен под новое поведение.
+    const result = runCli(['world', 'export']);
     expect(result.exitCode).toBe(1);
-    expect(result.stdout).toContain('world replay');
+    expect(result.stdout).toContain('world export');
     expect(result.stdout.toLowerCase()).toMatch(/not implemented|planned/);
     expect(result.stdout).toContain('I02B');
   });

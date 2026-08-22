@@ -12,6 +12,7 @@ import {
   compareByCodePoint,
   isInstantError,
   parseInstant,
+  requireChecksum,
   type Command,
 } from '@zona/contracts';
 import { randomUUID } from 'node:crypto';
@@ -21,12 +22,16 @@ import {
   createDatabase,
   executeCommand,
   initializeWorld,
+  loadLatestSnapshot,
   loadWorldEvents,
+  loadWorldMeta,
   loadWorldState,
   migrations,
   parseDatabaseConnectionUrl,
+  replayFromSnapshot,
   runMigrations,
   runWorldTick,
+  writeSnapshot,
   applyGrants,
   ensureApplicationRoles,
   type DatabaseConnection,
@@ -34,7 +39,7 @@ import {
 } from '@zona/persistence';
 import type { CliResult } from './commands.ts';
 import { describeDatabaseTarget } from './config.ts';
-import { seedWorld } from './world.ts';
+import { currentBundles, currentDeterministicRuntimeProfile, seedWorld } from './world.ts';
 
 const SILENT_LOGGER: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -406,5 +411,135 @@ export const runWorldEventsCommand = async (db: DatabaseConnection): Promise<Cli
         `${event.actor_ids.join(',')}  ${event.event_id}`,
     );
   }
+  return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
+};
+
+/**
+ * Мир, ещё не имевший НИ ОДНОГО снимка, не имеет и записанных позиций PRNG-потоков (они живут
+ * только внутри `Snapshot`, не в `WorldState`/`worlds`, см. `snapshot-store.ts`). Ни одна из двух
+ * команд I02B (`journey.start`/`journey.complete`) розыгрыша не делает — `UnavailableRandomSource`
+ * в `command-handler.ts` подтверждает это структурно: любой розыгрыш падал бы там с названной
+ * причиной. Поэтому позиции после genesis НЕ МЕНЯЮТСЯ, и первый снимок мира безопасно берёт их
+ * оттуда же, откуда их взял бы `world init` — из `seedWorld(seed)` на ТОМ ЖЕ seed: тот же seed
+ * детерминированно даёт побайтово тот же снимок (доказано B8 durable-мира). Это допущение обязано
+ * быть пересмотрено в тот день, когда появится команда, которая действительно бросает кости.
+ */
+const genesisPrngStreamPositions = (seed: number): Readonly<Record<string, number>> =>
+  seedWorld(seed).snapshot.prng_stream_positions;
+
+/**
+ * `world snapshot` — записывает точку восстановления ТЕКУЩЕГО состояния durable-мира (ACCEPTANCE
+ * C8, OPS-04). Отдельная команда, а не флаг `world replay` — см. докстринг {@link runWorldReplayCommand}
+ * про то, почему replay обязан оставаться read-only.
+ */
+export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<CliResult> => {
+  const state = await loadWorldState(db, PROTOTYPE_WORLD.worldId);
+  if (state === null) {
+    return {
+      stdout: `world snapshot: мир ${PROTOTYPE_WORLD.worldId} не создан — сначала "world init --seed N".\n`,
+      exitCode: 2,
+    };
+  }
+  const meta = await loadWorldMeta(db, state.worldId);
+  if (meta === null) {
+    // `loadWorldState` уже нашёл мир — строка `worlds` обязана существовать. Недостижимо на
+    // практике, но рассогласование двух чтений одного мира не должно быть тихим.
+    throw new Error(`world snapshot: мир ${state.worldId} есть в state, но не в meta`);
+  }
+
+  const bundles = currentBundles();
+  const latest = await loadLatestSnapshot(db, state.worldId, { bundles });
+  const prngStreamPositions =
+    latest?.prng_stream_positions ?? genesisPrngStreamPositions(meta.seed);
+
+  try {
+    const snapshot = await writeSnapshot(db, {
+      worldId: state.worldId,
+      lastSequence: state.sequence,
+      worldTime: state.worldTime,
+      bundles,
+      deterministicRuntimeProfile: currentDeterministicRuntimeProfile(),
+      prngStreamPositions,
+      canonicalState: state,
+    });
+    return {
+      stdout:
+        `Снимок мира ${state.worldId} записан: sequence ${String(snapshot.last_sequence)}, ` +
+        `checksum ${snapshot.checksum}\n`,
+      exitCode: 0,
+    };
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === '23505') {
+      // Первичный ключ `world_snapshots` — `(world_id, last_sequence)` (snapshot-store.ts):
+      // состояние мира не сдвинулось с прошлого снимка — не отказ, а честное "снимать нечего".
+      return {
+        stdout: `world snapshot: снимок мира ${state.worldId} на sequence ${String(state.sequence)} уже существует.\n`,
+        exitCode: 2,
+      };
+    }
+    throw error;
+  }
+};
+
+/**
+ * `world replay` — пересимулирует мир из снимка и суффикса журнала и сверяет checksum с
+ * НЕПРЕРЫВНЫМ прогоном (ACCEPTANCE C9/C10, PLAN §2 demo). Расхождение — доказательство нарушения
+ * SIM-01, поэтому это ненулевой exit с явно напечатанными обоими checksum, а не справочная печать.
+ *
+ * Read-only НАМЕРЕННО: replay ничего не пишет в базу — ни новый снимок, ни что-либо ещё. Это тот
+ * же довод, что уже есть у `replay.ts` (`replay — это свёртка, а не повторное решение», C10): если
+ * бы `world replay` попутно снимал новый снимок, ПОСЛЕДУЮЩИЙ replay всегда сверялся бы с ПУСТЫМ
+ * суффиксом (0 применённых событий) — то есть проверка стала бы тавтологией уже со второго
+ * запуска. Отдельная команда {@link runWorldSnapshotCommand} — то место, где снимки берутся
+ * оператором по его собственному решению (OPS-04: периодическая точка восстановления), а не
+ * побочный эффект verification-команды.
+ *
+ * Снимков ещё может не быть вовсе (`world snapshot` ни разу не запускали) — тогда replay
+ * восстанавливает GENESIS-снимок в ПАМЯТИ (см. {@link genesisPrngStreamPositions}), тем же путём,
+ * каким его строил бы `world init`, и не пишет его в базу. Демо PLAN §2 заканчивается голым
+ * `pnpm world replay` без предшествующего `world snapshot` именно поэтому — команде есть от чего
+ * реплеить с первого дня жизни мира.
+ */
+export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<CliResult> => {
+  const state = await loadWorldState(db, PROTOTYPE_WORLD.worldId);
+  if (state === null) {
+    return {
+      stdout: `world replay: мир ${PROTOTYPE_WORLD.worldId} не создан — сначала "world init --seed N".\n`,
+      exitCode: 2,
+    };
+  }
+  const meta = await loadWorldMeta(db, state.worldId);
+  if (meta === null) {
+    throw new Error(`world replay: мир ${state.worldId} есть в state, но не в meta`);
+  }
+
+  const bundles = currentBundles();
+  const stored = await loadLatestSnapshot(db, state.worldId, { bundles });
+  const bootstrapped = stored === null;
+  const snapshot = stored ?? seedWorld(meta.seed).snapshot;
+
+  const result = await replayFromSnapshot(db, state.worldId, snapshot);
+  const continuousChecksum = requireChecksum(
+    state,
+    'world replay: текущее состояние мира (непрерывный прогон)',
+  );
+
+  const lines = [
+    `Снимок: sequence ${String(snapshot.last_sequence)}` +
+      (bootstrapped ? ' (в базе снимков не было — восстановлен из seed)' : ''),
+    `Применено событий суффикса: ${String(result.appliedEventCount)}`,
+    `Checksum replay:                ${result.checksum}`,
+    `Checksum непрерывного прогона:  ${continuousChecksum}`,
+  ];
+
+  if (result.checksum !== continuousChecksum) {
+    lines.push(
+      'РАСХОЖДЕНИЕ: checksum replay не совпадает с непрерывным прогоном — нарушение SIM-01.',
+    );
+    return { stdout: `${lines.join('\n')}\n`, exitCode: 1 };
+  }
+
+  lines.push('checksum совпадает.');
   return { stdout: `${lines.join('\n')}\n`, exitCode: 0 };
 };

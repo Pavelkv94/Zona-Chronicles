@@ -18,6 +18,7 @@
  * in-memory, no-persistence CLI demo (see the I01-T4 handoff for the full reasoning).
  */
 import {
+  type DeterministicRuntimeProfile,
   type Snapshot,
   CANONICAL_SERIALIZATION_VERSION,
   CANONICAL_TRANSACTION_ISOLATION_LEVEL,
@@ -148,6 +149,52 @@ function buildRoutes(content: WorldDefinition): Readonly<Record<string, DomainRo
   return routes;
 }
 
+/**
+ * `bundles` ровно одного снимка — рефы правил/контента/схем. Вынесено из `seedWorld` (I02B):
+ * `world snapshot`/`world replay` строят снимок/контекст чтения снимка НЕ через `seedWorld` (тот
+ * порождает свежий мир, а не работает с уже существующим durable-миром), но им нужны ТЕ ЖЕ
+ * bundles — CLI работает с одним неизменным content bundle (`PROTOTYPE_WORLD`) и одним rules
+ * bundle (`testRulesetVersions()`) везде. Общая функция — единственный источник этих значений,
+ * а не три места, которым предстоит разойтись.
+ */
+export function currentBundles(
+  rulesetVersions: RulesetVersions = testRulesetVersions(),
+): Snapshot['bundles'] {
+  return {
+    rules: bundleRefFor(rulesetVersions.rulesVersion, rulesBundleContent(rulesetVersions)),
+    content: bundleRefFor(CONTENT_VERSION, PROTOTYPE_WORLD),
+    // Содержимое — сами JSON Schema документы, версия и состав принадлежат контрактам
+    // (`schema-bundle.ts`): bundle схем — их артефакт, а не CLI (M3, A9).
+    schema: schemaBundleRef(),
+  };
+}
+
+/**
+ * `deterministic_runtime_profile` ровно одного снимка. Вынесено по тому же доводу, что
+ * {@link currentBundles}: `world snapshot` строит НОВЫЙ профиль для снимка durable-мира, которого
+ * `seedWorld` не строил (он строит только in-memory снимок свежепорождённого мира).
+ */
+export function currentDeterministicRuntimeProfile(
+  host: HostRuntimeProfile = currentHostRuntimeProfile(),
+): DeterministicRuntimeProfile {
+  return {
+    canonical_serialization_version: CANONICAL_SERIALIZATION_VERSION,
+    snapshot_checksum_scope_version: SNAPSHOT_CHECKSUM_SCOPE_VERSION,
+    prng_version: PRNG_VERSION,
+    numeric_rounding_policy_version: NUMERIC_ROUNDING_POLICY_VERSION,
+    // Node/ICU — профиль машины, а не канонических правил: он записывается в снимок, но в
+    // checksum не входит (B2) и проверяется `verifyRuntimeProfileCompatibility`.
+    node_version: host.nodeVersion,
+    icu_version: host.icuVersion,
+    // В отличие от node/icu — это НЕ чтение окружения хоста, а фиксированное свойство
+    // канонического мира (world time всегда UTC); литерал, а не `Intl`/`process.env.TZ`.
+    timezone: CANONICAL_TIMEZONE,
+    // Как и timezone — свойство канонического ядра, а не машины: уровень изоляции задан
+    // явно в транзакции и не наследуется от настроек сервера (ADR-010 §10.1).
+    transaction_isolation_level: CANONICAL_TRANSACTION_ISOLATION_LEVEL,
+  };
+}
+
 export interface SeededWorld {
   readonly seed: number;
   readonly content: WorldDefinition;
@@ -196,29 +243,8 @@ export function seedWorld(
     // Нет независимого источника wall clock у in-memory CLI без БД (см. заголовок файла) —
     // created_at делит момент с world_time, а не притворяется настоящими часами.
     created_at: worldTime,
-    bundles: {
-      rules: bundleRefFor(rulesetVersions.rulesVersion, rulesBundleContent(rulesetVersions)),
-      content: bundleRefFor(CONTENT_VERSION, content),
-      // Содержимое — сами JSON Schema документы, версия и состав принадлежат контрактам
-      // (`schema-bundle.ts`): bundle схем — их артефакт, а не CLI (M3, A9).
-      schema: schemaBundleRef(),
-    },
-    deterministic_runtime_profile: {
-      canonical_serialization_version: CANONICAL_SERIALIZATION_VERSION,
-      snapshot_checksum_scope_version: SNAPSHOT_CHECKSUM_SCOPE_VERSION,
-      prng_version: PRNG_VERSION,
-      numeric_rounding_policy_version: NUMERIC_ROUNDING_POLICY_VERSION,
-      // Node/ICU — профиль машины, а не канонических правил: он записывается в снимок, но в
-      // checksum не входит (B2) и проверяется `verifyRuntimeProfileCompatibility`.
-      node_version: host.nodeVersion,
-      icu_version: host.icuVersion,
-      // В отличие от node/icu — это НЕ чтение окружения хоста, а фиксированное свойство
-      // канонического мира (world time всегда UTC); литерал, а не `Intl`/`process.env.TZ`.
-      timezone: CANONICAL_TIMEZONE,
-      // Как и timezone — свойство канонического ядра, а не машины: уровень изоляции задан
-      // явно в транзакции и не наследуется от настроек сервера (ADR-010 §10.1).
-      transaction_isolation_level: CANONICAL_TRANSACTION_ISOLATION_LEVEL,
-    },
+    bundles: currentBundles(rulesetVersions),
+    deterministic_runtime_profile: currentDeterministicRuntimeProfile(host),
     prng_stream_positions: prngStreamPositions,
     canonical_state: state,
   };

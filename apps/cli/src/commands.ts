@@ -4,10 +4,12 @@
  * `docs/10_ITERATION_MASTER_PLAN.md` names `world seed` and `world inspect` explicitly under I01
  * ("CLI in-memory `world seed` и `world inspect`") and `world replay` explicitly under I02B
  * ("replay/resimulation CLI"). `world run` (starting a journey, I02A: "CLI начинает путь"),
- * `world tick` (worker step, I02B PLAN §2 demo: "pnpm world tick") and `world export` (exporting
- * a replay/projection view, alongside I02B replay tooling) are not literally named commands in
- * the master plan; their iteration below is the closest documented scope and should be corrected
- * once those iterations define the CLI surface precisely.
+ * `world tick` (worker step, I02B PLAN §2 demo: "pnpm world tick"), `world snapshot` (restore
+ * point, ACCEPTANCE C8/OPS-04 — not literally named as a CLI command, but replay needs a snapshot
+ * to replay FROM, see `runWorldSnapshotCommand` in `world-db-cli.ts`) and `world export`
+ * (exporting a replay/projection view, alongside I02B replay tooling) are not literally named
+ * commands in the master plan; their iteration below is the closest documented scope and should
+ * be corrected once those iterations define the CLI surface precisely.
  *
  * No implementation is simulated here: every command in I00 is `status: 'planned'` and `runCli`
  * (apps/cli/src/main.ts) reports that honestly with exit code 1 instead of pretending to run.
@@ -15,8 +17,8 @@
  * I01 lands real implementations for `world seed`/`world inspect` (ACCEPTANCE A1/A2/A3/A10,
  * `apps/cli/src/world-cli.ts`) — their `status` flips to `'available'` here; `runCli` still
  * consults this registry for name/iteration lookup and to decide whether an unimplemented
- * command should say "planned" honestly. `world run`/`world tick`/`world replay`/`world export`
- * stay `'planned'` through I01: out of scope for that iteration (PLAN §5).
+ * command should say "planned" honestly. `world export` stays `'planned'`: out of scope for I02B
+ * (PLAN §5 — projections/HTTP API/UI are I03).
  */
 
 /**
@@ -97,10 +99,18 @@ export const COMMANDS: readonly CliCommand[] = [
     requiresDatabase: true,
   },
   {
-    name: 'world replay',
-    summary: 'Resimulate a world from its canonical event log.',
-    status: 'planned',
+    name: 'world snapshot',
+    summary: 'Write a restore-point snapshot of the current durable world state.',
+    status: 'available',
     iteration: 'I02B',
+    requiresDatabase: true,
+  },
+  {
+    name: 'world replay',
+    summary: 'Resimulate a world from its canonical event log and verify the checksum matches.',
+    status: 'available',
+    iteration: 'I02B',
+    requiresDatabase: true,
   },
   {
     name: 'world inspect',
