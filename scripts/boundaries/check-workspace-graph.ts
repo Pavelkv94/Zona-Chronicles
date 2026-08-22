@@ -46,20 +46,26 @@ const ALLOWED: Record<string, readonly string[]> = {
 };
 
 /**
- * Внешние зависимости, запрещённые каноническому ядру (ADR-003, I02A ACCEPTANCE B10).
+ * Внешние зависимости канонического ядра — ALLOW-LIST, а не deny-list (ADR-003, ACCEPTANCE B10).
  *
- * dependency-cruiser ловит фактический ИМПОРТ такого пакета, но не его объявление: манифест
- * с `pg` в `dependencies` и без единого импорта проходил бы обе проверки, а первый же
- * implementer читал бы его как разрешение. Здесь закрывается именно декларация.
+ * Первая редакция перечисляла шесть запрещённых имён (`pg`, `kysely`, `fastify`, …). Независимый
+ * аудит I02A показал, чего стоит такое перечисление: `nanoid` или `uuid` в `packages/domain`
+ * проходят обе проверки границ насквозь — объявленная зависимость резолвится, поэтому
+ * `no-unresolvable` молчит, а в список запрещённых она не входит. Проверено исполнением:
+ * `nanoid` в манифесте домена давал `boundaries:check` зелёным. Тот же класс — `undici`/`axios`
+ * (глобальный `fetch` закрыт eslint-ом, библиотечный HTTP нет), `luxon`/`date-fns`,
+ * `drizzle-orm`. Именно от id на случайности предостерегает шапка `id-factory.ts`, и именно его
+ * deny-list не ловил.
  *
- * Список — только про драйверы/фреймворки оболочки. Запрет часов, случайности и `process`
- * держат eslint-правила (`nondeterminismRestrictions`), а не этот файл.
+ * Поэтому список перевёрнут: ядру запрещено ВСЁ, кроме явно перечисленного. Сейчас перечислять
+ * нечего — и это правильное состояние, а не недосмотр. Каждое будущее исключение придётся
+ * добавить сюда явно, то есть объяснить в diff-е.
  */
-const FORBIDDEN_EXTERNAL: Record<string, readonly string[]> = {
-  '@zona/contracts': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
-  '@zona/domain': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
-  '@zona/simulation': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
-  '@zona/content': ['pg', 'kysely', 'fastify', 'pino', 'next', 'react'],
+const CORE_EXTERNAL_ALLOWLIST: Record<string, readonly string[]> = {
+  '@zona/contracts': ['@sinclair/typebox'],
+  '@zona/domain': [],
+  '@zona/simulation': [],
+  '@zona/content': [],
 };
 
 const WORKSPACE_ROOTS = ['apps', 'packages', 'tools'] as const;
@@ -96,16 +102,21 @@ for (const root of WORKSPACE_ROOTS) {
       }
     }
 
-    const forbiddenExternal = FORBIDDEN_EXTERNAL[name] ?? [];
-    const declaredExternal = [
-      ...Object.keys(manifest.dependencies ?? {}),
-      ...Object.keys(manifest.devDependencies ?? {}),
-    ];
-    for (const dependency of declaredExternal) {
-      if (forbiddenExternal.includes(dependency)) {
-        violations.push(
-          `${name} -> ${dependency}: каноническому ядру запрещён драйвер/фреймворк оболочки (ADR-003)`,
-        );
+    const allowlist = CORE_EXTERNAL_ALLOWLIST[name];
+    if (allowlist !== undefined) {
+      const declaredExternal = [
+        ...Object.keys(manifest.dependencies ?? {}),
+        ...Object.keys(manifest.devDependencies ?? {}),
+      ].filter((dependency) => !dependency.startsWith('@zona/'));
+
+      for (const dependency of declaredExternal) {
+        if (!allowlist.includes(dependency)) {
+          violations.push(
+            `${name} -> ${dependency}: каноническому ядру внешние зависимости запрещены, кроме ` +
+              `явно перечисленных [${allowlist.join(', ') || 'ни одной'}] ` +
+              '(ADR-003, scripts/boundaries/check-workspace-graph.ts)',
+          );
+        }
       }
     }
   }
