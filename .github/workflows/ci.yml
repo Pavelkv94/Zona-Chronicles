@@ -87,6 +87,18 @@ jobs:
           # рабочем дереве недостижима).
           pnpm ownership:check .claude/tasks "$BASE"
 
+      # p-2/p-3 аудита I02A: golden-реестр миграций живёт в том же дереве, что и сами
+      # миграции, поэтому «красный тест» чинится правкой литерала. Здесь базовая линия
+      # берётся ИЗВНЕ дерева — из git-объекта базового коммита.
+      - name: Released migrations are immutable
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          pnpm migrations:immutable "$BASE"
+
       - name: Upload machine-readable reports
         if: always()
         uses: actions/upload-artifact@v5

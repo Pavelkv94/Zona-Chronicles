@@ -1,7 +1,5 @@
-import { createHash } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import type { Database } from './database.ts';
-import type { Migration } from './migrations/types.ts';
 
 /** Запись журнала миграций, как она хранится в `schema_migrations`. */
 export interface AppliedMigrationRecord {
@@ -52,20 +50,7 @@ export interface AppliedMigrationRecord {
  * коллизии с началом SQL-текста (который у admin-миграций начинается с
  * `create`/`alter`/`drop` и т.п., а не с этих трёх слов) не возникает.
  */
-export function computeChecksum(migration: Pick<Migration, 'statements' | 'phase'>): string {
-  const normalizedStatements = migration.statements.map(normalizeStatement).join('\n');
-  const normalized = `${migration.phase} ${normalizedStatements}`;
-  return createHash('sha256').update(normalized, 'utf8').digest('hex');
-}
-
-function normalizeStatement(statement: string): string {
-  return statement
-    .replace(/\r\n/g, '\n')
-    .split('\n')
-    .map((line) => line.replace(/[ \t]+$/, ''))
-    .join('\n')
-    .trim();
-}
+export { computeChecksum } from './migration-checksum.ts';
 
 /**
  * Журнал миграций (`schema_migrations`) создаётся самой первой миграцией (`0001_bootstrap`),

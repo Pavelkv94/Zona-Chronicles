@@ -33,7 +33,8 @@
     "verify:full": "pnpm verify && pnpm test:acceptance && pnpm test:integration && pnpm test:replay",
     "ci:pr": "pnpm verify:full",
     "task:worktree": "node scripts/worktree/new-task-worktree.ts",
-    "ownership:check": "node tools/agent-harness/src/cli/verify-task-ownership.ts"
+    "ownership:check": "node tools/agent-harness/src/cli/verify-task-ownership.ts",
+    "migrations:immutable": "node scripts/migrations/check-immutable.ts"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
