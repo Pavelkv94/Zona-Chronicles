@@ -13,8 +13,23 @@ import { startWorldStack, type WorldStack } from './support/world-stack.ts';
 
 let stack: WorldStack;
 
+/**
+ * Темп 6 минут мира за секунду, а не 60.
+ *
+ * Скорость выбиралась ради быстрого прогона, и это молча уничтожило то, что критерий D13
+ * требует НАБЛЮДАТЬ. При 60 горизонт одного тика (секунда реального времени = 60 минут мира)
+ * перекрывает сорокаминутный маршрут целиком: `journey.started` и `journey.completed`
+ * рождаются в ОДНОМ тике, и состояние «в пути» не существует ни в один наблюдаемый момент.
+ * Сценарий этого не замечал, потому что сверял ленту, а не карту.
+ *
+ * Найдено съёмкой evidence-пакета (`scripts/evidence/capture-i03.ts`), а не рассуждением:
+ * ожидание карточки «В пути» дважды упало по таймауту на мире, который работал правильно.
+ *
+ * Цена — около семи секунд реального времени на путь. Цена обратного — критерий, который
+ * нельзя проверить в принципе.
+ */
 test.beforeAll(async () => {
-  stack = await startWorldStack('journey');
+  stack = await startWorldStack('journey', { worldMinutesPerRealSecond: 6 });
 });
 
 test.afterAll(async () => {
@@ -48,6 +63,16 @@ test('D13: путь начат командой, виден на карте и �
   // БЕЗ ПЕРЕЗАГРУЗКИ: событие приходит потоком.
   await expect(page.getByText('journey.started').first()).toBeVisible();
   await expect(page.getByText('agent:rook вышел в путь — loc:quiet-yard')).toBeVisible();
+
+  // D13 требует, чтобы состояние менялось НА КАРТЕ, а не только в ленте. Лента — это журнал
+  // произошедшего; карта — это мир сейчас. Проверка одной ленты пропускала бы проекцию, которая
+  // исправно копит события и не двигает агентов.
+  const travelingCard = page.locator('.node', { hasText: 'В пути' });
+  await expect(travelingCard.getByText('Рук → route:yard-to-bridge')).toBeVisible();
+  // И он ушёл с прежнего места: остаться в обоих сразу агент не может.
+  await expect(
+    page.locator('.node', { hasText: 'Тихий двор' }).first().getByText('Рук'),
+  ).toBeHidden();
 
   // Мир доводит путь до конца сам — ни одной команды между этими строками.
   await expect(page.getByText('journey.completed').first()).toBeVisible({ timeout: 30_000 });
