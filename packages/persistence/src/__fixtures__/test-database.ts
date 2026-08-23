@@ -6,8 +6,20 @@
  * Ни одно из этих свойств нельзя проверить в базе, которую параллельно правит другой тест, и
  * `TRUNCATE` не восстанавливает схему и роли. Стоимость `CREATE DATABASE` — десятки миллисекунд.
  *
- * Имя базы детерминировано по метке вызывающего файла, а не случайно: упавший прогон оставляет
- * базу, которую можно открыть и посмотреть, и следующий прогон её пересоздаёт.
+ * Имя базы выводится из метки вызывающего файла И PID процесса: `zona_test_<метка>_p<pid>`.
+ *
+ * Метка — чтобы упавший прогон оставлял базу, которую можно открыть и посмотреть. PID — потому
+ * что без него два одновременных тестовых процесса с одной меткой УНИЧТОЖАЛИ базы друг друга:
+ * создание начинается с `pg_terminate_backend` + `DROP DATABASE IF EXISTS`. Найдено ревьюером
+ * второго раунда верификации I02B, и найдено дорогой ценой — два его прогона дали ЛОЖНЫЕ
+ * падения (в первом «упал» тест профиля PRNG, во втором — patch-версии Node), потому что рядом
+ * шёл `pnpm verify:full`. Дефект способен подделать вердикт раунда верификации, а не только
+ * помешать прогону.
+ *
+ * Оставленные базы не копятся: перед созданием своей процесс сметает базы с ЧУЖИМ, уже мёртвым
+ * PID (`process.kill(pid, 0)` — проверка существования, не сигнал). Тот же приём, что
+ * `sweepStaleFixtureDirs` в `boundary-fixtures.test.ts`, и по той же причине: при жёстком `kill`
+ * уборка в `finally` не выполняется.
  */
 import { Client } from 'pg';
 
@@ -47,10 +59,42 @@ export interface TestDatabase {
   readonly drop: () => Promise<void>;
 }
 
+/** База с этим PID жива? Сигнал 0 ничего не посылает, только проверяет существование процесса. */
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Удаляет базы прошлых прогонов, чьи процессы уже мертвы. Базы ЖИВЫХ процессов не трогает —
+ * ровно то, чего не делала прежняя редакция.
+ */
+const sweepDeadTestDatabases = async (client: Client): Promise<void> => {
+  const found = await client.query<{ readonly datname: string }>(
+    `SELECT datname FROM pg_database WHERE datname LIKE 'zona\\_test\\_%\\_p%'`,
+  );
+  for (const row of found.rows) {
+    const match = /_p(\d+)$/.exec(row.datname);
+    if (match === null) continue;
+    const pid = Number(match[1]);
+    if (pid === process.pid || processIsAlive(pid)) continue;
+    await client.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [row.datname],
+    );
+    await client.query(`DROP DATABASE IF EXISTS "${row.datname}"`);
+  }
+};
+
 /** Создаёт (пересоздавая, если осталась с прошлого прогона) пустую базу под именем метки. */
 export const createTestDatabase = async (label: string): Promise<TestDatabase> => {
-  const name = `zona_test_${sanitize(label)}`;
+  const name = `zona_test_${sanitize(label)}_p${String(process.pid)}`;
   await withAdmin(async (client) => {
+    await sweepDeadTestDatabases(client);
     await client.query(
       `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()`,
       [name],
