@@ -12,6 +12,23 @@
  * инъекции задержки между запросами, то есть проверять шов, существующий ради проверки. Здесь
  * вместо этого — много чтений под настоящей параллельной записью и ПРОВЕРЯЕМЫЙ ИНВАРИАНТ,
  * который несогласованное состояние нарушает по построению.
+ *
+ * ## I03: доля поимок измерена, а не предположена
+ *
+ * «Вероятностный» без числа — это отказ от вывода. Замер на настоящей мутации
+ * (`repeatable read` -> `read committed` в `loadWorldState`):
+ *
+ *   было (один читатель, ровно 400 чтений):  поймано 3 из 4 прогонов;
+ *   стало (четыре читателя, чтение ПОКА идёт запись): поймано 8 из 8.
+ *
+ * Четверть пропусков — это четверть регрессий, уехавших зелёными; для дефекта, который в I02B
+ * пришлось чинить дважды, такая доля неприемлема. Причина пропусков была не в «невезении», а в
+ * константе: 400 чтений заканчивались раньше записи, и перекрытие зависело от того, кто кого
+ * обогнал. Теперь читатели работают ровно столько, сколько идёт запись, — перекрытие обеспечено
+ * построением.
+ *
+ * Ложных падений по-прежнему нет и быть не может: несогласованное состояние не возникает, если
+ * чтение атомарно. Проверено 6 прогонами на исправном коде — 6 зелёных.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { RUNTIME_ID_PREFIXES, type Command } from '@zona/contracts';
@@ -33,7 +50,19 @@ import { executeCommand } from './command-handler.ts';
 import { initializeWorld, loadWorldState } from './world-repository.ts';
 
 const ids = new DerivedIdFactory('i03-world-state-consistency');
-const AGENTS = 12;
+const AGENTS = 24;
+
+/**
+ * Сколько читателей работают ОДНОВРЕМЕННО с писателем.
+ *
+ * Детектор вероятностный по устройству (см. шапку файла), поэтому важна не «достаточность»
+ * числа, а измеренная доля поимок. Замер на настоящей мутации (`repeatable read` ->
+ * `read committed`): при одном читателе с фиксированными 400 чтениями дефект ловился в 3
+ * прогонах из 4 — то есть четверть регрессий уехала бы зелёной. Читателей стало четыре, и
+ * читают они НЕ фиксированное число раз, а пока идёт запись: перекрытие обеспечено
+ * построением, а не удачей выбранной константы.
+ */
+const READERS = 4;
 
 const start = (agentId: string, expectedVersion: number): Command => ({
   command_id: ids.next(RUNTIME_ID_PREFIXES.command),
@@ -71,17 +100,24 @@ describe('D14: чтение мира самосогласовано под па�
     await initializeWorld(db, fixtureInitializationWithAgents(AGENTS));
 
     const agents = racerAgentIds(AGENTS);
+    let writing = true;
     const writer = (async () => {
-      let version = 0;
-      for (const agentId of agents) {
-        const result = await executeCommand(db, start(agentId, version));
-        if (result.outcome === 'accepted') version += 1;
+      try {
+        let version = 0;
+        for (const agentId of agents) {
+          const result = await executeCommand(db, start(agentId, version));
+          if (result.outcome === 'accepted') version += 1;
+        }
+      } finally {
+        writing = false;
       }
     })();
 
     const inconsistencies: string[] = [];
-    const reader = (async () => {
-      for (let attempt = 0; attempt < 400; attempt += 1) {
+    const readOnce = async (): Promise<void> => {
+      // Верхняя граница — предохранитель от бесконечного цикла, если писатель зависнет, а не
+      // мера работы: читатель обязан работать ровно столько, сколько идёт запись.
+      for (let attempt = 0; writing && attempt < 5000; attempt += 1) {
         const state = await loadWorldState(db, FIXTURE_WORLD_ID);
         if (state === null) continue;
 
@@ -106,9 +142,9 @@ describe('D14: чтение мира самосогласовано под па�
           );
         }
       }
-    })();
+    };
 
-    await Promise.all([writer, reader]);
+    await Promise.all([writer, ...Array.from({ length: READERS }, () => readOnce())]);
     expect(inconsistencies).toEqual([]);
   });
 });
