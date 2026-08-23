@@ -5,7 +5,13 @@
  * ни одного `if` о том, можно ли выйти на маршрут. Это граница ADR-003 — императивная оболочка
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
-import { requireCanonical, requireChecksum, type WorldEvent } from '@zona/contracts';
+import {
+  decodeWorldEvent,
+  isValidationFailure,
+  requireCanonical,
+  requireChecksum,
+  type WorldEvent,
+} from '@zona/contracts';
 import { sql } from 'kysely';
 import type {
   AgentState,
@@ -296,6 +302,99 @@ export const repairWorldPrngPositions = async (
     .where(sql<boolean>`prng_stream_positions = '{}'::jsonb`)
     .executeTakeFirst();
   return (result.numUpdatedRows ?? 0n) > 0n;
+};
+
+/**
+ * Статический контент мира: имена и описания локаций, имена агентов (I03).
+ *
+ * `loadWorldState` их не отдаёт намеренно — домену они не нужны, а `WorldState` описывает то, что
+ * меняется. Проекции они нужны: карта без названий нечитаема. Отдельная функция, а не расширение
+ * `WorldState`, чтобы неизменяемое не путешествовало через каждый `evolve`.
+ */
+export interface WorldContentSnapshot {
+  readonly locations: readonly {
+    readonly id: string;
+    readonly name: string;
+    readonly description: string;
+  }[];
+  readonly agentNames: Readonly<Record<string, string>>;
+}
+
+export const loadWorldContent = async (
+  db: DatabaseConnection,
+  worldId: string,
+): Promise<WorldContentSnapshot> => {
+  const [locations, agents] = await Promise.all([
+    db
+      .selectFrom('locations')
+      .select(['location_id', 'name', 'description'])
+      .where('world_id', '=', worldId)
+      .orderBy('location_id')
+      .execute(),
+    db
+      .selectFrom('agents')
+      .select(['agent_id', 'name'])
+      .where('world_id', '=', worldId)
+      .orderBy('agent_id')
+      .execute(),
+  ]);
+
+  return {
+    locations: locations.map((row) => ({
+      id: row.location_id,
+      name: row.name,
+      description: row.description,
+    })),
+    agentNames: Object.fromEntries(agents.map((row) => [row.agent_id, row.name])),
+  };
+};
+
+/**
+ * События из outbox строго после `afterSequence`, по возрастанию (I03, сборка проекции).
+ *
+ * Читается ИМЕННО outbox, а не `world_events`: outbox существует ровно для доставки фактов
+ * подписчикам, и строка в нём появляется в той же транзакции, что событие, но ПОСЛЕ состояния
+ * (`command-handler.ts`, инвариант 3 PLAN §7 I02A). Подписчик, читающий журнал напрямую, мог бы
+ * увидеть событие раньше, чем состояние, которое оно объясняет.
+ *
+ * `published_at` НЕ трогается. У проекции свой курсор (`projection_state.last_event_sequence`), и
+ * отметка «доставлено» в общей таблице означала бы, что первый же подписчик закрывает событие для
+ * всех остальных. Подписчиков будет больше одного (лента, карта, летопись I16), и каждый обязан
+ * вести свою позицию.
+ *
+ * Checksum события ПРОВЕРЯЕТСЯ, как и в `loadWorldEvents`: строка outbox хранит `jsonb`, который
+ * не сохраняет канонический порядок ключей, и точность обратного чтения обязана быть проверяемой.
+ */
+export const loadOutboxEventsAfter = async (
+  db: DatabaseConnection,
+  worldId: string,
+  afterSequence: number,
+  limit: number,
+): Promise<readonly WorldEvent[]> => {
+  if (!Number.isSafeInteger(limit) || limit <= 0) {
+    throw new Error(
+      `persistence: limit обязан быть положительным целым, получено ${String(limit)}`,
+    );
+  }
+  const rows = await db
+    .selectFrom('outbox')
+    .select(['event_id', 'sequence', 'payload'])
+    .where('world_id', '=', worldId)
+    .where('sequence', '>', String(afterSequence))
+    .orderBy('sequence')
+    .limit(limit)
+    .execute();
+
+  return rows.map((row) => {
+    const decoded = decodeWorldEvent(row.payload);
+    if (isValidationFailure(decoded)) {
+      throw new Error(
+        `persistence: строка outbox события ${row.event_id} не является валидным событием: ` +
+          decoded.errors.map((issue) => `${issue.path} ${issue.message}`).join('; '),
+      );
+    }
+    return decoded.value;
+  });
 };
 
 /**

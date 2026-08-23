@@ -185,6 +185,16 @@ importers:
       '@zona/contracts':
         specifier: workspace:*
         version: link:../contracts
+      kysely:
+        specifier: 0.29.5
+        version: 0.29.5
+      pg:
+        specifier: 8.23.0
+        version: 8.23.0
+    devDependencies:
+      '@types/pg':
+        specifier: 8.23.1
+        version: 8.23.1
 
   packages/representation:
     dependencies:

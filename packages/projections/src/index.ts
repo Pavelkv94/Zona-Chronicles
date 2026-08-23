@@ -17,3 +17,20 @@ export type {
   ObserverProjectionState,
 } from './observer-fold.ts';
 export { applyObserverEvent, initialObserverProjection } from './observer-fold.ts';
+
+export type {
+  ProjectionDatabase,
+  ProjectionDatabaseConfig,
+  ProjectionSchema,
+} from './projection-database.ts';
+export { createProjectionDatabase, parseProjectionDatabaseUrl } from './projection-database.ts';
+
+export type { ObserverEventPage, ProjectionCursor } from './projection-store.ts';
+export {
+  initializeProjection,
+  loadObserverEvents,
+  loadObserverSnapshot,
+  loadProjectionCursor,
+  resetProjection,
+  saveProjectionStep,
+} from './projection-store.ts';

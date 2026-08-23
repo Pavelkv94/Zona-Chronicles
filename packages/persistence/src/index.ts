@@ -25,12 +25,19 @@ export {
   requireSafeInteger,
 } from './database.ts';
 
-export type { WorldContent, WorldInitialization, WorldMeta } from './world-repository.ts';
+export type {
+  WorldContent,
+  WorldContentSnapshot,
+  WorldInitialization,
+  WorldMeta,
+} from './world-repository.ts';
 export {
   initializeWorld,
   loadWorldEvents,
   loadWorldMeta,
   loadWorldState,
+  loadOutboxEventsAfter,
+  loadWorldContent,
   loadWorldsWithEmptyPrngPositions,
   repairWorldPrngPositions,
 } from './world-repository.ts';
