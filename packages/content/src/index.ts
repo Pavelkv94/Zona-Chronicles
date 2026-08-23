@@ -57,12 +57,17 @@ export interface WorldDefinition {
  * Версия этого content bundle (§7/§9 контракта: "версии без checksum недостаточно" — версия
  * здесь, checksum считает `apps/cli` от фактического содержимого при сборке snapshot).
  */
-export const CONTENT_VERSION = '0.1.0';
+export const CONTENT_VERSION = '0.2.0';
 
 /**
- * Единственный мир I01 (PLAN §6: "1 мир, 2–4 локации, 1–2 маршрута, 3–5 агентов"). Имена —
- * оригинальные и нейтральные (CLAUDE.md: без письменного IP-разрешения — никаких заимствованных
- * названий фракций/локаций).
+ * Единственный мир прототипа. Имена — оригинальные и нейтральные (CLAUDE.md: без письменного
+ * IP-разрешения — никаких заимствованных названий фракций/локаций).
+ *
+ * Границы I01 («2–4 локации, 1–2 маршрута») расширены в I03 до связного графа с обратными
+ * маршрутами: мир, из которого нельзя вернуться, наблюдать нечем — агенты за несколько переходов
+ * упираются в тупик и замирают. `loc:relay-station` остаётся НЕСВЯЗНОЙ намеренно: критерий D12
+ * требует, чтобы попытка пути к недостижимой локации была отвергнута названной причиной, и без
+ * такой локации его нечем проверить.
  */
 export const PROTOTYPE_WORLD: WorldDefinition = {
   worldId: 'world:prototype',
@@ -100,6 +105,21 @@ export const PROTOTYPE_WORLD: WorldDefinition = {
       id: 'route:bridge-to-checkpoint',
       fromLocationId: 'loc:bridge',
       toLocationId: 'loc:checkpoint',
+      travelMinutes: 25,
+    },
+    // I03: обратные маршруты. Без них мир «заканчивается» после нескольких переходов — агенты
+    // упираются в тупик и больше не двигаются, и наблюдать становится нечего. Длительность та
+    // же: дорога одна, разница только в направлении.
+    {
+      id: 'route:bridge-to-yard',
+      fromLocationId: 'loc:bridge',
+      toLocationId: 'loc:quiet-yard',
+      travelMinutes: 40,
+    },
+    {
+      id: 'route:checkpoint-to-bridge',
+      fromLocationId: 'loc:checkpoint',
+      toLocationId: 'loc:bridge',
       travelMinutes: 25,
     },
   ],

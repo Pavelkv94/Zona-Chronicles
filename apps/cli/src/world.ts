@@ -45,9 +45,22 @@ export function currentHostRuntimeProfile(): HostRuntimeProfile {
   };
 }
 
+/**
+ * Версии, которыми подписывается КАЖДОЕ событие мира прототипа.
+ *
+ * `contentVersion` берётся из самого пакета контента, а не из `testRulesetVersions()`. Раньше это
+ * были два независимых литерала `'0.1.0'`, и совпадали они только потому, что никто не менял
+ * контент. Первое же расширение мира (I03) их бы рассинхронизировало: события подписывались бы
+ * старой версией, а bundle снимка нёс бы новую, и replay отверг бы собственный журнал по
+ * несовпадению bundle (проверка m2). Один источник вместо двух согласуемых вручную.
+ */
+export function prototypeRulesetVersions(): RulesetVersions {
+  return { ...testRulesetVersions(), contentVersion: CONTENT_VERSION };
+}
+
 /** `bundles` ровно одного снимка для мира прототипа. */
 export function currentBundles(
-  rulesetVersions: RulesetVersions = testRulesetVersions(),
+  rulesetVersions: RulesetVersions = prototypeRulesetVersions(),
 ): Snapshot['bundles'] {
   return bundlesFor(PROTOTYPE_WORLD, CONTENT_VERSION, rulesetVersions);
 }

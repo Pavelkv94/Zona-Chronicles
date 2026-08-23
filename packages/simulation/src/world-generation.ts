@@ -216,6 +216,7 @@ export function seedWorld(
   contentVersion: string,
   seed: number,
   host: HostRuntimeProfile,
+  rulesetVersions: RulesetVersions = testRulesetVersions(),
 ): SeededWorld {
   if (!Number.isSafeInteger(seed)) {
     throw new Error(`world: seed обязан быть безопасным целым, получено ${String(seed)}`);
@@ -238,8 +239,6 @@ export function seedWorld(
     // из событий (`evolve`), а не задаётся при создании.
     scheduledActions: {},
   };
-
-  const rulesetVersions = testRulesetVersions();
 
   const snapshotWithoutChecksum: Omit<Snapshot, 'checksum'> = {
     world_id: content.worldId,

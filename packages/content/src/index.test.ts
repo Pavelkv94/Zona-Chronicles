@@ -26,9 +26,41 @@ describe('PROTOTYPE_WORLD (PLAN §6 fixtures)', () => {
     expect(PROTOTYPE_WORLD.locations.length).toBeLessThanOrEqual(4);
   });
 
-  it('содержит от 1 до 2 маршрутов (PLAN §6)', () => {
+  /**
+   * Верхняя граница поднята в I03 (master-plan: «расширение fixture до 3 location и нескольких
+   * routes»). Ограничение «1–2 маршрута» пришло из PLAN §6 итерации I01, где мир только
+   * порождался и никуда не шёл; после I03 за ним наблюдают, а мир без обратных маршрутов
+   * замирает через несколько переходов. Нижняя граница не тронута.
+   */
+  it('содержит от 1 до 6 маршрутов (I03: связный граф с возвратом)', () => {
     expect(PROTOTYPE_WORLD.routes.length).toBeGreaterThanOrEqual(1);
-    expect(PROTOTYPE_WORLD.routes.length).toBeLessThanOrEqual(2);
+    expect(PROTOTYPE_WORLD.routes.length).toBeLessThanOrEqual(6);
+  });
+
+  /**
+   * D12: недостижимая локация обязана существовать в контенте, иначе критерий «отказ несвязного
+   * маршрута виден и объясним» нечем проверить — а исчезнуть она может незаметно, одной правкой
+   * контента.
+   */
+  it('в мире есть локация, к которой не ведёт ни один маршрут (D12)', () => {
+    const touched = new Set(
+      PROTOTYPE_WORLD.routes.flatMap((route) => [route.fromLocationId, route.toLocationId]),
+    );
+    const isolated = PROTOTYPE_WORLD.locations.filter((location) => !touched.has(location.id));
+    expect(isolated.map((location) => location.id)).toContain('loc:relay-station');
+  });
+
+  /**
+   * Мир, из которого нельзя вернуться, наблюдать нечем: агенты упираются в тупик и замирают.
+   * Проверяется наличие обратного маршрута у каждого прямого — не «маршрутов стало больше».
+   */
+  it('каждый маршрут имеет обратный (I03)', () => {
+    const pairs = new Set(
+      PROTOTYPE_WORLD.routes.map((route) => `${route.fromLocationId}>${route.toLocationId}`),
+    );
+    for (const route of PROTOTYPE_WORLD.routes) {
+      expect(pairs).toContain(`${route.toLocationId}>${route.fromLocationId}`);
+    }
   });
 
   it('содержит от 3 до 5 агентов (PLAN §6)', () => {

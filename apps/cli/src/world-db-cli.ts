@@ -18,7 +18,7 @@ import {
   type Snapshot,
 } from '@zona/contracts';
 import { randomUUID } from 'node:crypto';
-import { DerivedIdFactory, testRulesetVersions } from '@zona/domain';
+import { DerivedIdFactory } from '@zona/domain';
 import { PROTOTYPE_WORLD } from '@zona/content';
 import {
   createDatabase,
@@ -44,7 +44,12 @@ import {
 } from '@zona/persistence';
 import type { CliResult } from './commands.ts';
 import { describeDatabaseTarget } from './config.ts';
-import { currentBundles, currentDeterministicRuntimeProfile, seedWorld } from './world.ts';
+import {
+  currentBundles,
+  currentDeterministicRuntimeProfile,
+  prototypeRulesetVersions,
+  seedWorld,
+} from './world.ts';
 
 const SILENT_LOGGER: Logger = { info: () => {}, warn: () => {}, error: () => {} };
 
@@ -187,7 +192,9 @@ export const runWorldInitCommand = async (
     await initializeWorld(db, {
       seed,
       state,
-      versions: testRulesetVersions(),
+      // Версия контента — из самого пакета контента, а не из тестовых умолчаний: иначе события
+      // подписывались бы одной версией, а bundle снимка нёс бы другую (см. `world.ts`).
+      versions: prototypeRulesetVersions(),
       // Генезис уже сделал розыгрыши, распределяя агентов по локациям: начать потоки с нуля
       // после этого значило бы выдать те же значения второй раз (M4).
       prngStreamPositions: seeded.snapshot.prng_stream_positions,
@@ -282,7 +289,7 @@ export const runWorldRunCommand = async (
     command_id: commandId,
     world_id: state.worldId,
     type: 'journey.start',
-    schema_version: testRulesetVersions().schemaVersion,
+    schema_version: prototypeRulesetVersions().schemaVersion,
     actor_id: agentId,
     issued_at_world_time: state.worldTime,
     expected_world_version: state.worldVersion,
