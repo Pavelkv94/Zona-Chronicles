@@ -36,6 +36,16 @@ const databaseUrlFor = (url: string, user: string, password: string): string => 
 
 export interface WorldStack {
   readonly webUrl: string;
+  /**
+   * Строка подключения к КАНОНИЧЕСКОЙ базе этого прогона, под ролью владельца.
+   *
+   * Нужна съёмке evidence-пакета: она обязана читать канонический журнал, а не проекцию —
+   * иначе «увиденное совпадает с журналом» доказывалось бы сверкой проекции с самой собой.
+   * Сценариям D13 она не нужна и там не используется.
+   */
+  readonly databaseUrl: string;
+  /** Адрес observer API этого прогона — съёмке evidence нужен ответ API рядом с журналом. */
+  readonly apiUrl: string;
   /** Выполняет команду `world ...` тем же CLI, что и оператор. */
   readonly cli: (args: readonly string[]) => { stdout: string; exitCode: number };
   readonly stop: () => Promise<void>;
@@ -62,7 +72,26 @@ const reachable = (url: string) => async (): Promise<boolean> => {
   }
 };
 
-export const startWorldStack = async (label: string): Promise<WorldStack> => {
+export interface WorldStackOptions {
+  /**
+   * Минут мирового времени за секунду реального.
+   *
+   * Умолчание 60 выбрано для скорости прогона, и у него есть цена, обнаруженная съёмкой
+   * evidence-пакета: при таком темпе горизонт одного тика (секунда реального времени = 60 минут
+   * мира) ПЕРЕКРЫВАЕТ сорокаминутный путь целиком. `journey.started` и `journey.completed`
+   * рождаются в одном тике, и промежуточное состояние «в пути» не существует ни в одном
+   * наблюдаемом моменте. Сценарий этого не замечал: он сверяет ленту, а не карту.
+   *
+   * Поэтому темп стал параметром. Съёмка ставит 6 — путь укладывается примерно в семь секунд
+   * наблюдения, но проходит через состояние «в пути», которое и обязан показать кадр.
+   */
+  readonly worldMinutesPerRealSecond?: number;
+}
+
+export const startWorldStack = async (
+  label: string,
+  options: WorldStackOptions = {},
+): Promise<WorldStack> => {
   const apiPort = 3200 + (process.pid % 200);
   const webPort = 3400 + (process.pid % 200);
   const testDb: TestDatabase = await createTestDatabase(`e2e_${label}`);
@@ -104,7 +133,7 @@ export const startWorldStack = async (label: string): Promise<WorldStack> => {
     PROJECTION_DATABASE_URL: databaseUrlFor(databaseUrl, 'zona_projection', ROLE_PASSWORD),
     // Быстрый темп: сценарий не должен ждать сорок секунд реального времени, чтобы увидеть
     // завершение пути. На то, КАКИМИ будут события, это не влияет (D2) — только на «когда».
-    WORLD_MINUTES_PER_REAL_SECOND: '60',
+    WORLD_MINUTES_PER_REAL_SECOND: String(options.worldMinutesPerRealSecond ?? 60),
     LOG_LEVEL: 'silent',
   });
 
@@ -133,6 +162,8 @@ export const startWorldStack = async (label: string): Promise<WorldStack> => {
 
   return {
     webUrl,
+    databaseUrl,
+    apiUrl: `http://localhost:${String(apiPort)}`,
     cli,
     stop: async () => {
       for (const child of children) child.kill('SIGTERM');

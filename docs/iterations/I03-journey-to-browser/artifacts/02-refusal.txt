@@ -1,0 +1,5 @@
+$ world run --agent agent:rook --route loc:relay-station
+exit code: 1
+
+Команда cmd_MCMCRS54536ZF998SY5ACA6H3P отклонена: route_unavailable
+  маршрут loc:relay-station неизвестен миру

@@ -1,0 +1,3 @@
+Событий: 2
+     1  journey.started    2028-04-26T06:00:00.000Z  agent:rook  evt_D2ETY739KPRAYTMXP916Q7DKTN
+     2  journey.completed  2028-04-26T06:40:00.000Z  agent:rook  evt_4YDB3796KAR0M9CTNSVJ96NCWG

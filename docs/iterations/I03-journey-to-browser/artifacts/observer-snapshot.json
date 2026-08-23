@@ -1,0 +1,83 @@
+{
+  "world_id": "world:prototype",
+  "projection_sequence": 2,
+  "world_time": "2028-04-26T06:40:00.000Z",
+  "nodes": [
+    {
+      "location_id": "loc:bridge",
+      "name": "Мост",
+      "description": "Полуразрушенный автомобильный мост через реку."
+    },
+    {
+      "location_id": "loc:checkpoint",
+      "name": "Блокпост",
+      "description": "Старый контрольный пункт на дороге за мостом."
+    },
+    {
+      "location_id": "loc:quiet-yard",
+      "name": "Тихий двор",
+      "description": "Огороженный внутренний двор — самое спокойное место в округе."
+    },
+    {
+      "location_id": "loc:relay-station",
+      "name": "Ретрансляционная станция",
+      "description": "Заброшенная станция связи на возвышенности."
+    }
+  ],
+  "edges": [
+    {
+      "route_id": "route:bridge-to-checkpoint",
+      "from_location_id": "loc:bridge",
+      "to_location_id": "loc:checkpoint",
+      "travel_minutes": 25
+    },
+    {
+      "route_id": "route:bridge-to-yard",
+      "from_location_id": "loc:bridge",
+      "to_location_id": "loc:quiet-yard",
+      "travel_minutes": 40
+    },
+    {
+      "route_id": "route:checkpoint-to-bridge",
+      "from_location_id": "loc:checkpoint",
+      "to_location_id": "loc:bridge",
+      "travel_minutes": 25
+    },
+    {
+      "route_id": "route:yard-to-bridge",
+      "from_location_id": "loc:quiet-yard",
+      "to_location_id": "loc:bridge",
+      "travel_minutes": 40
+    }
+  ],
+  "agents": [
+    {
+      "agent_id": "agent:finch",
+      "name": "Зяблик",
+      "location_id": "loc:bridge",
+      "status": "idle",
+      "route_id": null
+    },
+    {
+      "agent_id": "agent:kite",
+      "name": "Коршун",
+      "location_id": "loc:quiet-yard",
+      "status": "idle",
+      "route_id": null
+    },
+    {
+      "agent_id": "agent:rook",
+      "name": "Рук",
+      "location_id": "loc:bridge",
+      "status": "idle",
+      "route_id": null
+    },
+    {
+      "agent_id": "agent:swift",
+      "name": "Стриж",
+      "location_id": "loc:checkpoint",
+      "status": "idle",
+      "route_id": null
+    }
+  ]
+}

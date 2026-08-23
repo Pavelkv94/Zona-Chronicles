@@ -1,0 +1,5 @@
+$ world run --agent agent:rook --route route:yard-to-bridge
+
+Команда cmd_W2KP7771MXJJZRN7CV1E79V8AQ принята.
+  события: evt_D2ETY739KPRAYTMXP916Q7DKTN
+  версия мира: 0 -> 1

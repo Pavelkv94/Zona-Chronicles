@@ -1,0 +1,5 @@
+Снимок: sequence 0
+Применено событий суффикса: 2
+Checksum replay:                sha256:17cd19c68fdad43414db5be303b424ddfdcb04a09de493cd6949a91977ca2b75
+Checksum непрерывного прогона:  sha256:17cd19c68fdad43414db5be303b424ddfdcb04a09de493cd6949a91977ca2b75
+checksum совпадает.
