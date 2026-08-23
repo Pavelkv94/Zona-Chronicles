@@ -16,9 +16,14 @@
  * `currentDeterministicRuntimeProfile()` вызываются как раньше, поэтому ни один из существующих
  * вызовов не потребовал правки.
  */
-import { CONTENT_VERSION, PROTOTYPE_WORLD, type WorldDefinition } from '@zona/content';
+import {
+  CONTENT_VERSION,
+  PROTOTYPE_RULESET_VERSIONS,
+  PROTOTYPE_WORLD,
+  type WorldDefinition,
+} from '@zona/content';
 import type { DeterministicRuntimeProfile, Snapshot } from '@zona/contracts';
-import { testRulesetVersions, type RulesetVersions } from '@zona/domain';
+import type { RulesetVersions } from '@zona/domain';
 import {
   bundlesFor,
   deterministicRuntimeProfileFor,
@@ -48,14 +53,13 @@ export function currentHostRuntimeProfile(): HostRuntimeProfile {
 /**
  * Версии, которыми подписывается КАЖДОЕ событие мира прототипа.
  *
- * `contentVersion` берётся из самого пакета контента, а не из `testRulesetVersions()`. Раньше это
- * были два независимых литерала `'0.1.0'`, и совпадали они только потому, что никто не менял
- * контент. Первое же расширение мира (I03) их бы рассинхронизировало: события подписывались бы
- * старой версией, а bundle снимка нёс бы новую, и replay отверг бы собственный журнал по
- * несовпадению bundle (проверка m2). Один источник вместо двух согласуемых вручную.
+ * Источник ОДИН — `@zona/content`. Раньше версия контента жила двумя независимыми литералами
+ * `'0.1.0'` (в контенте и в `testRulesetVersions()`), и совпадали они лишь потому, что контент не
+ * менялся. Расширение мира в I03 их развело, и worker перестал читать генезисный снимок: он
+ * собирал bundles со старой версией, checksum не сошёлся. Найдено E2E-прогоном, а не рассуждением.
  */
 export function prototypeRulesetVersions(): RulesetVersions {
-  return { ...testRulesetVersions(), contentVersion: CONTENT_VERSION };
+  return { ...PROTOTYPE_RULESET_VERSIONS };
 }
 
 /** `bundles` ровно одного снимка для мира прототипа. */
@@ -80,7 +84,13 @@ export function seedWorld(
   seed: number,
   host: HostRuntimeProfile = currentHostRuntimeProfile(),
 ): PrototypeWorld {
-  return generateWorld(PROTOTYPE_WORLD, CONTENT_VERSION, seed, host) as PrototypeWorld;
+  return generateWorld(
+    PROTOTYPE_WORLD,
+    CONTENT_VERSION,
+    seed,
+    host,
+    prototypeRulesetVersions(),
+  ) as PrototypeWorld;
 }
 
 /**

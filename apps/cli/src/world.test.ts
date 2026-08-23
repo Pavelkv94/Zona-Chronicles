@@ -8,7 +8,7 @@ import {
 } from '@zona/contracts';
 import { PROTOTYPE_WORLD } from '@zona/content';
 import { describe, expect, it } from 'vitest';
-import { rulesBundleContent, seedWorld } from './world.ts';
+import { prototypeRulesetVersions, rulesBundleContent, seedWorld } from './world.ts';
 
 function decodedSnapshot(seed: number) {
   const { snapshot } = seedWorld(seed);
@@ -119,11 +119,18 @@ describe('seedWorld', () => {
     expect(snapshot.bundles.rules.checksum).not.toBe(
       'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a',
     );
-    expect(isValidationFailure(verifyBundleRef(rulesBundleContent(), snapshot.bundles.rules))).toBe(
-      false,
-    );
+    // Версии — ТЕ ЖЕ, что использует `seedWorld`. Умолчание `rulesBundleContent()` больше не
+    // совпадает с ними: версия контента живёт в `@zona/content`, а не в тестовых умолчаниях
+    // домена (I03). Проверка от этого стала строже — она сверяет фактические версии мира.
+    expect(
+      isValidationFailure(
+        verifyBundleRef(rulesBundleContent(prototypeRulesetVersions()), snapshot.bundles.rules),
+      ),
+    ).toBe(false);
 
-    const tampered = JSON.parse(JSON.stringify(rulesBundleContent())) as Record<string, unknown>;
+    const tampered = JSON.parse(
+      JSON.stringify(rulesBundleContent(prototypeRulesetVersions())),
+    ) as Record<string, unknown>;
     (tampered['versions'] as Record<string, unknown>)['contentVersion'] = '0.1.1';
     expect(isValidationFailure(verifyBundleRef(tampered, snapshot.bundles.rules))).toBe(true);
   });

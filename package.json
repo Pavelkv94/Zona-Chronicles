@@ -33,11 +33,12 @@
     "api": "node apps/api/src/main.ts",
     "web": "pnpm --filter @zona/web dev",
     "verify": "pnpm format:check && pnpm lint && pnpm boundaries:check && pnpm typecheck && pnpm test:unit && pnpm test:property && pnpm test:contract && pnpm security:all && pnpm build",
-    "verify:full": "pnpm verify && pnpm test:acceptance && pnpm test:integration && pnpm test:replay",
+    "verify:full": "pnpm verify && pnpm test:acceptance && pnpm test:integration && pnpm test:replay && pnpm test:e2e",
     "ci:pr": "pnpm verify:full",
     "task:worktree": "node scripts/worktree/new-task-worktree.ts",
     "ownership:check": "node tools/agent-harness/src/cli/verify-task-ownership.ts",
-    "migrations:immutable": "node scripts/migrations/check-immutable.ts"
+    "migrations:immutable": "node scripts/migrations/check-immutable.ts",
+    "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -54,6 +55,7 @@
     "turbo": "2.10.11",
     "typescript": "6.0.3",
     "typescript-eslint": "8.67.0",
-    "vitest": "4.1.11"
+    "vitest": "4.1.11",
+    "@playwright/test": "1.62.1"
   }
 }

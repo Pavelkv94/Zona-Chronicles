@@ -59,6 +59,9 @@ export interface ObserverRoutesOptions {
 
 const DEFAULT_STREAM_POLL_MS = 500;
 
+/** Как часто молчащий поток напоминает о себе комментарием, чтобы его не оборвал прокси. */
+const KEEP_ALIVE_MS = 15_000;
+
 /** Один кадр SSE. Формат текстовый и построчный — собирается здесь, а не разбросан по коду. */
 const sseFrame = (input: {
   readonly id?: number;
@@ -170,6 +173,12 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
       // Прокси, буферизующий поток, превратил бы «живую ленту» в пакетную доставку раз в минуту.
       'X-Accel-Buffering': 'no',
     });
+    // Заголовки отправляются НЕМЕДЛЕННО. Без этого Node держит их до первой записи, и в мире, где
+    // пока ничего не произошло, поток не открывался вовсе: браузер ждал ответа, `open` не
+    // наступал, экран показывал «Поток: нет» — и никакой ошибки при этом не было. Ручная проверка
+    // это скрывала, потому что в живом мире события уже были и первая же запись заголовки
+    // выталкивала. Найдено E2E-сценарием на свежесозданном мире.
+    reply.raw.flushHeaders();
 
     let cursor = resume;
     let closed = false;
@@ -208,10 +217,23 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
       cursor = event.projection_sequence;
     }
 
+    let quietPolls = 0;
     while (!closed) {
       await new Promise((resolve) => setTimeout(resolve, streamPollMs));
       if (closed) break;
       const page = await observer.loadEvents(worldId, { after: cursor, limit: MAX_EVENT_PAGE });
+      if (page.events.length === 0) {
+        quietPolls += 1;
+        // Комментарий SSE (строка, начинающаяся с двоеточия) — не событие: клиент его
+        // игнорирует. Он нужен, чтобы молчащий мир не выглядел оборванным соединением для
+        // прокси и балансировщиков, которые закрывают тихие потоки по таймауту.
+        if (quietPolls * streamPollMs >= KEEP_ALIVE_MS) {
+          reply.raw.write(': keep-alive\n\n');
+          quietPolls = 0;
+        }
+        continue;
+      }
+      quietPolls = 0;
       for (const event of page.events) {
         reply.raw.write(
           sseFrame({

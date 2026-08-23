@@ -162,7 +162,9 @@ function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainR
 export function bundlesFor(
   content: GeneratorContent,
   contentVersion: string,
-  rulesetVersions: RulesetVersions = testRulesetVersions(),
+  // Умолчания НЕТ намеренно: пока оно было, два вызывающих подставляли разные версии, и
+  // расхождение проявлялось не здесь, а падением проверки checksum снимка в третьем месте.
+  rulesetVersions: RulesetVersions,
 ): Snapshot['bundles'] {
   return {
     rules: bundleRefFor(rulesetVersions.rulesVersion, rulesBundleContent(rulesetVersions)),
@@ -216,7 +218,7 @@ export function seedWorld(
   contentVersion: string,
   seed: number,
   host: HostRuntimeProfile,
-  rulesetVersions: RulesetVersions = testRulesetVersions(),
+  rulesetVersions: RulesetVersions,
 ): SeededWorld {
   if (!Number.isSafeInteger(seed)) {
     throw new Error(`world: seed обязан быть безопасным целым, получено ${String(seed)}`);

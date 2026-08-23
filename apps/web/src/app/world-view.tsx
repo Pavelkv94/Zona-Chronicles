@@ -22,7 +22,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
 import { OBSERVER_STREAM_EVENT_NAMES } from '@zona/contracts';
-import { apiBaseUrl, fetchEvents, fetchSnapshot } from './observer-client.ts';
+import { fetchEvents, fetchSnapshot } from './observer-client.ts';
 
 /** Сколько последних событий держит лента на экране. Не окно retention — просто читаемость. */
 const FEED_LIMIT = 40;
@@ -48,7 +48,12 @@ const describe = (event: ObserverEvent): string => {
 
 const worldClock = (iso: string): string => iso.replace('T', ' ').replace('.000Z', '');
 
-export function WorldView() {
+export interface WorldViewProps {
+  /** Адрес observer API. Приходит с сервера при запросе — см. `page.tsx`. */
+  readonly apiBaseUrl: string;
+}
+
+export function WorldView({ apiBaseUrl }: WorldViewProps) {
   const [snapshot, setSnapshot] = useState<ObserverWorldSnapshot | null>(null);
   const [feed, setFeed] = useState<readonly ObserverEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -66,7 +71,7 @@ export function WorldView() {
    */
   const restore = useCallback(async () => {
     try {
-      const loaded = await fetchSnapshot();
+      const loaded = await fetchSnapshot(apiBaseUrl);
       if (loaded === null) {
         setSnapshot(null);
         setError('Мир ещё не создан или проекция не собрана.');
@@ -74,14 +79,14 @@ export function WorldView() {
       }
       cursor.current = loaded.projection_sequence;
       const from = Math.max(0, loaded.projection_sequence - FEED_LIMIT);
-      const page = await fetchEvents(from, FEED_LIMIT);
+      const page = await fetchEvents(apiBaseUrl, from, FEED_LIMIT);
       setFeed(page.events);
       setError(null);
       setSnapshot(loaded);
     } catch (cause) {
       setError(`observer API недоступен: ${String(cause)}`);
     }
-  }, []);
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     void restore();
@@ -91,7 +96,7 @@ export function WorldView() {
     if (snapshot === null) return undefined;
 
     const source = new EventSource(
-      `${apiBaseUrl()}/v1/stream?last_event_id=${String(cursor.current)}`,
+      `${apiBaseUrl}/v1/stream?last_event_id=${String(cursor.current)}`,
     );
     source.addEventListener('open', () => setStreamLive(true));
 
@@ -108,7 +113,7 @@ export function WorldView() {
       );
       // Позиция агентов меняется событиями, но карта берётся из snapshot: перечитываем его, а не
       // повторяем свёртку на клиенте. Вторая реализация свёртки разошлась бы с первой молча.
-      void fetchSnapshot()
+      void fetchSnapshot(apiBaseUrl)
         .then(setSnapshot)
         .catch(() => undefined);
     });
@@ -126,7 +131,7 @@ export function WorldView() {
       source.close();
       setStreamLive(false);
     };
-  }, [snapshot === null, restore]);
+  }, [snapshot === null, restore, apiBaseUrl]);
 
   if (error !== null && snapshot === null) {
     return (

@@ -12,3 +12,7 @@ coverage/
 .claude/settings.local.json
 tmp/
 reports/
+
+# Playwright: вывод прогона, не исходники (I03).
+test-results/
+playwright-report/
