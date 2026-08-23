@@ -6,7 +6,7 @@
 
 | Раунд / роль | Вердикт |
 | --- | --- |
-| Раунд 0 — собственная проба lead-а | FAIL — 1 blocker, 2 major, 1 minor. Все закрыты |
+| Раунд 0 — собственная проба lead-а | FAIL — 1 blocker, 2 major, 2 minor. Все закрыты |
 | Раунд 1 — test-reviewer (Opus), worktree `review/I03-VERIFY-TESTS` | идёт |
 | Раунд 1 — architecture-reviewer (Opus), worktree `review/I03-VERIFY-ARCH` | идёт |
 
@@ -216,6 +216,41 @@ Error: element(s) not found
 
 Починен (`composite: false`, `paths`), добавлен `typecheck:scripts`. Проба: внесённая ошибка
 типа ловится (`error TS2322`), откат — чисто.
+
+## MINOR 0-5 — шаг полного gate «replay» не мог упасть. Закрыто (`b41aee0`)
+
+Найдено прогоном `verify:full`: шаг `pnpm test:replay` не напечатал ни одной строки результата.
+
+`tests/replay/` содержал ровно один файл — заглушку, чей собственный докстринг обещал, что
+«настоящий replay-набор появится в I02B». Набор появился, но лёг в `tests/acceptance/`, заглушка
+осталась, а скрипт запускался с `--passWithNoTests`. Именованный шаг gate проходил, ничего не
+проверив, — с I00 по I03 включительно, и попадал в отчёты как пройденный.
+
+**Дефект не в покрытии.** Replay проверен: `packages/persistence/src/replay.integration.test.ts`
+(C9/C10 математически) и командный сценарий. Дефект в том, что шаг давал сигнал, которого не
+было, — и именно поэтому он MINOR, а не MAJOR: gate врал, но мир нет.
+
+Командный сценарий перенесён в `tests/replay/`, заглушка удалена, `--passWithNoTests` снят.
+Общий помощник `spawn-world-cli.ts` поднят в `tests/support/`: он нужен обоим наборам.
+
+Проба переноса — оба направления. До правки путей внутри помощника (`../../../` остался от
+старой глубины) replay падал с exit 1 и «no tests», acceptance давал 8 упавших из 33. После:
+replay 5/5, acceptance 33/33. Сумма сохранилась — 38 проверок, как и было до переноса.
+
+## Полный gate после раунда 0
+
+```text
+pnpm verify:full — exit 0
+  unit + hooks     51 файл, 717 проверок
+  property          6 файлов, 34 проверки
+  contract         13 файлов, 485 проверок
+  acceptance        8 файлов, 33 проверки
+  integration      19 файлов, 114 проверок
+  replay            1 файл,   5 проверок     (было: 0, шаг не мог упасть)
+  e2e               3 сценария
+  security         secrets/dependencies/licenses/static/no-llm — pass
+                   (licenses: suppressed=2 — исключения на решении владельца)
+```
 
 ---
 
