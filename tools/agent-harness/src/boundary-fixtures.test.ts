@@ -67,6 +67,14 @@ const CONTENT_DIR = resolve(REPO_ROOT, `packages/content/src/__${SUFFIX}__`);
 const PERSISTENCE_DIR = resolve(REPO_ROOT, `packages/persistence/src/__${SUFFIX}__`);
 const PROJECTIONS_DIR = resolve(REPO_ROOT, `packages/projections/src/__${SUFFIX}__`);
 const API_DIR = resolve(REPO_ROOT, `apps/api/src/__${SUFFIX}__`);
+/**
+ * `apps/web` — второе приложение, и до I03 у правил для приложений не было ни одной фикстуры,
+ * покрывающей его. M7 независимого архитектурного аудита: маска правила заканчивалась на
+ * расширении `.ts`, а весь экран написан в `.tsx` — то есть `process.env` в компоненте проходил
+ * lint молча, вместе с повторно объявленными в том же блоке `structuralRestrictions`. Правило без
+ * фикстуры считается несуществующим (ADR-003), и здесь это было буквально так.
+ */
+const WEB_DIR = resolve(REPO_ROOT, `apps/web/src/__${SUFFIX}__`);
 const FIXTURE_DIRS = [
   DOMAIN_DIR,
   SIMULATION_DIR,
@@ -76,6 +84,7 @@ const FIXTURE_DIRS = [
   PERSISTENCE_DIR,
   PROJECTIONS_DIR,
   API_DIR,
+  WEB_DIR,
 ];
 
 const cleanupFixtures = (): void => {
@@ -92,6 +101,7 @@ const FIXTURE_PARENT_DIRS = [
   resolve(REPO_ROOT, 'packages/persistence/src'),
   resolve(REPO_ROOT, 'packages/projections/src'),
   resolve(REPO_ROOT, 'apps/api/src'),
+  resolve(REPO_ROOT, 'apps/web/src'),
 ];
 const FIXTURE_DIR_PATTERN = /^__fixture-\d+__$/;
 
@@ -256,6 +266,26 @@ const apiFiles: Readonly<Record<string, string>> = {
   'api-to-projections-persistence.ts': `import '../../../../packages/projections/src/__${SUFFIX}__/projections-to-persistence.ts';\nexport const marker = true;\n`,
 };
 
+/**
+ * Фикстуры `apps/web`: те же запреты, что у остальных приложений, но в `.tsx`.
+ *
+ * Расширение здесь и есть предмет проверки. `.ts`-файл в `apps/web` правило ловило и раньше;
+ * молча выпадал именно `.tsx`, то есть ровно тот формат, в котором написан весь экран.
+ */
+const webFiles: Readonly<Record<string, string>> = {
+  'web-process-env.tsx': "export const bad = (): string | undefined => process.env['X'];\n",
+  // Первая редакция проверяла здесь `Date.now()` и падала: приложениям он не запрещён вовсе
+  // (порты времени — требование ядра, не экрана). Детектор мерил не то, что запрещено.
+  //
+  // Про `enum` стоит сказать точно, потому что это ограничивает вывод. Ревьюер писал, что вместе
+  // с маской терялись и `structuralRestrictions`, объявленные в блоке для приложений повторно.
+  // Проба показала иначе: при возврате маски к `.ts` эта фикстура ВСЁ РАВНО ловится — запрет
+  // `enum` приходит из базового конфига, покрывающего все файлы. Значит маска решала судьбу
+  // только `process.env`, и именно та фикстура доказывает M7. Эта — доказывает, что базовые
+  // запреты ADR-002 до `.tsx` доходили и раньше.
+  'web-enum.tsx': 'export enum Bad {\n  A = 1,\n}\n',
+};
+
 type EslintMessage = { readonly ruleId: string | null; readonly message: string };
 type EslintFileResult = { readonly filePath: string; readonly messages: readonly EslintMessage[] };
 type DepcruiseViolation = {
@@ -312,6 +342,9 @@ beforeAll(() => {
     for (const [name, content] of Object.entries(apiFiles)) {
       writeFileSync(resolve(API_DIR, name), content);
     }
+    for (const [name, content] of Object.entries(webFiles)) {
+      writeFileSync(resolve(WEB_DIR, name), content);
+    }
 
     // PERSISTENCE_DIR попадает в прогон eslint ради фикстур C10 (M6): правила `files` смотрят на
     // путь файла, поэтому фикстура обязана лежать внутри пакета, к которому правило применяется.
@@ -320,8 +353,11 @@ beforeAll(() => {
       'eslint',
       '--format',
       'json',
+      // `--ext` не нужен: пути передаются каталогами, и eslint flat config сам решает по маске
+      // правил, какие расширения линтовать. WEB_DIR добавлен по M7 — фикстуры там `.tsx`.
       DOMAIN_DIR,
       PERSISTENCE_DIR,
+      WEB_DIR,
     ]);
     eslintResults = JSON.parse(eslintRaw) as readonly EslintFileResult[];
 
@@ -340,6 +376,7 @@ beforeAll(() => {
       PERSISTENCE_DIR,
       PROJECTIONS_DIR,
       API_DIR,
+      WEB_DIR,
     ]);
     const depcruiseParsed = JSON.parse(depcruiseRaw) as {
       readonly summary: { readonly violations: readonly DepcruiseViolation[] };
@@ -447,6 +484,19 @@ describe('boundary fixtures — C10: replay не принимает решени
       expect(hasEslintMessage(file, 'no-restricted-imports', 'ACCEPTANCE C10')).toBe(true);
     },
   );
+
+  /**
+   * M7 независимого архитектурного аудита I03. Правило для приложений объявлено маской, которая
+   * до этой итерации заканчивалась расширением `.ts` и потому не покрывала `.tsx` — то есть весь
+   * `apps/web`. Проверено пробой ДО правки: файл с `process.env` в `.tsx` не давал ни одной
+   * ошибки lint.
+   */
+  it.each([
+    ['web-process-env.tsx', 'no-restricted-syntax', 'process.env читается только в config.ts'],
+    ['web-enum.tsx', 'no-restricted-syntax', 'enum запрещён'],
+  ])('apps/web %s ловится правилом %s', (file, rule, includes) => {
+    expect(hasEslintMessage(file, rule, includes)).toBe(true);
+  });
 
   it('вторая сторона: свёртка через evolve проходит — правило не запрещает корректный replay', () => {
     const c10 = findEslintResult('replay-fold.ts').messages.filter((m) =>

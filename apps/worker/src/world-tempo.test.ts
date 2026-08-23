@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WORLD_TEMPO,
+  PUBLIC_WORLD_TEMPO,
   WORLD_TEMPO_VERSION,
   worldHorizon,
   type WorldTempo,
@@ -100,6 +101,23 @@ describe('D1: горизонт растёт от РЕАЛЬНОГО прошед
 describe('D2: темп версионирован и отделён от детерминизма', () => {
   it('у темпа есть версия, и она semantic version', () => {
     expect(WORLD_TEMPO_VERSION).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  /**
+   * M5 независимого аудита I03: расхождение кода с нормативом обязано быть ВИДИМЫМ.
+   *
+   * Тест не требует равенства — он требует, чтобы обе величины существовали, отличались
+   * известным образом и не разъехались дальше молча. Если однажды норматив изменят или
+   * умолчание приведут к нему, упадёт именно этот тест, а не demo у зрителя.
+   */
+  it('нормативная публичная скорость названа и отличается от dev-умолчания известным образом', () => {
+    // 07_MVP_MECHANICS_SPEC: «1 реальная минута = 4 игровые минуты».
+    expect(PUBLIC_WORLD_TEMPO.worldMinutesPerRealSecond * 60).toBeCloseTo(4, 10);
+    // Dev-умолчание быстрее ровно в 15 раз. Число здесь затем, чтобы его изменение было
+    // осознанным изменением ТЕСТА, а не побочным эффектом правки константы.
+    expect(
+      DEFAULT_WORLD_TEMPO.worldMinutesPerRealSecond / PUBLIC_WORLD_TEMPO.worldMinutesPerRealSecond,
+    ).toBeCloseTo(15, 10);
   });
 
   it('коэффициент по умолчанию положителен и назван', () => {

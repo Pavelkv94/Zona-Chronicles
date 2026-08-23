@@ -416,8 +416,20 @@ export default tseslint.config(
   },
   {
     // Приложения читают окружение только через валидируемый allowlist в собственном config.ts.
-    files: ['apps/*/src/**/*.ts'],
-    ignores: ['apps/*/src/config.ts', 'apps/*/src/config.test.ts'],
+    //
+    // `.tsx` включён по M7 независимого архитектурного аудита I03. До него маска была
+    // `apps/*/src/**/*.ts`, и весь `apps/web` — три файла с расширением `.tsx` — оказался ВНЕ
+    // правила: `process.env` в компоненте проходил lint молча. Вместе с маской терялись и
+    // `structuralRestrictions`, повторно объявленные в этом же блоке, то есть базовые запреты
+    // ADR-002 для экрана не действовали вовсе. Проверено пробой: файл с `process.env` в `.tsx`
+    // не давал ни одной ошибки.
+    files: ['apps/*/src/**/*.ts', 'apps/*/src/**/*.tsx'],
+    ignores: [
+      'apps/*/src/config.ts',
+      'apps/*/src/config.test.ts',
+      'apps/*/src/config.tsx',
+      'apps/*/src/config.test.tsx',
+    ],
     rules: {
       // Правила ESLint не сливаются, а переопределяются целиком: базовые запреты
       // ADR-002 обязаны повторяться здесь явно, иначе они молча исчезают для apps/**.

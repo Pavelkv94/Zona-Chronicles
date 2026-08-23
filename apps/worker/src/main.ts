@@ -35,6 +35,7 @@ import {
   type ProjectionBuilderDeps,
 } from './projection-builder.ts';
 import { worldBundles, worldRuntimeProfile } from './world-bundles.ts';
+import { WORLD_TEMPO_VERSION } from './world-tempo.ts';
 import { createWorldStep } from './world-step.ts';
 import { createWorker, type ClockPort, type SleepPort } from './worker.ts';
 
@@ -283,6 +284,12 @@ async function main(): Promise<void> {
       deploymentId: config.deploymentId,
       worldId: config.worldId,
       worldMinutesPerRealSecond: config.worldMinutesPerRealSecond,
+      // Версия темпа ЧИТАЕТСЯ, а не только объявляется. M5 независимого аудита I03:
+      // `WORLD_TEMPO_VERSION` не читал ни один потребитель, кроме собственного теста на формат
+      // строки, — то есть версия была декоративной, а «версионированные данные» из PLAN §10.1
+      // держались на слове. Теперь она в стартовой записи журнала: по логу прогона видно, под
+      // какой версией темпа он шёл, и это единственное, ради чего версия существует.
+      worldTempoVersion: WORLD_TEMPO_VERSION,
       startWorldTime: startState.worldTime,
       owner: workerOwner,
       projection: projection === null ? 'disabled' : 'enabled',
