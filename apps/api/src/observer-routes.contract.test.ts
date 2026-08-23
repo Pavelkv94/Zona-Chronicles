@@ -77,20 +77,31 @@ describe('D4: публичное API не содержит write-маршрут�
    * write-маршрут.
    */
   it('ни один зарегистрированный маршрут не отвечает на POST/PUT/PATCH/DELETE', async () => {
-    const registered: { method: string; url: string }[] = [];
     const app = server();
-    app.addHook('onRoute', (route) => {
-      const methods = Array.isArray(route.method) ? route.method : [route.method];
-      for (const method of methods) registered.push({ method, url: route.url });
-    });
     await app.ready();
-
-    // Хук ловит маршруты, зарегистрированные ПОСЛЕ него, поэтому опираемся ещё и на дерево:
-    // два независимых обхода, и оба обязаны согласиться.
     const tree = app.printRoutes();
+
+    /**
+     * СНАЧАЛА доказываем, что обход вообще что-то видит, и видит МЕТОДЫ.
+     *
+     * Отрицательные проверки ниже держатся на формате `printRoutes()`: он печатает методы в
+     * скобках — `events (GET, HEAD)`. Если однажды формат изменится (обновление Fastify,
+     * другие опции печати), `not.toContain('POST')` станет истинным ВСЕГДА, и тест продолжит
+     * зеленеть, ничего не проверяя. Положительная проверка ломается в тот же день.
+     *
+     * Прежняя редакция вместо этого собирала маршруты хуком `onRoute`, повешенным ПОСЛЕ
+     * `server()`, и называла это «двумя независимыми обходами, которые обязаны согласиться».
+     * Список был ПУСТ: хук ловит только маршруты, зарегистрированные после него. Проверено
+     * пробой — `expect(registered).not.toEqual([])` падает с `expected [] to not deeply equal []`.
+     * Пустой обход соглашается с чем угодно.
+     */
+    expect(tree).toContain('GET');
+    for (const url of ['snapshot', 'events', 'stream', 'health']) {
+      expect(tree, `маршрут ${url} не виден в обходе`).toContain(url);
+    }
+
     for (const method of WRITE_METHODS) {
-      expect(registered.some((route) => route.method === method)).toBe(false);
-      expect(tree).not.toContain(method);
+      expect(tree, `дерево маршрутов содержит ${method}`).not.toContain(method);
     }
 
     await app.close();
