@@ -20,7 +20,40 @@ jobs:
   gate:
     name: PR gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
+    # ВНИМАНИЕ: этот workflow НИКОГДА НЕ ИСПОЛНЯЛСЯ. На момент I03 `origin/main` стоит на первом
+    # коммите репозитория, ни одна ветка с работой не отправлена, и запусков CI не было. Всё
+    # ниже — не проверенный контроль, а заявка на него. Это записано в `REVIEW.md` итерации I03
+    # как находка, а не как выполненный пункт: Gate A требует «CI стабилен минимум на 10
+    # последовательных запусках», и до первого зелёного прогона этот пункт не выполнен.
+    #
+    # I03 нашёл в нём два дефекта, из-за которых он не мог пройти в принципе:
+    #   1) PostgreSQL не поднимался вовсе, а `test:integration`/`test:acceptance` подключаются к
+    #      localhost:5432 под ролью `zona` (`__fixtures__/test-database.ts`);
+    #   2) `pnpm test:e2e` отсутствовал — единственная проверка ЦЕПОЧКИ до браузера, ради которой
+    #      итерация и делалась, не запускалась автоматически ни разу.
+    services:
+      postgres:
+        # Тот же образ и та же фиксация локали/таймзоны, что в `docker-compose.yml`: расхождение
+        # среды CI и локальной среды означало бы, что детерминизм (SIM-01) проверяется в одной
+        # среде, а обещается в другой.
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_USER: zona
+          # Задокументированная локальная заглушка (`security/policy.json`,
+          # non_secret_placeholders): контейнер одноразовый и снаружи недоступен.
+          POSTGRES_PASSWORD: zona_local_dev_only
+          POSTGRES_DB: zona
+          TZ: UTC
+          PGTZ: UTC
+          LANG: C.UTF-8
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U zona -d zona"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     steps:
       - uses: actions/checkout@v5
         with:
@@ -59,6 +92,18 @@ jobs:
       - run: pnpm test:acceptance
       - run: pnpm test:integration
       - run: pnpm test:replay
+
+      # E2E ставится ПОСЛЕ остальных наборов: он поднимает весь стек (миграции, мир, три
+      # процесса, браузер) и потому самый дорогой и самый шумный при падении. Браузер ставится
+      # отдельным шагом — Playwright не тянет его вместе с пакетом.
+      - name: Playwright browser
+        run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+
+      # Security-сканы стоят ПОСЛЕ build намеренно и это безопасно с I03: обход исходников
+      # пропускает директории, начинающиеся с точки, поэтому сборочный вывод (`apps/web/.next`)
+      # в него не попадает. До этой правки порядок решал вердикт: на чистом дереве скан проходил,
+      # после build — падал 54 находками в минифицированных чанках.
       - run: pnpm security:secrets
       - run: pnpm security:dependencies
       - run: pnpm security:licenses

@@ -1,5 +1,4 @@
-# Локальная среда прототипа (ADR-002): api, worker, postgres.
-# `web` появляется в I03 вместе с Next.js observer UI.
+# Локальная среда прототипа (ADR-002): postgres, worker, api, web.
 #
 # Разделение ролей БД (ADR-008, §11 03_TECHNICAL_DESIGN) выполняется миграциями
 # и грантами в I02A; здесь заведён только superuser для локальной разработки.
@@ -40,9 +39,17 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: '3001'
-      # BL-2: observer API ходит под read-only ролью без единого гранта на канонические
-      # таблицы. Least privilege обязан быть в РАБОТАЮЩЕМ пути, а не только в миграции.
-      DATABASE_URL: postgres://zona_api:zona_local_dev_only@postgres:5432/zona
+      # I03: переменная называется PROJECTION_DATABASE_URL, а не DATABASE_URL, и это не
+      # переименование. Observer API ходит в ХРАНИЛИЩЕ ПРОЕКЦИИ; одинаковое имя переменной
+      # означало бы, что «та же строка подключения годится обоим», и запрет на чтение
+      # канонических таблиц держался бы на договорённости вместо грантов (D5).
+      #
+      # До этой правки здесь стоял DATABASE_URL, который apps/api с I03 не читает вовсе:
+      # контейнер не поднялся бы — parseConfig отвергает отсутствие PROJECTION_DATABASE_URL
+      # (и правильно: сервис, отвечающий пустотой, неотличим от работающего с пустым миром).
+      PROJECTION_DATABASE_URL: postgres://zona_api:zona_local_dev_only@postgres:5432/zona
+      ALLOWED_ORIGINS: http://localhost:3100
+      DEPLOYMENT_ID: local-compose
     ports:
       - '3001:3001'
     depends_on:
@@ -61,9 +68,30 @@ services:
       DATABASE_URL: postgres://zona_worker:zona_local_dev_only@postgres:5432/zona
       # Миграции — единственное, что идёт под владельцем схемы.
       MIGRATION_DATABASE_URL: postgres://zona:zona_local_dev_only@postgres:5432/zona
+      # I03: worker собирает проекцию и делает это под СВОЕЙ ролью — `zona_projection` читает
+      # журнал и владеет `projection_*`, но писать историю не может. Три роли, три строки.
+      PROJECTION_DATABASE_URL: postgres://zona_projection:zona_local_dev_only@postgres:5432/zona
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: ['app']
+
+  # I03: экран наблюдателя. Комментарий в шапке обещал его «в I03» — обещание выполнено здесь.
+  web:
+    build:
+      context: .
+      dockerfile: ops/Dockerfile
+      target: web
+    environment:
+      NODE_ENV: production
+      # Адрес API приходит в РАНТАЙМЕ, а не на сборке. Next подставляет значения из `env`
+      # конфига в клиентский бандл во время build, поэтому собранный образ иначе навсегда
+      # запомнил бы адрес машины, на которой его собрали.
+      ZONA_API_BASE_URL: http://localhost:3001
+    ports:
+      - '3100:3100'
+    depends_on:
+      - api
     profiles: ['app']
 
 volumes:
