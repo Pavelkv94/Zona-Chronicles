@@ -42,6 +42,13 @@ import { buildServer } from '../../apps/api/src/server.ts';
 const WORLD_ID = 'world:resume';
 const GENESIS_TIME = '2028-04-26T06:00:00.000Z';
 
+/**
+ * Сколько читать ПОСЛЕ появления искомого события, прежде чем утверждать «пришло ровно это».
+ * Дубли приходят следующим опросом потока; тест, закрывающий соединение сразу, их не видит.
+ * Окно взято с запасом к интервалу опроса: одного лишнего опроса хватает, два дают устойчивость.
+ */
+const GRACE_MS = 1500;
+
 const baseState = (): ObserverProjectionState =>
   initialObserverProjection({
     worldId: WORLD_ID,
@@ -132,19 +139,34 @@ describe('D9 — переподключение не теряет событий
         const timer = setTimeout(() => {
           reject(new Error(`поток не дошёл до id: ${String(until)} за 15 секунд`));
         }, 15_000);
+        /**
+         * ПОСЛЕ появления искомого id читаем ещё окно ожидания, а не рвём поток немедленно.
+         *
+         * Дефект в МОЕЙ первой редакции, найденный ревьюером исполнением. Тест резолвился на
+         * первом же появлении `id: <until>` и закрывал соединение — а дубли приходят СЛЕДУЮЩИМ
+         * опросом, то есть после того, как тест уже всё решил. Мутация «курсор не двигается»
+         * проходила весь набор: 487 contract и 119 integration зелёные. Ревьюер продлил чтение
+         * на 1.5 с при той же мутации и получил
+         *   expected [ 8, 9, 8, 9, 8, 9 ] to deeply equal [ 8, 9 ]
+         * — сервер дублировал, а тест этого не видел, при том что докстринг файла утверждал
+         * обратное: что цикл опроса покрыт.
+         */
+        let grace: NodeJS.Timeout | undefined;
         response.stream().on('data', (chunk: Buffer) => {
           chunks.push(chunk);
-          if (
-            Buffer.concat(chunks)
-              .toString('utf8')
-              .includes(`id: ${String(until)}\n`)
-          ) {
-            clearTimeout(timer);
-            resolve();
+          const seen = Buffer.concat(chunks)
+            .toString('utf8')
+            .includes(`id: ${String(until)}\n`);
+          if (seen && grace === undefined) {
+            grace = setTimeout(() => {
+              clearTimeout(timer);
+              resolve();
+            }, GRACE_MS);
           }
         });
         response.stream().on('error', (error: Error) => {
           clearTimeout(timer);
+          if (grace !== undefined) clearTimeout(grace);
           reject(error);
         });
       });

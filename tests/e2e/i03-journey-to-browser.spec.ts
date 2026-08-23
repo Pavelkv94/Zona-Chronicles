@@ -98,53 +98,112 @@ test('D13: путь начат командой, виден на карте и �
   expect(events.stdout).toContain('agent:rook');
 });
 
-test('D3: зритель не влияет на мир — ни один, ни десять, ни ноль', async ({ page }) => {
-  const before = stack.cli(['world', 'events']).stdout;
+/**
+ * D3 — наблюдатель не влияет на мир.
+ *
+ * ## Почему прежняя редакция ничего не доказывала
+ *
+ * Она сравнивала журнал до и после окна наблюдения и требовала равенства. Ревьюер показал
+ * исполнением, что в этот момент мир СТОИТ: `sequence 0`, в расписании пусто, и `after === before`
+ * выполняется тождественно — при любом поведении наблюдателя, включая вредное. Он же проверил
+ * обратное: если запустить путь перед окном, тест падает, потому что журнал ЗАКОННО растёт. То
+ * есть утверждение теста было «журнал не изменился», а критерий требует «журнал совпадает с
+ * журналом прогона БЕЗ подключений», где оба мира идут.
+ *
+ * ## Как сделано вместо
+ *
+ * Контроль внутри одного мира: два одинаковых пути по одному маршруту, у двух агентов, стартующих
+ * из одной локации. Первый — БЕЗ единого подключения, второй — при десяти открытых SSE. Сравнивается
+ * не «журнал не изменился», а ФОРМА того, что мир произвёл: типы событий, локации, маршрут и
+ * длительность пути в мировом времени. Наблюдатель, влияющий на мир, изменил бы любую из них.
+ *
+ * Критерий называет три количества, и все три здесь есть: ноль (первый путь), десять (второй) и
+ * обрыв всех десяти перед проверкой.
+ */
+test('D3: десять зрителей не меняют того, что произвёл мир', async ({ page }) => {
+  const legOf = (events: string, agentId: string) =>
+    events
+      .split('\n')
+      .filter((line) => line.includes(agentId))
+      .map((line) => {
+        const [, , type, worldTime] = /^\s*(\d+)\s+(\S+)\s+(\S+)/.exec(line) ?? [];
+        return { type, worldTime };
+      });
 
+  const minutesBetween = (from: string, to: string) => (Date.parse(to) - Date.parse(from)) / 60_000;
+
+  const completedFor = (agentId: string) =>
+    stack
+      .cli(['world', 'events'])
+      .stdout.split('\n')
+      .filter((line) => line.includes('journey.completed') && line.includes(agentId)).length;
+
+  /**
+   * Оба плеча идут по ОДНОМУ маршруту из ОДНОЙ локации — иначе сравнивать было бы нечего.
+   *
+   * Агенты выбраны с учётом того, что сценарии делят один мир и идут по порядку: к этому моменту
+   * D13 уже перевёл `agent:rook` на мост, а `agent:finch` стоит там с рождения (seed 42). Первая
+   * редакция брала `route:yard-to-bridge` и падала названной причиной — «маршрут не начинается в
+   * текущей локации актора». Отказ был правильный, неправ был тест.
+   */
+  // ── Плечо A: ни одного подключения. Страница даже не открыта.
+  const legA = stack.cli([
+    'world',
+    'run',
+    '--agent',
+    'agent:rook',
+    '--route',
+    'route:bridge-to-yard',
+  ]);
+  expect(legA.exitCode, legA.stdout).toBe(0);
+  await expect
+    .poll(() => completedFor('agent:rook'), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(2);
+  const afterA = legOf(stack.cli(['world', 'events']).stdout, 'agent:rook').slice(-2);
+
+  // ── Плечо B: тот же маршрут, тот же старт, но при ДЕСЯТИ открытых потоках.
+  const controllers = Array.from({ length: 10 }, () => new AbortController());
+  const opened = await Promise.all(
+    controllers.map(async (controller) => {
+      const response = await fetch(`${stack.apiUrl}/v1/stream`, { signal: controller.signal });
+      expect(response.status).toBe(200);
+      return response;
+    }),
+  );
+  expect(opened).toHaveLength(10);
   await page.goto(stack.webUrl);
   await expect(page.getByText('Поток: живой')).toBeVisible();
 
-  /**
-   * Критерий называет ТРИ количества: ноль, один и десять. Раньше проверялся только один, и это
-   * не придирка к букве: механизм, которым наблюдение могло бы повлиять на мир, — не «страница
-   * шлёт команду» (write-маршрутов нет, это D4), а исчерпание ресурса. Десять одновременных SSE
-   * держат десять открытых ответов; если бы каждый занимал соединение к базе или ронял API,
-   * пострадал бы наблюдатель, а при неудачном устройстве — и сборщик.
-   *
-   * Клиенты открываются НЕ страницами браузера, а прямыми HTTP-запросами: десять вкладок
-   * проверяли бы Playwright, а не сервер.
-   */
-  const controllers = Array.from({ length: 10 }, () => new AbortController());
-  const streams = controllers.map(async (controller) => {
-    const response = await fetch(`${stack.apiUrl}/v1/stream`, { signal: controller.signal });
-    expect(response.status).toBe(200);
-    return response;
-  });
-  const opened = await Promise.all(streams);
-  expect(opened).toHaveLength(10);
+  const legB = stack.cli([
+    'world',
+    'run',
+    '--agent',
+    'agent:finch',
+    '--route',
+    'route:bridge-to-yard',
+  ]);
+  expect(legB.exitCode, legB.stdout).toBe(0);
+  await expect
+    .poll(() => completedFor('agent:finch'), { timeout: 30_000 })
+    .toBeGreaterThanOrEqual(1);
+  const afterB = legOf(stack.cli(['world', 'events']).stdout, 'agent:finch').slice(-2);
 
-  await page.waitForTimeout(5000);
-
-  // И отключаются: критерий требует, чтобы уход клиентов тоже ничего не менял.
   for (const controller of controllers) controller.abort();
-  await page.waitForTimeout(1000);
 
-  // Ноль клиентов: страница закрыта, потоков нет.
-  await page.goto('about:blank');
-  await page.waitForTimeout(2000);
+  // Форма произошедшего совпадает: те же типы в том же порядке.
+  expect(afterB.map((event) => event.type)).toEqual(afterA.map((event) => event.type));
+  expect(afterA.map((event) => event.type)).toEqual(['journey.started', 'journey.completed']);
 
-  // API жив после десяти подключений и десяти обрывов — иначе «не влияет на мир» было бы верно
-  // и бесполезно: смотреть стало бы нечем.
+  // И длительность пути в МИРОВОМ времени одинакова — сорок минут маршрута, а не сколько-то,
+  // зависящее от числа зрителей.
+  const durationA = minutesBetween(afterA[0]!.worldTime!, afterA[1]!.worldTime!);
+  const durationB = minutesBetween(afterB[0]!.worldTime!, afterB[1]!.worldTime!);
+  expect(durationA).toBe(40);
+  expect(durationB).toBe(durationA);
+
+  // Ноль подключений после обрыва: API жив, смотреть по-прежнему есть чем.
   const health = await fetch(`${stack.apiUrl}/health`);
   expect(health.ok).toBe(true);
-  const snapshot = await fetch(`${stack.apiUrl}/v1/world/snapshot`);
-  expect(snapshot.status).toBe(200);
-
-  await page.goto(stack.webUrl);
-  await expect(page.getByText('Карта мира')).toBeVisible();
-
-  const after = stack.cli(['world', 'events']).stdout;
-  expect(after).toBe(before);
 });
 
 test('D12: путь к недостижимой локации отвергается названной причиной', () => {
