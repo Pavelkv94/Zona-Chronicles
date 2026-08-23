@@ -101,11 +101,48 @@ describe('B7 — гранты ролей', () => {
     });
   });
 
-  it('read-only api не имеет доступа к каноническим таблицам (OPS-02)', async () => {
+  /**
+   * I03, D5. Список таблиц выводится ИЗ СХЕМЫ, а не перечисляется в тесте.
+   *
+   * Прежняя редакция называла пять имён, а критерий D5 перечисляет шесть, из которых
+   * `scheduled_actions` и `world_snapshots` в тест не попали: их добавила I02B, а тест писался
+   * до неё. Дефект того же класса, что M-7 чинил для матрицы грантов, только этажом выше —
+   * перечисление устаревает молча, и «api не читает канонические таблицы» оказывается
+   * доказанным для тех таблиц, о которых тест успел узнать.
+   *
+   * Теперь канонической считается любая таблица `public`, не начинающаяся с `projection_` и не
+   * являющаяся журналом миграций. Новая каноническая таблица попадает под проверку в тот же
+   * день, когда появляется, и не требует, чтобы кто-то вспомнил про этот тест.
+   */
+  it('read-only api не имеет доступа НИ К ОДНОЙ канонической таблице (OPS-02, D5)', async () => {
+    const owner = new Client({ connectionString: db.url });
+    await owner.connect();
+    let canonicalTables: string[];
+    try {
+      const rows = await owner.query<{ table_name: string }>(
+        `select table_name
+           from information_schema.tables
+          where table_schema = 'public'
+            and table_type = 'BASE TABLE'
+            and table_name not like 'projection\\_%'
+            and table_name <> 'schema_migrations'
+          order by table_name`,
+      );
+      canonicalTables = rows.rows.map((row) => row.table_name);
+    } finally {
+      await owner.end();
+    }
+
+    // Пустой список означал бы, что запрос выше сломался, а тест прошёл, ничего не проверив.
+    expect(canonicalTables.length).toBeGreaterThanOrEqual(6);
+    expect(canonicalTables).toEqual(
+      expect.arrayContaining(['scheduled_actions', 'world_snapshots']),
+    );
+
     await asRole(db, ROLE_NAMES.api, async (client) => {
-      for (const table of ['world_events', 'agents', 'worlds', 'command_results', 'outbox']) {
+      for (const table of canonicalTables) {
         const message = await expectDenied(client, `select 1 from ${table} limit 1`);
-        expect(message).toMatch(/permission denied/i);
+        expect(message, `таблица ${table}`).toMatch(/permission denied/i);
       }
     });
   });
