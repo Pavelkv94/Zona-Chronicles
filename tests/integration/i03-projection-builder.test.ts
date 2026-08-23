@@ -5,7 +5,12 @@
  * транзакцию нельзя проверить на подделке.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { RUNTIME_ID_PREFIXES, type Command } from '../../packages/contracts/src/index.ts';
+import {
+  RUNTIME_ID_PREFIXES,
+  decodeObserverWorldSnapshot,
+  isValidationFailure,
+  type Command,
+} from '../../packages/contracts/src/index.ts';
 import { DerivedIdFactory } from '../../packages/domain/src/index.ts';
 import type { DatabaseConnection } from '../../packages/persistence/src/database.ts';
 import { executeCommand } from '../../packages/persistence/src/command-handler.ts';
@@ -144,6 +149,16 @@ describe('D6/D7 — сборка observer projection', () => {
     const canonicalState = await loadWorldState(canonical, FIXTURE_WORLD_ID);
 
     expect(snapshot).not.toBeNull();
+
+    /**
+     * D8 требует, чтобы ответ НЕ содержал ни одного канонического поля, и ссылается на
+     * contract-тест. Тот действительно вызывает `decodeObserverWorldSnapshot` — но на ЗАГЛУШКЕ
+     * порта, то есть проверяет форму выдуманного объекта. Схема с `additionalProperties: false`
+     * ловит лишнее поле только там, где к ней приложены НАСТОЯЩИЕ данные из проекции: лишнее
+     * поле придёт из колонки таблицы, а не из литерала в тесте.
+     */
+    const decoded = decodeObserverWorldSnapshot(snapshot);
+    expect(isValidationFailure(decoded) ? decoded.issues : []).toEqual([]);
     expect(snapshot!.world_time).toBe(canonicalState!.worldTime);
     expect(snapshot!.nodes.length).toBeGreaterThan(0);
     expect(snapshot!.edges.length).toBeGreaterThan(0);
