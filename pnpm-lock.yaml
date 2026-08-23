@@ -185,12 +185,6 @@ importers:
       '@zona/contracts':
         specifier: workspace:*
         version: link:../contracts
-      '@zona/domain':
-        specifier: workspace:*
-        version: link:../domain
-      '@zona/persistence':
-        specifier: workspace:*
-        version: link:../persistence
 
   packages/representation:
     dependencies:

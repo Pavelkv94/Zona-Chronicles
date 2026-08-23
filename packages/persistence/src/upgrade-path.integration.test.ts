@@ -207,7 +207,13 @@ describe('B1 — восстановление позиций PRNG при обн�
    * (внутренне непротиворечивый с неверным значением) этого не видят.
    */
   it('B1: позиции PRNG мира прежней поставки восстанавливаются из его снимка, а не обнуляются', async () => {
-    const previous = migrations.slice(0, -1);
+    // «Прежняя поставка» здесь — это состояние ДО 0010, а не «весь реестр без последней». Разница
+    // проявилась, как только за 0010 появилась 0011: `slice(0, -1)` стал включать сам backfill,
+    // и тест проверял бы, что уже починенное остаётся починенным. Привязка к рубежу по ID, а не
+    // к длине массива — иначе каждая новая миграция незаметно обессмысливала бы этот тест.
+    const backfillIndex = migrations.findIndex((migration) => migration.id === '0010');
+    expect(backfillIndex).toBeGreaterThan(0);
+    const previous = migrations.slice(0, backfillIndex);
     await runMigrations({ db, migrations: previous, logger: SILENT });
     await ensureApplicationRoles(db, TEST_ROLE_PASSWORD);
     await writePreviousReleaseWorld(db);

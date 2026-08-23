@@ -85,6 +85,12 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'backfill-prng-positions',
     checksum: '47f41675ecaa496103f170ef27d9f961dc2480e377a8d96d9c035b8ec6f057e5',
   },
+  // I03: таблицы observer projection. Отдельные от канонических намеренно — см. докстринг 0011.
+  {
+    id: '0011',
+    name: 'observer-projection',
+    checksum: '7d57e56d7605cc0a5080a6121de5ea51303bc39b0fd309da5726db7b03da0e58',
+  },
 ];
 
 describe('реестр миграций', () => {

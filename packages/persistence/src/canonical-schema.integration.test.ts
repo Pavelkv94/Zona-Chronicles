@@ -42,6 +42,14 @@ describe('B1 — канонические таблицы I02A', () => {
         'command_results',
         'locations',
         'outbox',
+        // I03: таблицы observer projection. Они не канонические — их содержимое выводится из
+        // журнала и пересобирается (D7), — но живут в той же базе, поэтому обязаны быть в этом
+        // списке: тест ловит НЕЗАЯВЛЕННУЮ таблицу, а не «таблицу не того сорта».
+        'projection_agents',
+        'projection_events',
+        'projection_locations',
+        'projection_routes',
+        'projection_state',
         'routes',
         'scheduled_actions',
         'schema_migrations',

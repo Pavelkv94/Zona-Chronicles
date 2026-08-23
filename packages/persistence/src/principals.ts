@@ -61,8 +61,26 @@ export const GRANT_MATRIX: Readonly<Record<RoleName, Readonly<Record<string, rea
       locations: ['SELECT'],
       routes: ['SELECT'],
       outbox: ['SELECT', 'UPDATE'],
+      // I03: builder ВЛАДЕЕТ проекцией — пишет её и пересобирает (D7). DELETE нужен именно для
+      // пересборки: проекция не источник факта, и единственный способ её починить — собрать
+      // заново, а не править строки.
+      projection_state: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+      projection_locations: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+      projection_routes: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+      projection_agents: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
+      projection_events: ['SELECT', 'INSERT', 'DELETE'],
     },
-    [ROLE_NAMES.api]: {},
+    // I03, D5: observer path получает ТОЛЬКО чтение проекции. Канонических таблиц в этом списке
+    // нет и быть не может — попытка их прочитать обязана отвергаться правами, а не отсутствием
+    // кода. Пустой список до I03 означал «api не ходит в базу вовсе»; теперь он ходит, и граница
+    // стала проверяемой, а не гипотетической.
+    [ROLE_NAMES.api]: {
+      projection_state: ['SELECT'],
+      projection_locations: ['SELECT'],
+      projection_routes: ['SELECT'],
+      projection_agents: ['SELECT'],
+      projection_events: ['SELECT'],
+    },
   };
 
 export interface EnsureRolesResult {

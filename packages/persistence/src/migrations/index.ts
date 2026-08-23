@@ -9,6 +9,7 @@ import { schedulerAndSnapshotsMigration } from './0007-scheduler-and-snapshots.t
 import { scheduledActionFailureMigration } from './0008-scheduled-action-failure.ts';
 import { worldPrngPositionsMigration } from './0009-world-prng-positions.ts';
 import { backfillPrngPositionsMigration } from './0010-backfill-prng-positions.ts';
+import { observerProjectionMigration } from './0011-observer-projection.ts';
 
 export type { Migration } from './types.ts';
 
@@ -32,4 +33,5 @@ export const migrations: readonly Migration[] = [
   scheduledActionFailureMigration,
   worldPrngPositionsMigration,
   backfillPrngPositionsMigration,
+  observerProjectionMigration,
 ];
