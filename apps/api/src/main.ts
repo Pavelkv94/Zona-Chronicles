@@ -42,6 +42,7 @@ async function main(): Promise<void> {
     schemaVersion: ENVELOPE_SCHEMA_VERSION,
     rulesVersion: RULES_VERSION_UNKNOWN,
     uptime: processUptime,
+    allowedOrigins: config.allowedOrigins,
     observer: {
       worldId: config.worldId,
       observer: {

@@ -1,0 +1,149 @@
+:root {
+  color-scheme: dark;
+  --bg: #12140f;
+  --panel: #1b1e17;
+  --line: #2f3527;
+  --text: #d8dbcf;
+  --muted: #8a9179;
+  --accent: #b9c46a;
+  --travel: #d9a441;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font:
+    15px/1.5 ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+}
+
+.shell {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  gap: 16px;
+  padding: 16px;
+  min-height: 100vh;
+}
+
+@media (max-width: 900px) {
+  .shell {
+    grid-template-columns: 1fr;
+  }
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  min-width: 0;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.status b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.node {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+
+.node-name {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.node-desc {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 2px;
+}
+
+.node-agents {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agent {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 13px;
+}
+
+.agent-traveling {
+  border-color: var(--travel);
+  color: var(--travel);
+}
+
+.edges {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.edges div {
+  margin-top: 4px;
+}
+
+.feed {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.feed li {
+  border-bottom: 1px solid var(--line);
+  padding: 8px 0;
+  font-size: 13px;
+}
+
+.feed li:last-child {
+  border-bottom: none;
+}
+
+.feed-time {
+  color: var(--muted);
+}
+
+.feed-type {
+  color: var(--accent);
+}
+
+.notice {
+  color: var(--travel);
+  font-size: 13px;
+  margin-bottom: 10px;
+}

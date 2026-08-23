@@ -39,6 +39,15 @@ export type Config = {
   readonly projectionDatabaseUrl: string;
   /** Мир, который показывает этот экземпляр API. */
   readonly worldId: string;
+  /**
+   * Origin-ы, которым разрешено читать API из браузера (I03).
+   *
+   * Список ЯВНЫЙ, а не `*`. Публичные данные мира и так доступны любому, кто откроет адрес, —
+   * но `*` означал бы, что любая страница в интернете может читать этот API от имени браузера
+   * посетителя, и в тот день, когда у API появится хоть какая-то персонализация, запрет придётся
+   * вводить задним числом. Дешевле объявить сейчас.
+   */
+  readonly allowedOrigins: readonly string[];
 };
 
 const LOCAL_DEPLOYMENT_ID = 'local-dev-unset';
@@ -49,6 +58,8 @@ const DEFAULTS = {
   logLevel: 'info' as LogLevel,
   nodeEnv: 'development' as NodeEnv,
   worldId: 'world:prototype',
+  /** Экран наблюдателя в локальной разработке (`pnpm web`). */
+  allowedOrigins: ['http://localhost:3100'] as readonly string[],
 };
 
 const MIN_PORT = 1;
@@ -144,6 +155,26 @@ function parseProjectionDatabaseUrl(raw: string | undefined): string {
   return raw;
 }
 
+/**
+ * Разбирает список origin-ов через запятую. Пустое значение — дефолт для локальной разработки,
+ * а не «разрешить всё»: молчаливый `*` в конфиге — классический способ уехать в поставку.
+ */
+function parseAllowedOrigins(raw: string | undefined): readonly string[] {
+  if (raw === undefined || raw.trim().length === 0) return DEFAULTS.allowedOrigins;
+  const origins = raw
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+  if (origins.length === 0) return DEFAULTS.allowedOrigins;
+  if (origins.includes('*')) {
+    throw new Error(
+      'Invalid config: ALLOWED_ORIGINS не принимает "*". Перечислите origin-ы явно — ' +
+        'подстановочный список однажды уедет в поставку вместе с конфигом.',
+    );
+  }
+  return origins;
+}
+
 export function parseConfig(env: Record<string, string | undefined>): Config {
   const nodeEnv = parseNodeEnv(env['NODE_ENV']);
   return {
@@ -155,6 +186,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     projectionDatabaseUrl: parseProjectionDatabaseUrl(env['PROJECTION_DATABASE_URL']),
     worldId:
       (env['WORLD_ID']?.trim() ?? '').length > 0 ? env['WORLD_ID']!.trim() : DEFAULTS.worldId,
+    allowedOrigins: parseAllowedOrigins(env['ALLOWED_ORIGINS']),
   };
 }
 

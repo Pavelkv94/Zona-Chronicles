@@ -9,3 +9,7 @@ docs/
 ops/Dockerfile
 # Машинно-локальный файл Claude Code: его наличие не должно делать gate красным.
 .claude/settings.local.json
+
+# Сборка Next.js — вывод, не исходник (I03).
+**/.next/
+**/next-env.d.ts

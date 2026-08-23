@@ -61,6 +61,10 @@ const PACKAGES: Record<string, PackagePolicy> = {
   '@zona/representation': { workspace: ['@zona/contracts', '@zona/projections'] },
   '@zona/testkit': { workspace: ['@zona/contracts', '@zona/domain'] },
   '@zona/api': { workspace: ['@zona/contracts', '@zona/projections'] },
+  // I03: экран знает только публичный КОНТРАКТ и адрес API. Ни проекций, ни persistence: данные
+  // приходят по HTTP, поэтому у браузерного слоя нет даже теоретической возможности прочитать
+  // канонические таблицы — их для него не существует ни в типах, ни в правах, ни в сети.
+  '@zona/web': { workspace: ['@zona/contracts'] },
   '@zona/worker': {
     workspace: [
       '@zona/contracts',

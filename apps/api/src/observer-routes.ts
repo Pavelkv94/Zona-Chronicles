@@ -150,7 +150,20 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
       return await reply.code(400).send({ error: 'invalid_last_event_id' });
     }
 
+    // Заголовки, уже поставленные хуками Fastify (CORS в первую очередь), ПЕРЕНОСЯТСЯ в сырой
+    // ответ. Первая редакция писала только свои — и `writeHead` затирал всё остальное, из-за чего
+    // на потоке не оказывалось `Access-Control-Allow-Origin`: браузер молча отказывался
+    // подключаться, а обычные `GET` при этом работали. Найдено живым прогоном: экран показывал
+    // мир, но «Поток: нет», и в консоли не было ничего, что указывало бы на причину.
+    const inheritedHeaders: Record<string, string> = {};
+    for (const [name, value] of Object.entries(reply.getHeaders())) {
+      if (typeof value === 'string') inheritedHeaders[name] = value;
+      else if (Array.isArray(value)) inheritedHeaders[name] = value.join(', ');
+      else if (typeof value === 'number') inheritedHeaders[name] = String(value);
+    }
+
     reply.raw.writeHead(200, {
+      ...inheritedHeaders,
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',

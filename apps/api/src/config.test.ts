@@ -17,6 +17,7 @@ describe('parseConfig', () => {
     expect(config).toEqual({
       projectionDatabaseUrl: PROJECTION_DB,
       worldId: 'world:prototype',
+      allowedOrigins: ['http://localhost:3100'],
       port: 3000,
       host: '0.0.0.0',
       logLevel: 'info',
@@ -38,6 +39,7 @@ describe('parseConfig', () => {
     expect(config).toEqual({
       projectionDatabaseUrl: PROJECTION_DB,
       worldId: 'world:prototype',
+      allowedOrigins: ['http://localhost:3100'],
       port: 4100,
       host: '127.0.0.1',
       logLevel: 'debug',
@@ -83,6 +85,7 @@ describe('parseConfig', () => {
     expect(config).toEqual({
       projectionDatabaseUrl: PROJECTION_DB,
       worldId: 'world:prototype',
+      allowedOrigins: ['http://localhost:3100'],
       port: 3000,
       host: '0.0.0.0',
       logLevel: 'info',
@@ -111,6 +114,39 @@ describe('parseConfig', () => {
       expect(() => parseConfig({ DATABASE_URL: 'postgres://zona:pw@localhost:5432/zona' })).toThrow(
         /PROJECTION_DATABASE_URL/,
       );
+    });
+  });
+
+  describe('I03: CORS перечисляется явно', () => {
+    it('список origin-ов разбирается через запятую', () => {
+      const config = parseConfig({
+        PROJECTION_DATABASE_URL: PROJECTION_DB,
+        ALLOWED_ORIGINS: 'https://zona.example, https://alt.example',
+      });
+      expect(config.allowedOrigins).toEqual(['https://zona.example', 'https://alt.example']);
+    });
+
+    /**
+     * Подстановочный список — классический способ уехать в поставку: он выглядит как настройка
+     * разработчика и работает как разрешение всему интернету читать API от имени посетителя.
+     */
+    it('"*" отвергается названной причиной, а не принимается как «все»', () => {
+      expect(() =>
+        parseConfig({ PROJECTION_DATABASE_URL: PROJECTION_DB, ALLOWED_ORIGINS: '*' }),
+      ).toThrow(/ALLOWED_ORIGINS/);
+      expect(() =>
+        parseConfig({
+          PROJECTION_DATABASE_URL: PROJECTION_DB,
+          ALLOWED_ORIGINS: 'https://ok.example,*',
+        }),
+      ).toThrow(/ALLOWED_ORIGINS/);
+    });
+
+    it('пустое значение даёт локальный дефолт, а не «разрешить всё»', () => {
+      expect(
+        parseConfig({ PROJECTION_DATABASE_URL: PROJECTION_DB, ALLOWED_ORIGINS: '  ' })
+          .allowedOrigins,
+      ).toEqual(['http://localhost:3100']);
     });
   });
 

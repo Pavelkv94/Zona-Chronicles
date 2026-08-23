@@ -8,6 +8,7 @@
  */
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Type, type TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
+import cors from '@fastify/cors';
 import { registerObserverRoutes, type ObserverRoutesOptions } from './observer-routes.ts';
 
 /** Инъектированный источник uptime — тест не зависит от wall clock. */
@@ -29,6 +30,11 @@ export type BuildServerDeps = {
    * «мир ещё не создан».
    */
   readonly observer?: ObserverRoutesOptions;
+  /**
+   * Origin-ы браузера, которым разрешено читать API. Пусто — CORS не включается вовсе: сервер,
+   * отвечающий на межсайтовые запросы «по умолчанию», однажды окажется в поставке именно таким.
+   */
+  readonly allowedOrigins?: readonly string[];
 };
 
 const HealthResponseSchema = Type.Object(
@@ -66,6 +72,17 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
   app.get('/ready', { schema: { response: { 200: ReadyResponseSchema } } }, () => ({
     status: 'ready' as const,
   }));
+
+  if (deps.allowedOrigins !== undefined && deps.allowedOrigins.length > 0) {
+    // Только GET: список методов перечислен ЯВНО и совпадает с тем, что API вообще умеет (D4).
+    // Разрешить POST «на будущее» значило бы объявить наружу возможность, которой нет, и первым
+    // об этом расхождении узнал бы тот, кто попробует.
+    void app.register(cors, {
+      origin: [...deps.allowedOrigins],
+      methods: ['GET'],
+      credentials: false,
+    });
+  }
 
   if (deps.observer !== undefined) {
     registerObserverRoutes(app, deps.observer);
