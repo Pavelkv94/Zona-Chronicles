@@ -91,6 +91,12 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'observer-projection',
     checksum: '7d57e56d7605cc0a5080a6121de5ea51303bc39b0fd309da5726db7b03da0e58',
   },
+  // I03, M-C: мир записывает профиль выполнения, под которым квалифицирован.
+  {
+    id: '0012',
+    name: 'world-qualified-profile',
+    checksum: '2d5f8080b1b983f34247954218ca662786b0b941eaeef2c5070d8a6f3b816010',
+  },
 ];
 
 describe('реестр миграций', () => {

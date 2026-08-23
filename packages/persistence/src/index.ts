@@ -114,3 +114,9 @@ export {
 } from './migration-runner.ts';
 
 export const PACKAGE_NAME = '@zona/persistence' as const;
+
+export {
+  UnqualifiedCanonicalWriterError,
+  qualifyCanonicalWriter,
+  setWorldQualifiedProfile,
+} from './canonical-writer.ts';

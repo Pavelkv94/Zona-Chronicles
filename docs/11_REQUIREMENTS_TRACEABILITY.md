@@ -84,7 +84,8 @@
 | Identity provider, admin roles и session policy | headless/local development | до начала I17 hardening |
 | SLO, RPO/RTO, alert owners и retention тестировщиков | I00–I16 с provisional telemetry | до набора участников I17 |
 | Hosted release builder, signing/provenance mechanism и vulnerability patch SLA | локальные artifacts | до первого внешнего deployment в I17 |
-| Симметричная проверка профиля на пути ЗАПИСИ (durable «квалифицированный профиль мира») | локальную работу на одной версии Node | I03: сегодня процесс с неквалифицированным профилем ПИШЕТ канонические события, а replay — единственный детектор — в этот момент не запускается (M-C). Процедура §7 исполнима через `--accept-unqualified-profile`, но сама compatibility suite не написана |
+| Compatibility suite §7 (квалификация нового runtime прогоном regression bank) | локальную работу на одной версии Node | I04: проверка профиля теперь стоит и на чтении снимка, и на пути записи (M-C закрыт в I03), но САМА процедура квалификации не написана — `--accept-unqualified-profile` даёт вход в неё, а не заменяет |
+| Обязательный токен квалификации в сигнатуре `executeCommand` | двух писателей, каждый из которых проходит шлюз | I04, когда писателей станет больше двух: сегодня контроль — шлюз, а не замок |
 | Коэффициент скорости мира: сколько мирового времени за секунду реального | headless-разработку через `world tick --advance` | I03, вместе с worker loop; механизм задан решением владельца, число — нет |
 | Performance/capacity budgets для 30–50 агентов | функциональную разработку I00–I14 | конец I15A, до I15B |
 | Sampling/consent/exclusion/analysis plan и достаточный размер I17 проверки | I00–I16 | до набора участников I17 |

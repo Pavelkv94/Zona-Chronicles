@@ -35,7 +35,10 @@ import {
   runMigrations,
   UnqualifiedRuntimeProfileError,
   repairWorldPrngPositions,
+  UnqualifiedCanonicalWriterError,
+  qualifyCanonicalWriter,
   runWorldTick,
+  setWorldQualifiedProfile,
   writeSnapshot,
   applyGrants,
   ensureApplicationRoles,
@@ -226,6 +229,10 @@ export const runWorldInitCommand = async (
   //    `seedWorld` в этом же процессе. Сборщику проекции она нужна, а он живёт в worker-е, и
   //    приложения не имеют права импортировать друг друга.
   // 3. `world replay` перестаёт нуждаться в особом случае «снимков не было, восстановим из seed».
+  // Мир квалифицируется профилем ТОГО процесса, который его создал (M-C). Дальше любой писатель
+  // обязан пройти `qualifyCanonicalWriter` и совпасть с этим профилем.
+  await setWorldQualifiedProfile(db, state.worldId, currentDeterministicRuntimeProfile());
+
   await writeSnapshot(db, {
     worldId: state.worldId,
     lastSequence: state.sequence,
@@ -266,6 +273,29 @@ const freshCommandId = (): string =>
   // `apps/cli` — императивная оболочка, ей случайность разрешена (в отличие от домена).
   new DerivedIdFactory(randomUUID()).next(RUNTIME_ID_PREFIXES.command);
 
+/**
+ * Отказ команде, если процесс не квалифицирован для мира (M-C). `null` — можно писать.
+ *
+ * Возвращает результат, а не бросает: для оператора это НЕ сбой программы, а состояние мира,
+ * и он обязан прочитать причину, а не стек. Код возврата 3 — тот же, что у `world replay` при
+ * несовместимом профиле: «сверка не выполнена / писать нельзя», в отличие от 1 («нарушено»).
+ */
+const refuseUnqualifiedWriter = async (
+  db: DatabaseConnection,
+  worldId: string,
+  command: string,
+): Promise<CliResult | null> => {
+  try {
+    await qualifyCanonicalWriter(db, worldId, currentDeterministicRuntimeProfile());
+    return null;
+  } catch (error) {
+    if (error instanceof UnqualifiedCanonicalWriterError) {
+      return { stdout: `${command}: ${error.message}\n`, exitCode: 3 };
+    }
+    throw error;
+  }
+};
+
 export const runWorldRunCommand = async (
   db: DatabaseConnection,
   args: readonly string[],
@@ -283,6 +313,12 @@ export const runWorldRunCommand = async (
       exitCode: 2,
     };
   }
+
+  // M-C: писать канонические события можно только под квалифицированным профилем. Проверка
+  // ОДИН РАЗ на команду CLI, а не на каждое обращение к базе: CLI — короткоживущий процесс,
+  // и профиль внутри одного запуска не меняется.
+  const unqualified = await refuseUnqualifiedWriter(db, state.worldId, 'world run');
+  if (unqualified !== null) return unqualified;
 
   const commandId = flag(args, '--command-id') ?? freshCommandId();
   const command: Command = {
@@ -418,6 +454,9 @@ export const runWorldTickCommand = async (
       exitCode: 2,
     };
   }
+
+  const unqualified = await refuseUnqualifiedWriter(db, state.worldId, 'world tick');
+  if (unqualified !== null) return unqualified;
 
   const horizonResult = parseHorizon(args, state.worldTime);
   if (horizonResult.kind === 'error') {

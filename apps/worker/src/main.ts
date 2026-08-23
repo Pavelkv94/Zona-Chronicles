@@ -17,6 +17,7 @@ import {
   createDatabase,
   loadWorldState,
   parseDatabaseConnectionUrl,
+  qualifyCanonicalWriter,
   runWorldTick,
 } from '@zona/persistence';
 import {
@@ -128,6 +129,11 @@ async function main(): Promise<void> {
         'несуществующий мир нечем, и притворяться работающим процессу нельзя.',
     );
   }
+
+  // M-C: worker — второй канонический писатель, и он проходит тот же шлюз, что CLI. Проверка
+  // при старте: профиль процесса не меняется, пока процесс жив, а отказ на старте видно сразу,
+  // тогда как отказ на первом же тике выглядел бы как «мир почему-то не идёт».
+  await qualifyCanonicalWriter(db, config.worldId, worldRuntimeProfile());
 
   const workerOwner = `worker:${config.deploymentId}:${String(process.pid)}`;
 

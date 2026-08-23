@@ -43,6 +43,11 @@ export interface WorldsTable {
    * канонический порядок ключей, и полагаться на обратное чтение байтов нельзя (ADR-010 §10.2).
    */
   prng_stream_positions: ColumnType<unknown, string, string>;
+  /**
+   * Профиль выполнения, под которым мир квалифицирован (I03, M-C). `null` — мир создан до
+   * контроля и снимка не имел: писатель обязан отказаться, а не принять молча.
+   */
+  qualified_runtime_profile: ColumnType<unknown, string | null, string | null>;
   created_at: ColumnType<Date, Date, Date>;
 }
 
@@ -161,6 +166,11 @@ export interface WorldSnapshotsTable {
   world_time: string;
   checksum: string;
   prng_stream_positions: ColumnType<unknown, string, string>;
+  /**
+   * Профиль выполнения, под которым мир квалифицирован (I03, M-C). `null` — мир создан до
+   * контроля и снимка не имел: писатель обязан отказаться, а не принять молча.
+   */
+  qualified_runtime_profile: ColumnType<unknown, string | null, string | null>;
   canonical_state: ColumnType<unknown, string, string>;
   deterministic_runtime_profile: ColumnType<unknown, string, string>;
   created_at: ColumnType<Date, Date, Date>;
