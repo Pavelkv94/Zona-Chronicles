@@ -98,14 +98,49 @@ test('D13: путь начат командой, виден на карте и �
   expect(events.stdout).toContain('agent:rook');
 });
 
-test('D3: зритель не влияет на мир — открытая страница не порождает событий', async ({ page }) => {
+test('D3: зритель не влияет на мир — ни один, ни десять, ни ноль', async ({ page }) => {
   const before = stack.cli(['world', 'events']).stdout;
 
   await page.goto(stack.webUrl);
   await expect(page.getByText('Поток: живой')).toBeVisible();
-  // Держим страницу открытой заметное время: если бы наблюдение двигало мир, событий бы прибыло.
+
+  /**
+   * Критерий называет ТРИ количества: ноль, один и десять. Раньше проверялся только один, и это
+   * не придирка к букве: механизм, которым наблюдение могло бы повлиять на мир, — не «страница
+   * шлёт команду» (write-маршрутов нет, это D4), а исчерпание ресурса. Десять одновременных SSE
+   * держат десять открытых ответов; если бы каждый занимал соединение к базе или ронял API,
+   * пострадал бы наблюдатель, а при неудачном устройстве — и сборщик.
+   *
+   * Клиенты открываются НЕ страницами браузера, а прямыми HTTP-запросами: десять вкладок
+   * проверяли бы Playwright, а не сервер.
+   */
+  const controllers = Array.from({ length: 10 }, () => new AbortController());
+  const streams = controllers.map(async (controller) => {
+    const response = await fetch(`${stack.apiUrl}/v1/stream`, { signal: controller.signal });
+    expect(response.status).toBe(200);
+    return response;
+  });
+  const opened = await Promise.all(streams);
+  expect(opened).toHaveLength(10);
+
   await page.waitForTimeout(5000);
-  await page.reload();
+
+  // И отключаются: критерий требует, чтобы уход клиентов тоже ничего не менял.
+  for (const controller of controllers) controller.abort();
+  await page.waitForTimeout(1000);
+
+  // Ноль клиентов: страница закрыта, потоков нет.
+  await page.goto('about:blank');
+  await page.waitForTimeout(2000);
+
+  // API жив после десяти подключений и десяти обрывов — иначе «не влияет на мир» было бы верно
+  // и бесполезно: смотреть стало бы нечем.
+  const health = await fetch(`${stack.apiUrl}/health`);
+  expect(health.ok).toBe(true);
+  const snapshot = await fetch(`${stack.apiUrl}/v1/world/snapshot`);
+  expect(snapshot.status).toBe(200);
+
+  await page.goto(stack.webUrl);
   await expect(page.getByText('Карта мира')).toBeVisible();
 
   const after = stack.cli(['world', 'events']).stdout;
