@@ -1,0 +1,54 @@
+{
+  "iteration_id": "I03",
+  "base_commit": "155eaca",
+  "//": "Карта владения путями I03. Реализация I03 велась lead-ом в общем дереве (см. PLAN §8, шаги 1-6), поэтому здесь объявлены только задачи ВЕРИФИКАЦИИ. Две роли верификации получают РАЗНЫЕ task_id, а не общий: скрипт worktree выводит каталог и ветку из task_id, и общий id заставил бы обе сессии делить одно дерево — ровно то, что запрещено F5-3.",
+  "lead_paths": [
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "ops/**",
+    "tests/**",
+    "scripts/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "tsconfig.depcruise.json",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".gitignore",
+    ".nvmrc",
+    ".tool-versions",
+    ".dockerignore",
+    "docker-compose.yml",
+    "eslint.config.mjs",
+    ".dependency-cruiser.cjs",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "tools/**",
+    "security/**"
+  ],
+  "tasks": [
+    {
+      "task_id": "I03-VERIFY-TESTS",
+      "owner_role": "reviewer",
+      "//": "Независимая проверка тестов и кода: ложноположительные тесты, пропущенные отказы, идемпотентность, детерминизм.",
+      "write_paths": [],
+      "allow_protected_paths": [],
+      "agent_types": ["i03-test-reviewer", "test-reviewer", "reviewer"]
+    },
+    {
+      "task_id": "I03-VERIFY-ARCH",
+      "owner_role": "reviewer",
+      "//": "Независимый аудит границ, событийной семантики, миграций, детерминизма и replay.",
+      "write_paths": [],
+      "allow_protected_paths": [],
+      "agent_types": ["i03-arch-reviewer", "architecture-reviewer", "reviewer"]
+    }
+  ]
+}
