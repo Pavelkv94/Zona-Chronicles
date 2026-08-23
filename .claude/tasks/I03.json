@@ -40,12 +40,7 @@
       "//": "Независимая проверка тестов и кода: ложноположительные тесты, пропущенные отказы, идемпотентность, детерминизм.",
       "write_paths": [],
       "allow_protected_paths": [],
-      "agent_types": [
-        "i03-test-reviewer",
-        "i03-r2-projections",
-        "test-reviewer",
-        "reviewer"
-      ]
+      "agent_types": ["i03-test-reviewer", "i03-r2-projections", "test-reviewer", "reviewer"]
     },
     {
       "task_id": "I03-VERIFY-ARCH",
@@ -53,12 +48,7 @@
       "//": "Независимый аудит границ, событийной семантики, миграций, детерминизма и replay.",
       "write_paths": [],
       "allow_protected_paths": [],
-      "agent_types": [
-        "i03-arch-reviewer",
-        "i03-r2-boundaries",
-        "architecture-reviewer",
-        "reviewer"
-      ]
+      "agent_types": ["i03-arch-reviewer", "i03-r2-boundaries", "architecture-reviewer", "reviewer"]
     }
   ]
 }

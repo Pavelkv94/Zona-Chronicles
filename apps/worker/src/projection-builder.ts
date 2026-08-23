@@ -20,7 +20,6 @@ import {
   loadOutboxEventsAfter,
   loadSnapshotAt,
   loadWorldContent,
-  loadWorldState,
   type DatabaseConnection,
 } from '@zona/persistence';
 import type { DeterministicRuntimeProfile, Snapshot } from '@zona/contracts';

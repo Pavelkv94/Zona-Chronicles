@@ -410,7 +410,10 @@ export const loadWorldContent = async (
       id: row.route_id,
       fromLocationId: row.from_location_id,
       toLocationId: row.to_location_id,
-      travelMinutes: requireSafeInteger(row.travel_minutes, `routes.travel_minutes(${row.route_id})`),
+      travelMinutes: requireSafeInteger(
+        row.travel_minutes,
+        `routes.travel_minutes(${row.route_id})`,
+      ),
     })),
     agentNames: Object.fromEntries(agents.map((row) => [row.agent_id, row.name])),
   };
