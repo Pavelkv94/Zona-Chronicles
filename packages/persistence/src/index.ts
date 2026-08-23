@@ -53,7 +53,12 @@ export type { ReplayResult } from './replay.ts';
 export { replayFromSnapshot, replayWorld } from './replay.ts';
 
 export type { LoadSnapshotContext, SnapshotContent } from './snapshot-store.ts';
-export { loadLatestSnapshot, loadSnapshotAt, writeSnapshot } from './snapshot-store.ts';
+export {
+  UnqualifiedRuntimeProfileError,
+  loadLatestSnapshot,
+  loadSnapshotAt,
+  writeSnapshot,
+} from './snapshot-store.ts';
 
 export type { PersistentRandomSourceOptions } from './prng-positions.ts';
 export { PersistentRandomSource } from './prng-positions.ts';

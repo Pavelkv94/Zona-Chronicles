@@ -15,6 +15,7 @@ import {
   parseInstant,
   requireChecksum,
   type Command,
+  type Snapshot,
 } from '@zona/contracts';
 import { randomUUID } from 'node:crypto';
 import { DerivedIdFactory, testRulesetVersions } from '@zona/domain';
@@ -32,6 +33,7 @@ import {
   parseDatabaseConnectionUrl,
   replayFromSnapshot,
   runMigrations,
+  UnqualifiedRuntimeProfileError,
   repairWorldPrngPositions,
   runWorldTick,
   writeSnapshot,
@@ -579,8 +581,10 @@ export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<C
  * побочный эффект verification-команды.
  *
  * Снимков ещё может не быть вовсе (`world snapshot` ни разу не запускали) — тогда replay
- * восстанавливает GENESIS-снимок в ПАМЯТИ (см. {@link genesisPrngStreamPositions}), тем же путём,
- * каким его строил бы `world init`, и не пишет его в базу. Демо PLAN §2 заканчивается голым
+ * восстанавливает GENESIS-снимок в ПАМЯТИ через `seedWorld(meta.seed)`, тем же путём, каким его
+ * строил бы `world init`, и не пишет его в базу. Прежняя редакция ссылалась здесь на
+ * `genesisPrngStreamPositions` — функцию, удалённую тем же коммитом, который эту ссылку оставил
+ * (m-2 второго раунда). Ровно тот класс, что M6: ссылка на несуществующее хуже её отсутствия. Демо PLAN §2 заканчивается голым
  * `pnpm world replay` без предшествующего `world snapshot` именно поэтому — команде есть от чего
  * реплеить с первого дня жизни мира.
  */
@@ -598,10 +602,28 @@ export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<Cli
   }
 
   const bundles = currentBundles();
-  const stored = await loadLatestSnapshot(db, state.worldId, {
-    bundles,
-    runtimeProfile: currentDeterministicRuntimeProfile(),
-  });
+  // m-5 второго раунда: несовместимость профиля — НЕ то же, что расхождение checksum. Первое
+  // означает «SIM-01 не проверен, текущий runtime не квалифицирован» (§7), второе — «SIM-01
+  // нарушен, мир и журнал разошлись». Раньше оператор получал на оба один и тот же exit 1 и
+  // стек вместо сообщения.
+  let stored: Snapshot | null;
+  try {
+    stored = await loadLatestSnapshot(db, state.worldId, {
+      bundles,
+      runtimeProfile: currentDeterministicRuntimeProfile(),
+    });
+  } catch (error) {
+    if (error instanceof UnqualifiedRuntimeProfileError) {
+      return {
+        stdout:
+          `world replay: сверка НЕ ВЫПОЛНЕНА — профиль выполнения не квалифицирован.\n${error.message}\n` +
+          'Это не расхождение мира с журналом: мир цел, но текущий runtime ещё не прошёл ' +
+          'compatibility suite (§7 07_MVP_MECHANICS_SPEC).\n',
+        exitCode: 3,
+      };
+    }
+    throw error;
+  }
   const bootstrapped = stored === null;
   const snapshot = stored ?? seedWorld(meta.seed).snapshot;
 

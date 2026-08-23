@@ -105,6 +105,8 @@ const runScenario = async (
     seed: 1,
     state: buildState(travelMinutes),
     versions: testRulesetVersions(),
+    // Мир собран вручную, розыгрышей не было: позиции пусты ЯВНО (поле обязательное, см. B1).
+    prngStreamPositions: {},
     content: {
       locations: [
         { id: 'loc:a', name: 'A', description: 'A' },
@@ -201,6 +203,8 @@ describe('C12/C4 — монотонность времени и стабильн
       seed: 1,
       state: buildState([15, 15, 15, 15]),
       versions: testRulesetVersions(),
+      // Мир собран вручную, розыгрышей не было: позиции пусты ЯВНО (поле обязательное, см. B1).
+      prngStreamPositions: {},
       content: {
         locations: [
           { id: 'loc:a', name: 'A', description: 'A' },

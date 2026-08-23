@@ -89,7 +89,7 @@ describe('позиции PRNG durable на уровне мира (M4)', () => {
     expect(meta?.prngStreamPositions).toEqual({ [FIXTURE_AGENT_ID]: 11, 'stream:weather': 3 });
   });
 
-  it('колонка позиций непустая по умолчанию: мир без явных позиций начинает с пустой карты', async () => {
+  it('колонка позиций объявлена not null: мир без явных позиций получает пустую карту, а не null', async () => {
     await truncateWorldData(db);
     await initializeWorld(db, fixtureInitialization());
     const row = await sql<{

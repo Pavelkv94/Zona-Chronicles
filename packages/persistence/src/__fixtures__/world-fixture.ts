@@ -56,6 +56,9 @@ export const fixtureState = (): WorldState => ({
 export const fixtureInitialization = (): WorldInitialization => ({
   seed: FIXTURE_SEED,
   state: fixtureState(),
+  // Фикстурный мир собран вручную, а не порождён `seedWorld`: розыгрышей в нём не было, поэтому
+  // позиции пусты ЯВНО. Поле обязательное — см. `WorldInitialization` и B1.
+  prngStreamPositions: {},
   versions: testRulesetVersions(),
   content: {
     locations: [

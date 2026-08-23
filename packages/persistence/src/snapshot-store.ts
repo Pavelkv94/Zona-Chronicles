@@ -133,6 +133,23 @@ export const writeSnapshot = async (
 };
 
 /**
+ * Профиль выполнения, под которым снят снимок, не квалифицирован для текущего процесса.
+ *
+ * Отдельный класс, а не `Error` (m-5 второго раунда верификации): для оператора «SIM-01 нарушен»
+ * и «SIM-01 не проверен» — разные события с разными действиями. Первое означает, что мир и его
+ * журнал разошлись; второе — что мир цел, но текущий runtime ещё не квалифицирован (§7). Раньше
+ * `world replay` возвращал на оба один и тот же ненулевой код.
+ */
+export class UnqualifiedRuntimeProfileError extends Error {
+  readonly code = 'UNQUALIFIED_RUNTIME_PROFILE';
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'UnqualifiedRuntimeProfileError';
+  }
+}
+
+/**
  * Собирает `Snapshot` из строки `world_snapshots` и переданных `bundles`, затем ПРОВЕРЯЕТ его по
  * `checksum`, записанному в строке (M-3, ADR-010 §10.2). Расхождение — громкий сбой: снимок,
  * прочитанный в форме, не совпадающей с тем, что было записано (или с чужими `bundles`), не
@@ -184,7 +201,7 @@ const rowToSnapshot = (
     context.runtimeProfile,
   );
   if (isValidationFailure(compatible)) {
-    throw new Error(
+    throw new UnqualifiedRuntimeProfileError(
       `persistence: снимок ${label} снят под несовместимым профилем выполнения: ` +
         `${compatible.errors.map((issue) => `${issue.path} ${issue.message}`).join('; ')}. ` +
         'Несовместимость означает «профиль ещё не квалифицирован» (§7), а не «мир сломан»: ' +

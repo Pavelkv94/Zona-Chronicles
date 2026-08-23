@@ -32,11 +32,15 @@ export interface WorldInitialization {
   readonly versions: RulesetVersions;
   readonly content: WorldContent;
   /**
-   * Позиции потоков PRNG на момент создания мира (M4). Не пусты, когда сам генезис уже сделал
-   * розыгрыши — например, распределяя агентов по локациям: продолжить поток с нуля после этого
-   * значило бы выдать те же значения второй раз.
+   * Позиции потоков PRNG на момент создания мира (M4).
+   *
+   * ОБЯЗАТЕЛЬНОЕ поле, и это прямое следствие B1 (второй раунд верификации). Пока оно было
+   * необязательным со значением `{}` по умолчанию, писатель, забывший его указать, молча
+   * получал мир с неверными позициями — а генезис розыгрыши ДЕЛАЕТ, распределяя агентов по
+   * локациям. Ровно этот капкан сработал на уровне схемы (`default '{}'` в миграции 0009) и
+   * стоил blocker-а. Мир без единого розыгрыша объявляет `{}` явно.
    */
-  readonly prngStreamPositions?: Readonly<Record<string, number>>;
+  readonly prngStreamPositions: Readonly<Record<string, number>>;
   /** Операционная отметка создания; по умолчанию — реальные часы этого процесса. */
   readonly createdAt?: Date;
 }
@@ -74,7 +78,7 @@ export const initializeWorld = async (
         content_version: versions.contentVersion,
         schema_version: versions.schemaVersion,
         prng_stream_positions: requireCanonical(
-          init.prngStreamPositions ?? {},
+          init.prngStreamPositions,
           `worlds.prng_stream_positions(${state.worldId})`,
         ),
         created_at: createdAt,

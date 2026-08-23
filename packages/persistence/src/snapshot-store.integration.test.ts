@@ -33,6 +33,7 @@ import { executeCommand } from './command-handler.ts';
 import { initializeWorld, loadWorldState } from './world-repository.ts';
 import { PersistentRandomSource } from './prng-positions.ts';
 import {
+  UnqualifiedRuntimeProfileError,
   loadLatestSnapshot,
   loadSnapshotAt,
   writeSnapshot,
@@ -351,6 +352,15 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
         runtimeProfile: runtimeProfile(),
       }),
     ).rejects.toThrow(/prng_version/);
+
+    // m-5 второго раунда: отказ обязан быть ОТЛИЧИМ от порчи снимка по типу, а не только по
+    // тексту. Для оператора «SIM-01 не проверен» и «SIM-01 нарушен» — разные события.
+    await expect(
+      loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+        bundles: bundles(),
+        runtimeProfile: runtimeProfile(),
+      }),
+    ).rejects.toBeInstanceOf(UnqualifiedRuntimeProfileError);
   });
 
   /**

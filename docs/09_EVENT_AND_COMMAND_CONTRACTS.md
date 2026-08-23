@@ -232,7 +232,11 @@ Snapshot содержит:
 - rules/content/schema bundle versions и checksums;
 - deterministic runtime profile: canonical serialization version, PRNG version, numeric/rounding policy и поддерживаемый Node.js/ICU/timezone profile;
 - canonical state;
-- PRNG stream positions;
+- PRNG stream positions — снимок их ФОТОГРАФИРУЕТ, но авторитетный дом у них другой: строка
+  `worlds` (миграция 0009). Причина в том, что снимок берётся оператором по его решению
+  (OPS-04), а не непрерывно: между двумя снимками мир принимает сколько угодно команд, и
+  источник, стартующий с позиций последнего снимка, повторил бы уже сделанные розыгрыши.
+  Позиция двигается там же, где `last_sequence` — в транзакции команды (M4, I02B);
 - pending scheduled actions либо ссылку на их согласованный DB state;
 - checksum канонически сериализованного содержимого;
 - created_at wall clock только как metadata.
