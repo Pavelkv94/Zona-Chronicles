@@ -191,24 +191,69 @@ export const runWorldInitCommand = async (
 
   // m-6 аудита I02A: проверка выше — check-then-act. Конкурентный `world init` проигрывает на
   // первичном ключе, и это правильный исход; но он обязан быть СООБЩЕНИЕМ, а не стеком.
+  /**
+   * ВСЕ ТРИ записи — в ОДНОЙ транзакции. M4 независимого архитектурного аудита I03.
+   *
+   * Раньше `initializeWorld`, `setWorldQualifiedProfile` и `writeSnapshot` шли тремя отдельными
+   * транзакциями. Обрыв между ними (падение процесса, потеря соединения, Ctrl+C) оставлял мир,
+   * который:
+   *   - не принимает команд, если не записан квалифицированный профиль (`canonical-writer`);
+   *   - не даёт собрать проекцию, если не записан генезисный снимок (worker отказывается
+   *     придумывать начальную расстановку);
+   *   - не пересоздаётся — `world init` отвечает «создан параллельно другим процессом»;
+   *   - и НЕ УДАЛЯЕТСЯ: команды drop/reset в CLI нет.
+   *
+   * То есть текст отказа советовал «пересоздайте мир» — действие, которого продукт не умеет.
+   * Change request §10.2 сделал генезисный снимок несущей конструкцией, и создавалась она
+   * неатомарно, без пути восстановления.
+   *
+   * Транзакция это снимает целиком: либо мир есть весь, либо его нет вовсе и `world init`
+   * повторяется как ни в чём не бывало.
+   */
   try {
-    await initializeWorld(db, {
-      seed,
-      state,
-      // Версия контента — из самого пакета контента, а не из тестовых умолчаний: иначе события
-      // подписывались бы одной версией, а bundle снимка нёс бы другую (см. `world.ts`).
-      versions: prototypeRulesetVersions(),
-      // Генезис уже сделал розыгрыши, распределяя агентов по локациям: начать потоки с нуля
-      // после этого значило бы выдать те же значения второй раз (M4).
-      prngStreamPositions: seeded.snapshot.prng_stream_positions,
-      content: {
-        locations: PROTOTYPE_WORLD.locations.map((location) => ({
-          id: location.id,
-          name: location.name,
-          description: location.description,
-        })),
-        agentNames: Object.fromEntries(PROTOTYPE_WORLD.agents.map((a) => [a.id, a.name])),
-      },
+    await db.transaction().execute(async (trx) => {
+      await initializeWorld(trx, {
+        seed,
+        state,
+        // Версия контента — из самого пакета контента, а не из тестовых умолчаний: иначе события
+        // подписывались бы одной версией, а bundle снимка нёс бы другую (см. `world.ts`).
+        versions: prototypeRulesetVersions(),
+        // Генезис уже сделал розыгрыши, распределяя агентов по локациям: начать потоки с нуля
+        // после этого значило бы выдать те же значения второй раз (M4).
+        prngStreamPositions: seeded.snapshot.prng_stream_positions,
+        content: {
+          locations: PROTOTYPE_WORLD.locations.map((location) => ({
+            id: location.id,
+            name: location.name,
+            description: location.description,
+          })),
+          agentNames: Object.fromEntries(PROTOTYPE_WORLD.agents.map((a) => [a.id, a.name])),
+        },
+      });
+
+      // Мир квалифицируется профилем ТОГО процесса, который его создал (M-C). Дальше любой
+      // писатель обязан пройти `qualifyCanonicalWriter` и совпасть с этим профилем.
+      await setWorldQualifiedProfile(trx, state.worldId, currentDeterministicRuntimeProfile());
+
+      // Генезисный снимок пишется СРАЗУ (I03). Три следствия, и все три нужны:
+      //
+      // 1. У мира есть точка восстановления с первого дня, а не с первого `world snapshot`
+      //    (OPS-04).
+      // 2. Начальная расстановка агентов становится ЧИТАЕМОЙ из базы. Вывести её из журнала
+      //    нельзя — её сделал `initializeWorld` в обход событий, — и до сих пор единственным её
+      //    источником был `seedWorld` в этом же процессе. Сборщику проекции она нужна, а он
+      //    живёт в worker-е, и приложения не имеют права импортировать друг друга.
+      // 3. `world replay` перестаёт нуждаться в особом случае «снимков не было, восстановим из
+      //    seed».
+      await writeSnapshot(trx, {
+        worldId: state.worldId,
+        lastSequence: state.sequence,
+        worldTime: state.worldTime,
+        bundles: currentBundles(),
+        deterministicRuntimeProfile: currentDeterministicRuntimeProfile(),
+        prngStreamPositions: seeded.snapshot.prng_stream_positions,
+        canonicalState: state,
+      });
     });
   } catch (error) {
     const code = (error as { code?: unknown }).code;
@@ -220,28 +265,6 @@ export const runWorldInitCommand = async (
     }
     throw error;
   }
-
-  // Генезисный снимок пишется СРАЗУ (I03). Три следствия, и все три нужны:
-  //
-  // 1. У мира есть точка восстановления с первого дня, а не с первого `world snapshot` (OPS-04).
-  // 2. Начальная расстановка агентов становится ЧИТАЕМОЙ из базы. Вывести её из журнала нельзя —
-  //    её сделал `initializeWorld` в обход событий, — и до сих пор единственным её источником был
-  //    `seedWorld` в этом же процессе. Сборщику проекции она нужна, а он живёт в worker-е, и
-  //    приложения не имеют права импортировать друг друга.
-  // 3. `world replay` перестаёт нуждаться в особом случае «снимков не было, восстановим из seed».
-  // Мир квалифицируется профилем ТОГО процесса, который его создал (M-C). Дальше любой писатель
-  // обязан пройти `qualifyCanonicalWriter` и совпасть с этим профилем.
-  await setWorldQualifiedProfile(db, state.worldId, currentDeterministicRuntimeProfile());
-
-  await writeSnapshot(db, {
-    worldId: state.worldId,
-    lastSequence: state.sequence,
-    worldTime: state.worldTime,
-    bundles: currentBundles(),
-    deterministicRuntimeProfile: currentDeterministicRuntimeProfile(),
-    prngStreamPositions: seeded.snapshot.prng_stream_positions,
-    canonicalState: state,
-  });
 
   return {
     stdout:

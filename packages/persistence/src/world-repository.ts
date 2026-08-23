@@ -71,7 +71,19 @@ export const initializeWorld = async (
   const createdAt = init.createdAt ?? new Date();
   const { state, versions, content } = init;
 
-  await db.transaction().execute(async (trx) => {
+  /**
+   * Работает и внутри чужой транзакции, и сам по себе — тот же приём, что у `loadWorldState`.
+   *
+   * Понадобилось в I03 (M4 независимого аудита): `world init` стал создавать мир, профиль и
+   * генезисный снимок ОДНОЙ транзакцией, а Kysely не поддерживает вложенные — попытка дала
+   * `calling the transaction method for a Transaction is not supported`, и `world init` перестал
+   * работать вовсе. Поймано acceptance-тестом атомарности по его собственной защите от
+   * бессмысленного прогона: «ни один прогон не довёл создание до конца».
+   *
+   * Своя транзакция сохранена для прямых вызовов (тесты, будущие пути): создание мира атомарно
+   * само по себе, а не только когда его кто-то обернул.
+   */
+  const write = async (trx: DatabaseConnection): Promise<void> => {
     await trx
       .insertInto('worlds')
       .values({
@@ -137,6 +149,14 @@ export const initializeWorld = async (
         )
         .execute();
     }
+  };
+
+  if (db.isTransaction) {
+    await write(db);
+    return;
+  }
+  await db.transaction().execute(async (trx) => {
+    await write(trx);
   });
 };
 
