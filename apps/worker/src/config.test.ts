@@ -22,6 +22,7 @@ describe('parseConfig', () => {
       databaseUrl: DB,
       worldId: 'world:prototype',
       worldMinutesPerRealSecond: DEFAULT_WORLD_TEMPO.worldMinutesPerRealSecond,
+      projectionDatabaseUrl: undefined,
     });
   });
 
@@ -42,6 +43,7 @@ describe('parseConfig', () => {
       databaseUrl: DB,
       worldId: 'world:other',
       worldMinutesPerRealSecond: 4,
+      projectionDatabaseUrl: undefined,
     });
   });
 
@@ -68,6 +70,7 @@ describe('parseConfig', () => {
       databaseUrl: DB,
       worldId: 'world:prototype',
       worldMinutesPerRealSecond: DEFAULT_WORLD_TEMPO.worldMinutesPerRealSecond,
+      projectionDatabaseUrl: undefined,
     });
   });
 

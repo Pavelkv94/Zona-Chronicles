@@ -211,8 +211,28 @@ export const runWorldInitCommand = async (
     throw error;
   }
 
+  // Генезисный снимок пишется СРАЗУ (I03). Три следствия, и все три нужны:
+  //
+  // 1. У мира есть точка восстановления с первого дня, а не с первого `world snapshot` (OPS-04).
+  // 2. Начальная расстановка агентов становится ЧИТАЕМОЙ из базы. Вывести её из журнала нельзя —
+  //    её сделал `initializeWorld` в обход событий, — и до сих пор единственным её источником был
+  //    `seedWorld` в этом же процессе. Сборщику проекции она нужна, а он живёт в worker-е, и
+  //    приложения не имеют права импортировать друг друга.
+  // 3. `world replay` перестаёт нуждаться в особом случае «снимков не было, восстановим из seed».
+  await writeSnapshot(db, {
+    worldId: state.worldId,
+    lastSequence: state.sequence,
+    worldTime: state.worldTime,
+    bundles: currentBundles(),
+    deterministicRuntimeProfile: currentDeterministicRuntimeProfile(),
+    prngStreamPositions: seeded.snapshot.prng_stream_positions,
+    canonicalState: state,
+  });
+
   return {
-    stdout: `Мир ${state.worldId} создан из seed=${String(seed)}; версия ${String(state.worldVersion)}.\n`,
+    stdout:
+      `Мир ${state.worldId} создан из seed=${String(seed)}; версия ${String(state.worldVersion)}.\n` +
+      `Записан генезисный снимок на sequence ${String(state.sequence)}.\n`,
     exitCode: 0,
   };
 };

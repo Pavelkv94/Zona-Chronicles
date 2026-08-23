@@ -1,0 +1,263 @@
+/**
+ * Порождение мира из seed (I03; перенесено из `apps/cli/src/world.ts`).
+ *
+ * ## Почему это ПАКЕТ, а не модуль приложения
+ *
+ * Знание «какой мир получается при этом seed» перестало быть частным делом CLI, как только его
+ * понадобилось второму приложению: сборщику проекции нужны те же `bundles`, чтобы прочитать
+ * генезисный снимок. Приложения не имеют права импортировать друг друга, а `packages/persistence`
+ * и `packages/projections` не имеют права импортировать друг друга — поэтому единственное
+ * законное место общего знания это пакет, и `simulation` для него и заведён.
+ *
+ * ## Пакет ничего не читает у хоста
+ *
+ * `HostRuntimeProfile` приходит ПАРАМЕТРОМ: `process.version` в `packages/simulation` запрещён
+ * (ADR-003, и правило `core-has-no-adapter-dependencies` это исполняет). Читает его приложение —
+ * `currentHostRuntimeProfile` в `apps/cli`/`apps/worker`. Инъекция нужна и по второй причине,
+ * записанной ещё в I01: профиль не входит в snapshot checksum, и это свойство обязано быть
+ * проверяемым тестом, подставляющим чужой хост, а не второй машиной.
+ *
+ * ## Контент приходит параметром
+ *
+ * `@zona/content` пакету недоступен (`simulation-depends-on-contracts-and-domain`), и это к
+ * лучшему: генератор мира не обязан знать, какой именно мир он порождает.
+ */
+import {
+  type DeterministicRuntimeProfile,
+  type Snapshot,
+  CANONICAL_SERIALIZATION_VERSION,
+  CANONICAL_TRANSACTION_ISOLATION_LEVEL,
+  SNAPSHOT_CHECKSUM_SCOPE_VERSION,
+  bundleRefFor,
+  isInstantError,
+  parseCanonicalInstant,
+  schemaBundleRef,
+  snapshotChecksum,
+} from '@zona/contracts';
+import {
+  DeterministicRandomSource,
+  FixedClock,
+  testRulesetVersions,
+  type AgentState,
+  type RouteDefinition as DomainRouteDefinition,
+  type RulesetVersions,
+  type WorldState,
+} from '@zona/domain';
+
+/**
+ * Форма контента, которую требует генератор. Совпадает с `WorldDefinition` из `@zona/content`
+ * структурно, но объявлена здесь: пакет не имеет права зависеть от контента, а зависимость от
+ * ФОРМЫ данных зависимостью не является.
+ */
+export interface GeneratorContent {
+  readonly worldId: string;
+  readonly initialWorldTime: string;
+  readonly locations: readonly { readonly id: string }[];
+  readonly routes: readonly {
+    readonly id: string;
+    readonly fromLocationId: string;
+    readonly toLocationId: string;
+    readonly travelMinutes: number;
+  }[];
+  readonly agents: readonly { readonly id: string }[];
+}
+
+/** Версии, описывающие сам алгоритм для deterministic runtime profile (§9). */
+const PRNG_VERSION = 'mulberry32+splitmix32/1';
+const NUMERIC_ROUNDING_POLICY_VERSION = 'numeric-units/1';
+const CANONICAL_TIMEZONE = 'UTC';
+
+export interface HostRuntimeProfile {
+  readonly nodeVersion: string;
+  readonly icuVersion: string;
+}
+
+/**
+ * Содержимое rules bundle — фактический ruleset, а не заглушка `{}` (M3).
+ *
+ * Прежняя редакция хешировала пустой объект, и checksum равнялся `sha256("{}")`: любое
+ * изменение правил при неизменной версии было необнаружимо, то есть A9 для этого bundle не
+ * выполнялся. Хешируется объект версий целиком, а не перечисленные вручную поля: поле,
+ * добавленное в `RulesetVersions`, попадает в checksum само, без правки этого места.
+ *
+ * Когда у `Ruleset` появятся коэффициенты (§7), они добавляются сюда вместе с итерацией,
+ * которая их вводит — иначе checksum снова начнёт лгать о содержимом.
+ */
+export function rulesBundleContent(
+  versions: RulesetVersions = testRulesetVersions(),
+): Record<string, unknown> {
+  return { versions: { ...versions } };
+}
+
+function canonicalInstant(iso: string, label: string): string {
+  const parsed = parseCanonicalInstant(iso);
+  if (isInstantError(parsed)) {
+    throw new Error(`world: ${label} невалиден: ${parsed.error}`);
+  }
+  return parsed.iso;
+}
+
+interface SeededAgents {
+  readonly agents: Readonly<Record<string, AgentState>>;
+  readonly prngStreamPositions: Readonly<Record<string, number>>;
+}
+
+/**
+ * Стартовая локация каждого агента выбирается одним draw на стабильном stream key `agent:<id>`
+ * (A7: "поток случайности... разделён по stable stream key"). Один draw на агента — намеренно
+ * минимально: I01 не моделирует ничего сверх "какой мир получился при этом seed" (PLAN §5, out
+ * of scope: Utility AI, планы, экономика).
+ */
+function seedAgents(content: GeneratorContent, seed: number): SeededAgents {
+  const random = new DeterministicRandomSource(seed);
+  const agents: Record<string, AgentState> = {};
+  const prngStreamPositions: Record<string, number> = {};
+
+  if (content.locations.length === 0) {
+    throw new Error(`world: контент "${content.worldId}" не содержит ни одной локации`);
+  }
+
+  for (const agentDef of content.agents) {
+    const streamKey = agentDef.id;
+    const draw = random.draw(streamKey);
+    const index = Math.min(
+      Math.floor(draw.value * content.locations.length),
+      content.locations.length - 1,
+    );
+    const location = content.locations[index]!;
+    agents[agentDef.id] = {
+      id: agentDef.id,
+      locationId: location.id,
+      status: 'idle',
+      routeId: null,
+    };
+    // `drawIndex` внутри потока начинается с 0 (RandomDraw); позиция после одного draw — 1.
+    prngStreamPositions[streamKey] = draw.drawIndex + 1;
+  }
+
+  return { agents, prngStreamPositions };
+}
+
+function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainRouteDefinition>> {
+  const routes: Record<string, DomainRouteDefinition> = {};
+  for (const route of content.routes) {
+    routes[route.id] = {
+      id: route.id,
+      fromLocationId: route.fromLocationId,
+      toLocationId: route.toLocationId,
+      travelMinutes: route.travelMinutes,
+    };
+  }
+  return routes;
+}
+
+/**
+ * `bundles` ровно одного снимка — рефы правил/контента/схем. Вынесено из `seedWorld` (I02B):
+ * `world snapshot`/`world replay` строят снимок/контекст чтения снимка НЕ через `seedWorld` (тот
+ * порождает свежий мир, а не работает с уже существующим durable-миром), но им нужны ТЕ ЖЕ
+ * bundles — CLI работает с одним неизменным content bundle (`PROTOTYPE_WORLD`) и одним rules
+ * bundle (`testRulesetVersions()`) везде. Общая функция — единственный источник этих значений,
+ * а не три места, которым предстоит разойтись.
+ */
+export function bundlesFor(
+  content: GeneratorContent,
+  contentVersion: string,
+  rulesetVersions: RulesetVersions = testRulesetVersions(),
+): Snapshot['bundles'] {
+  return {
+    rules: bundleRefFor(rulesetVersions.rulesVersion, rulesBundleContent(rulesetVersions)),
+    content: bundleRefFor(contentVersion, content),
+    // Содержимое — сами JSON Schema документы, версия и состав принадлежат контрактам
+    // (`schema-bundle.ts`): bundle схем — их артефакт, а не CLI (M3, A9).
+    schema: schemaBundleRef(),
+  };
+}
+
+/**
+ * `deterministic_runtime_profile` ровно одного снимка. Вынесено по тому же доводу, что
+ * {@link currentBundles}: `world snapshot` строит НОВЫЙ профиль для снимка durable-мира, которого
+ * `seedWorld` не строил (он строит только in-memory снимок свежепорождённого мира).
+ */
+export function deterministicRuntimeProfileFor(
+  host: HostRuntimeProfile,
+): DeterministicRuntimeProfile {
+  return {
+    canonical_serialization_version: CANONICAL_SERIALIZATION_VERSION,
+    snapshot_checksum_scope_version: SNAPSHOT_CHECKSUM_SCOPE_VERSION,
+    prng_version: PRNG_VERSION,
+    numeric_rounding_policy_version: NUMERIC_ROUNDING_POLICY_VERSION,
+    // Node/ICU — профиль машины, а не канонических правил: он записывается в снимок, но в
+    // checksum не входит (B2) и проверяется `verifyRuntimeProfileCompatibility`.
+    node_version: host.nodeVersion,
+    icu_version: host.icuVersion,
+    // В отличие от node/icu — это НЕ чтение окружения хоста, а фиксированное свойство
+    // канонического мира (world time всегда UTC); литерал, а не `Intl`/`process.env.TZ`.
+    timezone: CANONICAL_TIMEZONE,
+    // Как и timezone — свойство канонического ядра, а не машины: уровень изоляции задан
+    // явно в транзакции и не наследуется от настроек сервера (ADR-010 §10.1).
+    transaction_isolation_level: CANONICAL_TRANSACTION_ISOLATION_LEVEL,
+  };
+}
+
+export interface SeededWorld {
+  readonly seed: number;
+  readonly content: GeneratorContent;
+  readonly state: WorldState;
+  readonly snapshot: Snapshot;
+}
+
+/**
+ * Строит детерминированный in-memory мир из seed и `@zona/content` fixtures. Тот же seed даёт
+ * побайтово тот же `snapshot` в любом процессе (A1); разный seed даёт другой, но валидный мир
+ * (A2), потому что различается ТОЛЬКО распределение агентов по локациям.
+ */
+export function seedWorld(
+  content: GeneratorContent,
+  contentVersion: string,
+  seed: number,
+  host: HostRuntimeProfile,
+): SeededWorld {
+  if (!Number.isSafeInteger(seed)) {
+    throw new Error(`world: seed обязан быть безопасным целым, получено ${String(seed)}`);
+  }
+
+  const clock = new FixedClock(content.initialWorldTime);
+  const worldTime = canonicalInstant(clock.now().iso, 'initialWorldTime контента');
+
+  const { agents, prngStreamPositions } = seedAgents(content, seed);
+  const routes = buildRoutes(content);
+
+  const state: WorldState = {
+    worldId: content.worldId,
+    worldVersion: 0,
+    worldTime,
+    sequence: 0,
+    agents,
+    routes,
+    // Свежепорождённый мир событий не имел, поэтому и расписания у него нет: оно выводится
+    // из событий (`evolve`), а не задаётся при создании.
+    scheduledActions: {},
+  };
+
+  const rulesetVersions = testRulesetVersions();
+
+  const snapshotWithoutChecksum: Omit<Snapshot, 'checksum'> = {
+    world_id: content.worldId,
+    last_sequence: 0,
+    world_time: worldTime,
+    // Нет независимого источника wall clock у in-memory CLI без БД (см. заголовок файла) —
+    // created_at делит момент с world_time, а не притворяется настоящими часами.
+    created_at: worldTime,
+    bundles: bundlesFor(content, contentVersion, rulesetVersions),
+    deterministic_runtime_profile: deterministicRuntimeProfileFor(host),
+    prng_stream_positions: prngStreamPositions,
+    canonical_state: state,
+  };
+
+  const snapshot: Snapshot = {
+    ...snapshotWithoutChecksum,
+    checksum: snapshotChecksum(snapshotWithoutChecksum),
+  };
+
+  return { seed, content, state, snapshot };
+}

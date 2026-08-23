@@ -18,10 +18,12 @@
  */
 import {
   loadOutboxEventsAfter,
+  loadSnapshotAt,
   loadWorldContent,
   loadWorldState,
   type DatabaseConnection,
 } from '@zona/persistence';
+import type { DeterministicRuntimeProfile, Snapshot } from '@zona/contracts';
 import {
   applyObserverEvent,
   initialObserverProjection,
@@ -121,6 +123,61 @@ const loadMap = async (deps: ProjectionBuilderDeps) => {
  * Вызывается один раз, при создании мира. Дальше проекция только догоняет журнал — и потому
  * инкрементальная сборка и пересборка идут по одному и тому же пути, а не по двум похожим.
  */
+/**
+ * Начальная расстановка агентов — из ГЕНЕЗИСНОГО СНИМКА мира (`sequence 0`), а не из seed.
+ *
+ * Расстановку сделал `initializeWorld` в обход журнала, поэтому вывести её из событий нельзя, а
+ * пересчитать через `seedWorld` worker не может: генератор мира живёт в `apps/cli`, и приложения
+ * не имеют права импортировать друг друга. `world init` пишет этот снимок при создании мира
+ * именно поэтому (change request в `PLAN.md` §10.2 итерации I03).
+ *
+ * `null` — снимка нет: мир создан до I03. Сборщик обязан сказать об этом, а не придумать историю.
+ */
+export const genesisFromSnapshot = async (
+  canonical: DatabaseConnection,
+  worldId: string,
+  bundles: Snapshot['bundles'],
+  runtimeProfile: DeterministicRuntimeProfile,
+): Promise<ProjectionGenesis | null> => {
+  const snapshot = await loadSnapshotAt(canonical, worldId, 0, {
+    bundles,
+    runtimeProfile,
+    // Квалификация профиля здесь НЕ применяется: генезисный снимок читается ради начальной
+    // расстановки агентов, а не ради продолжения мира под этим профилем. Отказ по несовместимости
+    // остановил бы сборку ленты после обновления Node — то есть погасил бы наблюдение за миром
+    // из-за операционного события, к наблюдению отношения не имеющего.
+    acceptUnqualifiedProfile: true,
+  });
+  if (snapshot === null) return null;
+
+  const state = snapshot.canonical_state as {
+    readonly worldTime: string;
+    readonly agents: Readonly<
+      Record<
+        string,
+        {
+          readonly id: string;
+          readonly locationId: string;
+          readonly status: 'idle' | 'traveling';
+          readonly routeId: string | null;
+        }
+      >
+    >;
+  };
+  const content = await loadWorldContent(canonical, worldId);
+
+  return {
+    worldTime: state.worldTime,
+    agents: Object.values(state.agents).map((agent) => ({
+      agent_id: agent.id,
+      name: content.agentNames[agent.id] ?? agent.id,
+      location_id: agent.status === 'traveling' ? null : agent.locationId,
+      status: agent.status,
+      route_id: agent.routeId,
+    })),
+  };
+};
+
 export const createProjectionAtGenesis = async (
   deps: ProjectionBuilderDeps,
   genesis: ProjectionGenesis,

@@ -42,6 +42,13 @@ export type Config = {
   readonly worldId: string;
   /** Минут мирового времени за секунду реального; по умолчанию — `DEFAULT_WORLD_TEMPO`. */
   readonly worldMinutesPerRealSecond: number;
+  /**
+   * Подключение к хранилищу ПРОЕКЦИИ (I03). Отдельная переменная от `DATABASE_URL`, потому что
+   * писать проекцию имеет право `zona_projection`, а двигать мир — `zona_worker`. Не задана —
+   * проекция не собирается, и worker об этом ГОВОРИТ: молча не собирать её значило бы, что
+   * зритель видит замерший мир и не знает почему.
+   */
+  readonly projectionDatabaseUrl: string | undefined;
 };
 
 const LOCAL_DEPLOYMENT_ID = 'local-dev-unset';
@@ -137,7 +144,7 @@ function parseDeploymentId(raw: string | undefined, nodeEnv: NodeEnv): string {
 /**
  * Разбирает и валидирует окружение процесса в `Config`.
  * Читает только `LOG_LEVEL`, `NODE_ENV`, `DEPLOYMENT_ID`, `DATABASE_URL`, `WORLD_ID` и
- * `WORLD_MINUTES_PER_REAL_SECOND` — все остальные ключи игнорируются.
+ * `WORLD_MINUTES_PER_REAL_SECOND`, `PROJECTION_DATABASE_URL` — все остальные ключи игнорируются.
  */
 export function parseConfig(env: Record<string, string | undefined>): Config {
   const nodeEnv = parseNodeEnv(env['NODE_ENV']);
@@ -149,6 +156,10 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     worldId:
       (env['WORLD_ID']?.trim() ?? '').length > 0 ? env['WORLD_ID']!.trim() : DEFAULTS.worldId,
     worldMinutesPerRealSecond: parseWorldTempo(env['WORLD_MINUTES_PER_REAL_SECOND']),
+    projectionDatabaseUrl:
+      (env['PROJECTION_DATABASE_URL']?.trim() ?? '').length > 0
+        ? env['PROJECTION_DATABASE_URL']!.trim()
+        : undefined,
   };
 }
 

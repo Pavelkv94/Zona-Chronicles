@@ -30,6 +30,15 @@ export type Config = {
    * значение (`LOCAL_DEPLOYMENT_ID`), а не молчаливый прод-похожий дефолт.
    */
   readonly deploymentId: string;
+  /**
+   * Подключение к хранилищу ПРОЕКЦИИ (I03). Та же физическая база, что каноническая, но ходить
+   * туда API обязан под ролью `zona_api`, у которой есть `SELECT` только на `projection_*`.
+   * Отдельная переменная, а не переиспользование `DATABASE_URL`, именно поэтому: одинаковая
+   * строка подключения означала бы одинаковую роль, и граница D5 держалась бы на честном слове.
+   */
+  readonly projectionDatabaseUrl: string;
+  /** Мир, который показывает этот экземпляр API. */
+  readonly worldId: string;
 };
 
 const LOCAL_DEPLOYMENT_ID = 'local-dev-unset';
@@ -39,6 +48,7 @@ const DEFAULTS = {
   host: '0.0.0.0',
   logLevel: 'info' as LogLevel,
   nodeEnv: 'development' as NodeEnv,
+  worldId: 'world:prototype',
 };
 
 const MIN_PORT = 1;
@@ -119,6 +129,21 @@ function parseDeploymentId(raw: string | undefined, nodeEnv: NodeEnv): string {
  * Читает только `PORT`, `HOST`, `LOG_LEVEL`, `NODE_ENV`, `DEPLOYMENT_ID` — все остальные ключи
  * игнорируются.
  */
+/**
+ * Подключение к проекции. Обязательно: API без проекции показать нечего, а отвечающий пустотой
+ * сервис неотличим от работающего с пустым миром.
+ */
+function parseProjectionDatabaseUrl(raw: string | undefined): string {
+  if (raw === undefined || raw.trim().length === 0) {
+    throw new Error(
+      'Invalid config: PROJECTION_DATABASE_URL is required. Отдельная переменная от DATABASE_URL ' +
+        'намеренно: API обязан ходить под ролью zona_api, у которой нет прав на канонические ' +
+        'таблицы (D5). Одинаковая строка означала бы одинаковую роль.',
+    );
+  }
+  return raw;
+}
+
 export function parseConfig(env: Record<string, string | undefined>): Config {
   const nodeEnv = parseNodeEnv(env['NODE_ENV']);
   return {
@@ -127,6 +152,9 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     logLevel: parseLogLevel(env['LOG_LEVEL']),
     nodeEnv,
     deploymentId: parseDeploymentId(env['DEPLOYMENT_ID'], nodeEnv),
+    projectionDatabaseUrl: parseProjectionDatabaseUrl(env['PROJECTION_DATABASE_URL']),
+    worldId:
+      (env['WORLD_ID']?.trim() ?? '').length > 0 ? env['WORLD_ID']!.trim() : DEFAULTS.worldId,
   };
 }
 

@@ -1,12 +1,14 @@
 /**
  * apps/api — Fastify skeleton (I00). Читает только `/health` (liveness) и `/ready` (readiness).
  *
- * Наблюдатель read-only observer API (`GET /v1/...`, SSE) добавляется в I03 (§7 03_TECHNICAL_DESIGN).
- * Публичный API не содержит write-маршрутов (POST/PUT/PATCH/DELETE) — это гарантирует
- * `server.contract.test.ts` через `app.printRoutes()`/`app.hasRoute()`, а не только код ниже.
+ * Наблюдательские read-only маршруты (`GET /v1/...`, SSE) регистрируются в `observer-routes.ts`
+ * (I03, §7 03_TECHNICAL_DESIGN). Публичный API не содержит write-маршрутов
+ * (POST/PUT/PATCH/DELETE) — это гарантирует `server.contract.test.ts` обходом ТАБЛИЦЫ маршрутов,
+ * а не списком известных путей и не кодом ниже.
  */
 import Fastify, { type FastifyInstance } from 'fastify';
 import { Type, type TypeBoxTypeProvider } from '@fastify/type-provider-typebox';
+import { registerObserverRoutes, type ObserverRoutesOptions } from './observer-routes.ts';
 
 /** Инъектированный источник uptime — тест не зависит от wall clock. */
 export type UptimePort = {
@@ -21,6 +23,12 @@ export type BuildServerDeps = {
   /** Placeholder до I01/I02B, где появляется реальный rules bundle versioning. */
   readonly rulesVersion: string;
   readonly uptime: UptimePort;
+  /**
+   * Наблюдательские маршруты. Необязательны: `/health` и `/ready` обязаны отвечать и тогда, когда
+   * проекция недоступна — иначе readiness-проверка перестала бы отличать «сервис не поднялся» от
+   * «мир ещё не создан».
+   */
+  readonly observer?: ObserverRoutesOptions;
 };
 
 const HealthResponseSchema = Type.Object(
@@ -58,6 +66,10 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
   app.get('/ready', { schema: { response: { 200: ReadyResponseSchema } } }, () => ({
     status: 'ready' as const,
   }));
+
+  if (deps.observer !== undefined) {
+    registerObserverRoutes(app, deps.observer);
+  }
 
   return app;
 }

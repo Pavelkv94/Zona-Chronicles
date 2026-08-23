@@ -62,14 +62,31 @@ describe('I02B — `world replay` сравнивает и падает чест�
     await db.drop();
   });
 
-  it('без единого снимка replay восстанавливает genesis из seed, и checksum совпадает (демо PLAN §2)', () => {
+  /**
+   * ИЗМЕНЕНИЕ ПОВЕДЕНИЯ (I03, change request в `PLAN.md` §10.2 итерации I03).
+   *
+   * Раньше `world init` снимка не писал, и этот путь достигался сам собой: голый `world replay`
+   * печатал «в базе снимков не было — восстановлен из seed». Теперь генезисный снимок пишется при
+   * создании мира — у мира есть точка восстановления с первого дня (OPS-04), а начальная
+   * расстановка агентов становится читаемой из базы, что и нужно сборщику проекции.
+   *
+   * Сама ветка восстановления из seed НЕ УДАЛЕНА: миры, созданные до I03, генезисного снимка не
+   * имеют, и терять для них replay нельзя. Поэтому она проверяется ЯВНЫМ удалением снимка —
+   * честной моделью такого мира, — а не отсутствием шага, которого больше не бывает.
+   */
+  it('мир без генезисного снимка (создан до I03): replay восстанавливает genesis из seed', async () => {
     expect(
       cli(['world', 'run', '--agent', 'agent:rook', '--route', ROUTE_ID], db.url).exitCode,
     ).toBe(0);
     expect(cli(['world', 'tick', '--advance', '40'], db.url).exitCode).toBe(0);
 
-    // Ни одного "world snapshot" до этой точки — ровно то, что буквально пишет demo PLAN §2:
-    // `pnpm world replay` голым, последней строкой, без предшествующего снятия снимка.
+    const connection = createDatabase(parseDatabaseConnectionUrl(db.url));
+    try {
+      await connection.deleteFrom('world_snapshots').where('world_id', '=', WORLD_ID).execute();
+    } finally {
+      await connection.destroy();
+    }
+
     const replay = cli(['world', 'replay'], db.url);
     expect(replay.exitCode, replay.stdout + replay.stderr).toBe(0);
     expect(replay.stdout).toContain('в базе снимков не было — восстановлен из seed');
@@ -78,6 +95,42 @@ describe('I02B — `world replay` сравнивает и падает чест�
     const checksums = checksumsIn(replay.stdout);
     expect(checksums).toHaveLength(2);
     expect(checksums[0]).toBe(checksums[1]);
+  });
+
+  it('I03: создание мира записывает генезисный снимок на sequence 0, и replay опирается на него', async () => {
+    // Своя база: этот тест — про СВЕЖИЙ мир, а в общей соседний тест уже удалил снимок.
+    const fresh = await createTestDatabase('acceptance_i03_genesis_snapshot');
+    try {
+      expect(cli(['world', 'migrate'], fresh.url).exitCode).toBe(0);
+      const init = cli(['world', 'init', '--seed', String(SEED)], fresh.url);
+      expect(init.exitCode, init.stdout + init.stderr).toBe(0);
+      expect(init.stdout).toContain('Записан генезисный снимок на sequence 0');
+
+      const connection = createDatabase(parseDatabaseConnectionUrl(fresh.url));
+      try {
+        const snapshots = await connection
+          .selectFrom('world_snapshots')
+          .select(['last_sequence', 'canonical_state'])
+          .where('world_id', '=', WORLD_ID)
+          .execute();
+        expect(snapshots).toHaveLength(1);
+        expect(String(snapshots[0]!.last_sequence)).toBe('0');
+        // Снимок несёт НАЧАЛЬНУЮ расстановку — то, ради чего он и пишется: вывести её из
+        // журнала невозможно, а сборщику проекции она нужна.
+        const agents = (snapshots[0]!.canonical_state as { agents: Record<string, unknown> })
+          .agents;
+        expect(Object.keys(agents).length).toBeGreaterThan(0);
+      } finally {
+        await connection.destroy();
+      }
+
+      const replay = cli(['world', 'replay'], fresh.url);
+      expect(replay.exitCode, replay.stdout + replay.stderr).toBe(0);
+      expect(replay.stdout).not.toContain('восстановлен из seed');
+      expect(replay.stdout).toContain('checksum совпадает.');
+    } finally {
+      await fresh.drop();
+    }
   });
 
   it('снимок посреди истории — суффикс применяется, checksum совпадает, "восстановлен из seed" не печатается', () => {
