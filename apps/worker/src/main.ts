@@ -36,6 +36,7 @@ import {
 } from './projection-builder.ts';
 import { worldBundles, worldRuntimeProfile } from './world-bundles.ts';
 import { WORLD_TEMPO_VERSION } from './world-tempo.ts';
+import { shouldReportProjectionFailure } from './projection-failure-reporting.ts';
 import { createWorldStep } from './world-step.ts';
 import { createWorker, type ClockPort, type SleepPort } from './worker.ts';
 
@@ -114,9 +115,28 @@ const openProjection = async (
     logger: { info: (fields, msg) => logger.info(fields, msg) },
   };
 
-  const cursor = await loadProjectionCursor(store, worldId);
-  if (cursor === null) {
-    await createProjectionAtGenesis(deps, await requireGenesis(db, worldId));
+  /**
+   * Пул закрывается, если открытие не удалось. Найдено ревьюером в МОЕЙ ЖЕ починке M1.
+   *
+   * `createProjectionDatabase` создаёт пул сразу, а первое обращение к базе идёт ниже. Пока
+   * открытие делалось однажды при старте, отказ стоил одного утёкшего пула на процесс — и то
+   * процесс тут же завершался. После починки M1 открытие ПОВТОРЯЕТСЯ каждый шаг, то есть раз в
+   * секунду, пока проекционная база лежит, и цена стала накопительной.
+   *
+   * Ревьюер предполагал исчерпание дескрипторов и, честно измерив, сам себя поправил: 300
+   * неудачных открытий дали +1.1 МБ кучи (~3.7 КБ за попытку) при неизменном числе активных
+   * ресурсов. То есть это медленная утечка памяти (~13 МБ за час простоя базы), а не отказ.
+   * MINOR — но починка, создающая утечку, чинит хуже, чем могла бы.
+   */
+  try {
+    const cursor = await loadProjectionCursor(store, worldId);
+    if (cursor === null) {
+      await createProjectionAtGenesis(deps, await requireGenesis(db, worldId));
+    }
+  } catch (error) {
+    await store.destroy();
+    await canonicalUnderProjectionRole.destroy();
+    throw error;
   }
 
   return {
@@ -212,7 +232,15 @@ async function main(): Promise<void> {
     return;
   }
 
-  /** Сколько шагов подряд не удалось собрать проекцию. Сбрасывается первым успешным. */
+  /**
+   * Сколько шагов подряд не удалось собрать проекцию. Сбрасывается первым успешным.
+   *
+   * Ревьюер справедливо заметил: счётчик, который только логируется, — это либо неиспользуемая
+   * переменная, либо недоделанный backoff. Здесь он ИСПОЛЬЗУЕТСЯ: частота жалоб убывает, чтобы
+   * лежащая база не превращала журнал в поток одинаковых строк, но полностью жалоба не смолкает
+   * НИКОГДА. Молчание после N отказов было бы хуже шума: «перестало обновляться» — это состояние,
+   * и о нём положено напоминать, пока оно длится.
+   */
   let projectionFailures = 0;
 
   const worker = createWorker({
@@ -256,10 +284,12 @@ async function main(): Promise<void> {
             projectionFailures = 0;
           } catch (error) {
             projectionFailures += 1;
-            logger.error(
-              { worldId: config.worldId, error: String(error), consecutive: projectionFailures },
-              'projection.step.failed: мир продолжает идти, но зритель его больше не видит',
-            );
+            if (shouldReportProjectionFailure(projectionFailures)) {
+              logger.error(
+                { worldId: config.worldId, error: String(error), consecutive: projectionFailures },
+                'projection.step.failed: мир продолжает идти, но зритель его больше не видит',
+              );
+            }
           }
         }
         return { claimed: result.claimed, worldTime: result.worldTime };

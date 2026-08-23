@@ -273,6 +273,14 @@ const apiFiles: Readonly<Record<string, string>> = {
  * молча выпадал именно `.tsx`, то есть ровно тот формат, в котором написан весь экран.
  */
 const webFiles: Readonly<Record<string, string>> = {
+  // M7 и m12 независимого аудита I03, обе воспроизведены его фикстурами до появления этих.
+  // `apps/web` — второе приложение observer-пути, и до I03 запрет на путь к persistence
+  // распространялся только на `apps/api`: проба от web давала НОЛЬ нарушений при 27 от api.
+  'web-to-persistence.ts':
+    "import '../../../../packages/persistence/src/database.ts';\nexport const marker = true;\n",
+  // Ребро app -> app не запрещало НИ ОДНО правило, хотя `PLAN.md` §10.2 опирается на его
+  // отсутствие как на исполняемое ограничение при выборе, куда переносить сборщик проекции.
+  'web-to-api.ts': "import '../../../api/src/server.ts';\nexport const marker = true;\n",
   'web-process-env.tsx': "export const bad = (): string | undefined => process.env['X'];\n",
   // Первая редакция проверяла здесь `Date.now()` и падала: приложениям он не запрещён вовсе
   // (порты времени — требование ядра, не экрана). Детектор мерил не то, что запрещено.
@@ -565,6 +573,16 @@ describe('boundary fixtures — dependency-cruiser (A2, ADR-002/003/006)', () =>
     expect(hasDepViolation('api-to-scripts.ts', 'apps-do-not-depend-on-scripts-or-tests')).toBe(
       true,
     );
+  });
+
+  it('apps/web -> packages/persistence: правило покрывает ОБА приложения observer-пути', () => {
+    expect(
+      hasDepViolation('web-to-persistence.ts', 'observer-api-does-not-reach-persistence'),
+    ).toBe(true);
+  });
+
+  it('apps/web -> apps/api: apps-do-not-depend-on-apps', () => {
+    expect(hasDepViolation('web-to-api.ts', 'apps-do-not-depend-on-apps')).toBe(true);
   });
 
   it('apps/api -> packages/projections -> packages/persistence (транзитивно): observer-api-does-not-reach-persistence', () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createWorker } from './worker.ts';
+import { shouldReportProjectionFailure } from './projection-failure-reporting.ts';
 
 /** Deferred promise helper so a test can control exactly when an in-flight step resolves. */
 function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
@@ -181,5 +182,24 @@ describe('createWorker', () => {
     while (calls < 3) await new Promise((resolve) => setTimeout(resolve, 1));
     await expect(worker.stop()).resolves.toBeUndefined();
     expect(calls).toBeGreaterThanOrEqual(3);
+  });
+
+  /**
+   * Убывающая частота жалоб — свойство, а не украшение: лежащая база не должна превращать журнал
+   * в поток одинаковых строк, но и замолчать не имеет права. Ревьюер заметил, что счётчик
+   * отказов только логировался и ни на что не влиял; проверяем, что теперь влияет и что
+   * молчания не наступает НИКОГДА.
+   */
+  it('частота жалоб на отказ убывает, но жалоба не смолкает', async () => {
+    const reported: number[] = [];
+    for (let consecutive = 1; consecutive <= 1000; consecutive += 1) {
+      if (shouldReportProjectionFailure(consecutive)) reported.push(consecutive);
+    }
+
+    expect(reported.slice(0, 5)).toEqual([1, 2, 4, 8, 16]);
+    // Разрежается, но не исчезает: на тысяче отказов сообщений заметно меньше сотни и больше нуля.
+    expect(reported.length).toBeGreaterThan(10);
+    expect(reported.length).toBeLessThan(40);
+    expect(reported.at(-1)).toBeGreaterThan(900);
   });
 });
