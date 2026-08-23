@@ -9,14 +9,15 @@
  *
  * Здесь — оболочка вокруг ДОМЕННОГО источника, а не собственная реализация PRNG: математика
  * (`deriveDrawValue`, hash streamKey) не дублируется. Значение draw в `DeterministicRandomSource`
- * — чистая функция `(seed, streamKey, drawIndex)` без цепочки мутируемого состояния (см.
- * докстринг `random-source.ts` в домене), поэтому "продолжить поток с позиции N" здесь означает
- * буквально: сделать N ХОЛОСТЫХ вызовов `draw(streamKey)` перед тем, как отдать управление
- * вызывающему. Копировать состояние не нужно и нечего — состояния между draw не существует.
+ * — чистая функция `(seed, streamKey, drawIndex)` без цепочки мутируемого состояния, поэтому
+ * "продолжить поток с позиции N" означает буквально "начать считать с N": стартовые индексы
+ * передаются доменному источнику и применяются за O(1).
  *
- * Прокрутка — ЛЕНИВАЯ, по потоку, при первом обращении к нему после восстановления: снимок
- * может содержать позиции для потоков (агентов, подсистем), к которым в текущем прогоне больше
- * никогда не обратятся, и прокручивать их вхолостую было бы чистой тратой.
+ * **Раньше здесь была ПРОКРУТКА** — N холостых вызовов `draw` при первом обращении к потоку.
+ * Она давала тот же результат и была снята не за неверность, а за цену: 119 мс на команду при
+ * позиции 5·10^6, и всё это время держится замок строки мира (M-E, второй раунд верификации).
+ * Единственное, что оболочка теперь добавляет к доменному источнику, — учёт `positions()` для
+ * следующего снимка.
  */
 import { DeterministicRandomSource, type RandomDraw, type RandomSource } from '@zona/domain';
 
@@ -30,21 +31,14 @@ export interface PersistentRandomSourceOptions {
   readonly startPositions?: Readonly<Record<string, number>>;
 }
 
-/** Позиция потока, которого раньше не существовало: свежий мир начинает каждый поток с нуля. */
-const FRESH_POSITION = 0;
-
 export class PersistentRandomSource implements RandomSource {
   private readonly inner: RandomSource;
   private readonly startPositions: ReadonlyMap<string, number>;
-  /** Какие потоки уже прокручены вхолостую до стартовой позиции (прокрутка — не более раза). */
-  private readonly caughtUpStreams = new Set<string>();
   /** Следующий drawIndex по каждому потоку, К КОТОРОМУ ОБРАТИЛИСЬ в этом инстансе — то, что
    *  войдёт в `prng_stream_positions` СЛЕДУЮЩЕГО снимка (см. {@link positions}). */
   private readonly nextDrawIndex = new Map<string, number>();
 
   constructor(options: PersistentRandomSourceOptions) {
-    this.inner = new DeterministicRandomSource(options.seed);
-
     const positions = new Map<string, number>();
     for (const [streamKey, position] of Object.entries(options.startPositions ?? {})) {
       if (!Number.isSafeInteger(position) || position < 0) {
@@ -56,10 +50,12 @@ export class PersistentRandomSource implements RandomSource {
       positions.set(streamKey, position);
     }
     this.startPositions = positions;
+    // Проверка позиций СВОЯ, а не переложена на домен: сообщение об ошибке обязано называть
+    // источник данных (снимок мира), а доменный источник о снимках не знает.
+    this.inner = new DeterministicRandomSource(options.seed, options.startPositions);
   }
 
   draw(streamKey: string): RandomDraw {
-    this.catchUp(streamKey);
     const draw = this.inner.draw(streamKey);
     this.nextDrawIndex.set(streamKey, draw.drawIndex + 1);
     return draw;
@@ -77,16 +73,5 @@ export class PersistentRandomSource implements RandomSource {
       merged.set(streamKey, position);
     }
     return Object.fromEntries(merged);
-  }
-
-  /** Прокручивает поток вхолостую до сохранённой позиции. Не более одного раза на поток. */
-  private catchUp(streamKey: string): void {
-    if (this.caughtUpStreams.has(streamKey)) return;
-    this.caughtUpStreams.add(streamKey);
-
-    const target = this.startPositions.get(streamKey) ?? FRESH_POSITION;
-    for (let index = 0; index < target; index += 1) {
-      this.inner.draw(streamKey);
-    }
   }
 }

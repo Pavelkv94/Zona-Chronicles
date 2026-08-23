@@ -95,11 +95,33 @@ export class DeterministicRandomSource implements RandomSource {
   private readonly seed: number;
   private readonly nextDrawIndex = new Map<string, number>();
 
-  constructor(seed: number) {
+  /**
+   * `startDrawIndexes` — с какого индекса продолжается каждый поток (M-E, второй раунд
+   * верификации I02B). Поток, не названный здесь, начинается с нуля, как в свежем мире.
+   *
+   * Это НЕ шов ради теста, а следствие того, чем является `deriveDrawValue`: чистая функция
+   * `(seed, keyHash, drawIndex)` без цепочки состояния между draw. Раз состояния нет, «продолжить
+   * поток с позиции N» — это буквально «начать считать с N», за O(1). До этой правки
+   * восстановление жило в persistence и делало N ХОЛОСТЫХ вызовов `draw`: на позиции 5·10^6 это
+   * 119 мс на команду, и всё это время держится замок строки мира, то есть сериализуются ВСЕ
+   * команды мира. Цена росла с возрастом мира — ровно там, где рост недопустим.
+   *
+   * Домен остаётся чистым: индексы приходят ПАРАМЕТРОМ, источник их не читает ниоткуда.
+   */
+  constructor(seed: number, startDrawIndexes?: Readonly<Record<string, number>>) {
     if (!Number.isSafeInteger(seed)) {
       throw new Error(`RandomSource: seed обязан быть безопасным целым, получено ${String(seed)}`);
     }
     this.seed = seed;
+    for (const [streamKey, index] of Object.entries(startDrawIndexes ?? {})) {
+      if (!Number.isSafeInteger(index) || index < 0) {
+        throw new Error(
+          `RandomSource: стартовый индекс потока "${streamKey}" обязан быть неотрицательным ` +
+            `безопасным целым, получено ${String(index)}`,
+        );
+      }
+      this.nextDrawIndex.set(streamKey, index);
+    }
   }
 
   draw(streamKey: string): RandomDraw {
