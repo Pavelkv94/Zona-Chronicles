@@ -52,7 +52,12 @@ const PACKAGES: Record<string, PackagePolicy> = {
   '@zona/content': { workspace: [], external: CORE_EXTERNAL },
 
   '@zona/persistence': { workspace: ['@zona/contracts', '@zona/domain'] },
-  '@zona/projections': { workspace: ['@zona/contracts', '@zona/domain', '@zona/persistence'] },
+  // I03: `@zona/persistence` УБРАН из разрешённых, а не просто не используется. От проекций
+  // зависит `apps/api`, а запрет observer-пути на канонические таблицы транзитивен
+  // (`observer-api-does-not-reach-persistence`): объявленная зависимость была бы приглашением
+  // однажды ею воспользоваться и молча снять запрет для всего API. `@zona/domain` убран по той
+  // же причине — проекция сворачивает записанные факты, доменные правила ей не нужны.
+  '@zona/projections': { workspace: ['@zona/contracts'] },
   '@zona/representation': { workspace: ['@zona/contracts', '@zona/projections'] },
   '@zona/testkit': { workspace: ['@zona/contracts', '@zona/domain'] },
   '@zona/api': { workspace: ['@zona/contracts', '@zona/projections'] },
@@ -64,6 +69,9 @@ const PACKAGES: Record<string, PackagePolicy> = {
       '@zona/persistence',
       '@zona/projections',
       '@zona/representation',
+      // I03: worker собирает observer projection и потому обязан знать, из какого контента
+      // построены bundles генезисного снимка — иначе он не сможет его прочитать.
+      '@zona/content',
     ],
   },
   '@zona/cli': {

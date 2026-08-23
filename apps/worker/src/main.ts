@@ -19,7 +19,21 @@ import {
   parseDatabaseConnectionUrl,
   runWorldTick,
 } from '@zona/persistence';
+import {
+  createProjectionDatabase,
+  loadProjectionCursor,
+  parseProjectionDatabaseUrl,
+  type ProjectionDatabase,
+} from '@zona/projections';
 import { loadConfig } from './config.ts';
+import {
+  createProjectionAtGenesis,
+  genesisFromSnapshot,
+  rebuildProjection,
+  runProjectionStep,
+  type ProjectionBuilderDeps,
+} from './projection-builder.ts';
+import { worldBundles, worldRuntimeProfile } from './world-bundles.ts';
 import { createWorldStep } from './world-step.ts';
 import { createWorker, type ClockPort, type SleepPort } from './worker.ts';
 
@@ -29,6 +43,65 @@ import { createWorker, type ClockPort, type SleepPort } from './worker.ts';
  * опрос не был заметен в нагрузке. На СКОРОСТЬ мира не влияет.
  */
 const POLL_INTERVAL_MS = 1000;
+
+/**
+ * Начальная расстановка агентов из генезисного снимка. Отказ громкий: мир, созданный до I03,
+ * снимка не имеет, и собирать проекцию не из чего — придумывать историю сборщик не имеет права.
+ */
+const requireGenesis = async (db: ReturnType<typeof createDatabase>, worldId: string) => {
+  const genesis = await genesisFromSnapshot(db, worldId, worldBundles(), worldRuntimeProfile());
+  if (genesis === null) {
+    throw new Error(
+      `worker: у мира ${worldId} нет генезисного снимка (sequence 0). Он пишется при "world ` +
+        'init" начиная с I03; мир, созданный раньше, обязан быть пересоздан либо получить снимок ' +
+        'вручную — начальную расстановку агентов вывести из журнала невозможно.',
+    );
+  }
+  return genesis;
+};
+
+/**
+ * Открывает хранилище проекции и создаёт проекцию, если её ещё нет.
+ *
+ * `null` — `PROJECTION_DATABASE_URL` не задан: worker двигает мир, но ленты и карты не будет.
+ * Об этом ГОВОРИТСЯ в логе запуска: молча не собирать проекцию значило бы, что зритель видит
+ * замерший мир и не знает почему.
+ */
+const openProjection = async (
+  projectionDatabaseUrl: string | undefined,
+  db: ReturnType<typeof createDatabase>,
+  worldId: string,
+  logger: {
+    warn: (fields: Record<string, unknown>, msg: string) => void;
+    info: (fields: Record<string, unknown>, msg: string) => void;
+  },
+): Promise<{ deps: ProjectionBuilderDeps; close: () => Promise<void> } | null> => {
+  if (projectionDatabaseUrl === undefined) {
+    logger.warn(
+      { worldId },
+      'projection.disabled: PROJECTION_DATABASE_URL не задан — карта и лента собираться не будут',
+    );
+    return null;
+  }
+
+  const store: ProjectionDatabase = createProjectionDatabase(
+    parseProjectionDatabaseUrl(projectionDatabaseUrl),
+  );
+  const deps: ProjectionBuilderDeps = {
+    canonical: db,
+    projection: store,
+    worldId,
+    now: () => new Date(),
+    logger: { info: (fields, msg) => logger.info(fields, msg) },
+  };
+
+  const cursor = await loadProjectionCursor(store, worldId);
+  if (cursor === null) {
+    await createProjectionAtGenesis(deps, await requireGenesis(db, worldId));
+  }
+
+  return { deps, close: async () => await store.destroy() };
+};
 
 async function main(): Promise<void> {
   // §12 03_TECHNICAL_DESIGN: fails closed if NODE_ENV=production and DEPLOYMENT_ID is missing —
@@ -58,6 +131,24 @@ async function main(): Promise<void> {
 
   const workerOwner = `worker:${config.deploymentId}:${String(process.pid)}`;
 
+  const projection = await openProjection(config.projectionDatabaseUrl, db, config.worldId, logger);
+
+  // Пересборка — отдельный режим, а не побочный эффект запуска: стереть проекцию мира, потому
+  // что «процесс всё равно стартует», однажды сотрёт её у того, кто этого не хотел (D7).
+  if (process.argv.includes('--rebuild-projection')) {
+    if (projection === null) {
+      throw new Error(
+        'worker: --rebuild-projection требует PROJECTION_DATABASE_URL — пересобирать нечего.',
+      );
+    }
+    const genesis = await requireGenesis(db, config.worldId);
+    const result = await rebuildProjection(projection.deps, genesis);
+    logger.info({ applied: result.applied, worldId: config.worldId }, 'projection.rebuilt');
+    await projection.close();
+    await db.destroy();
+    return;
+  }
+
   const worker = createWorker({
     clock,
     sleeper,
@@ -72,6 +163,10 @@ async function main(): Promise<void> {
           owner: workerOwner,
           horizon,
         });
+        // Проекция догоняется ПОСЛЕ шага мира, в том же цикле. Отдельный процесс дал бы вторую
+        // точку отказа и вторую задержку между фактом и его видимостью, а выигрыша не дал бы:
+        // писатель проекции всё равно один.
+        if (projection !== null) await runProjectionStep(projection.deps);
         return { claimed: result.claimed, worldTime: result.worldTime };
       },
       logger: {
@@ -96,6 +191,7 @@ async function main(): Promise<void> {
       worldMinutesPerRealSecond: config.worldMinutesPerRealSecond,
       startWorldTime: startState.worldTime,
       owner: workerOwner,
+      projection: projection === null ? 'disabled' : 'enabled',
     },
     'worker.started',
   );

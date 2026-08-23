@@ -29,6 +29,7 @@
     "@zona/persistence": "workspace:*",
     "@zona/projections": "workspace:*",
     "@zona/representation": "workspace:*",
-    "pino": "10.3.1"
+    "pino": "10.3.1",
+    "@zona/content": "workspace:*"
   }
 }

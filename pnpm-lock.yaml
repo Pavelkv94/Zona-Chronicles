@@ -104,6 +104,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@zona/content':
+        specifier: workspace:*
+        version: link:../../packages/content
       '@zona/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
