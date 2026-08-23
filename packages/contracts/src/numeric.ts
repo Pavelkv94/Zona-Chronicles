@@ -289,6 +289,41 @@ export const DRAW_INDEX_UNIT = defineNumericUnit({
   max: Number.MAX_SAFE_INTEGER,
 });
 
+/**
+ * Порядковый номер применённого проекцией события (I03).
+ *
+ * ОТДЕЛЬНАЯ единица от `SEQUENCE_UNIT`, а не переиспользование, и это не формальность.
+ * Каноническая `sequence` — номер commit в журнале мира; projection sequence — номер шага
+ * ПРОЕКЦИИ, у которой своя история: она может отставать, пересобираться с нуля и пропускать
+ * события, не попадающие в observer-слой. Совпадение значений сегодня — совпадение, а не
+ * свойство. Одна единица на две величины означала бы, что курсор SSE и курсор журнала можно
+ * перепутать без единого сигнала — а зритель получает ИМЕННО projection sequence (§7
+ * 03_TECHNICAL_DESIGN), и канонический номер ему знать неоткуда.
+ */
+export const PROJECTION_SEQUENCE_UNIT = defineNumericUnit({
+  id: 'count.projection_sequence',
+  description: 'Порядковый номер шага проекции; целое, строго возрастает, начинается с 1.',
+  minorUnitsPerMajor: 1,
+  min: 1,
+  max: Number.MAX_SAFE_INTEGER,
+});
+
+/**
+ * Длительность перехода по маршруту в минутах МИРОВОГО времени (I03, observer map).
+ *
+ * Единица нужна, потому что A5 запрещает безразмерное число в контракте: `travel_minutes: 40`
+ * без единицы читается как «сорок чего-то» и однажды окажется секундами. Минимум 1 — переход
+ * длительностью ноль означал бы телепортацию, то есть событие начала и завершения в один момент
+ * мирового времени.
+ */
+export const TRAVEL_MINUTES_UNIT = defineNumericUnit({
+  id: 'duration.travel_minutes',
+  description: 'Длительность перехода по маршруту в минутах мирового времени; целое, минимум 1.',
+  minorUnitsPerMajor: 1,
+  min: 1,
+  max: Number.MAX_SAFE_INTEGER,
+});
+
 /** Сколько draw израсходовал outcome (§7 random audit). */
 export const DRAW_COUNT_UNIT = defineNumericUnit({
   id: 'count.prng_draw',

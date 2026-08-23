@@ -185,3 +185,22 @@ export {
   verifyRuntimeProfileCompatibility,
   verifySnapshotChecksum,
 } from './snapshot.ts';
+
+export {
+  type ObserverAgent,
+  type ObserverEvent,
+  type ObserverMapEdge,
+  type ObserverMapNode,
+  type ObserverStreamReset,
+  type ObserverWorldSnapshot,
+  OBSERVER_AGENT_STATUSES,
+  OBSERVER_STREAM_EVENT_NAMES,
+  ObserverAgentSchema,
+  ObserverEventSchema,
+  ObserverMapEdgeSchema,
+  ObserverMapNodeSchema,
+  ObserverStreamResetSchema,
+  ObserverWorldSnapshotSchema,
+  decodeObserverEvent,
+  decodeObserverWorldSnapshot,
+} from './observer.ts';

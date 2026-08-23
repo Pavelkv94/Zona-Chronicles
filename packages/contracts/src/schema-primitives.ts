@@ -12,8 +12,10 @@ import {
   DRAW_COUNT_UNIT,
   DRAW_INDEX_UNIT,
   type NumericUnit,
+  PROJECTION_SEQUENCE_UNIT,
   SCHEMA_VERSION_UNIT,
   SEQUENCE_UNIT,
+  TRAVEL_MINUTES_UNIT,
   WORLD_VERSION_UNIT,
 } from './numeric.ts';
 import { CHECKSUM_PATTERN } from './checksum.ts';
@@ -101,6 +103,16 @@ export const WorldVersionSchema = UnitIntegerSchema(
 export const SchemaVersionSchema = UnitIntegerSchema(
   SCHEMA_VERSION_UNIT,
   'Версия схемы payload конкретного type.',
+);
+
+export const ProjectionSequenceSchema = UnitIntegerSchema(
+  PROJECTION_SEQUENCE_UNIT,
+  'Порядковый номер шага проекции; курсор SSE и observer snapshot (§7 03_TECHNICAL_DESIGN).',
+);
+
+export const TravelMinutesSchema = UnitIntegerSchema(
+  TRAVEL_MINUTES_UNIT,
+  'Длительность перехода по маршруту в минутах мирового времени.',
 );
 
 export const DrawIndexSchema = UnitIntegerSchema(
