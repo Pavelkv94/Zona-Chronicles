@@ -1,17 +1,17 @@
 {
-  "//": "I02B, раунд верификации 2 (узкий: только diff 2c645e7..HEAD). Обе роли read-only: пустой write_paths запрещает любую запись. Привязка по agent_types — платформа кладёт в hook payload ИМЯ сессии, а не роль. Две ОТДЕЛЬНЫЕ записи, а не одна на двоих (закрывает m7 первого раунда): приём «одна запись на несколько сессий» безвреден только при пустых правах и не должен закрепляться как образец.",
+  "//": "I03, раунд верификации. ЧЕТЫРЕ сессии, две роли: первый набор (полный аудит) и второй (узкие задания). Все read-only: пустой write_paths запрещает любую запись, и это ровно то, что задумано ADR-008 — нулевые права выражаются явно, а не отсутствием записи в файле.\n\nПОЧЕМУ ФАЙЛ ЛЕЖИТ ЗДЕСЬ, А НЕ ТОЛЬКО В WORKTREE РЕВЬЮЕРА. Hook берёт projectRoot из input.cwd (pre-tool-use-bash.ts:29-30), а in-process subagent наследует cwd родительской сессии — то есть ЭТО дерево. Write set, который скрипт task:worktree аккуратно кладёт в дерево задачи, не читается никогда. В I03 здесь оставался файл I02B с чужими agent_types, и все четыре ревьюера получили fail-closed на любой Bash, включая pwd: раунд верификации был потерян целиком. Это BLOCKER 1-1 в REVIEW.md итерации; сам механизм чинится отдельно, этот файл — восстановление прав, а не починка причины.\n\nagent_types перечисляет ИМЕНА СЕССИЙ: платформа кладёт в payload имя, а не роль. Имя неподделываемо со стороны сессии, поэтому список имён и есть декларация прав.",
   "tasks": [
     {
-      "task_id": "I02B-VERIFY-R2-ARCH",
+      "task_id": "I03-VERIFY-TESTS",
       "owner_role": "reviewer",
-      "agent_types": ["i02b-r2-arch-reviewer", "architecture-reviewer"],
+      "agent_types": ["i03-test-reviewer", "i03-r2-projections", "test-reviewer"],
       "write_paths": [],
       "allow_protected_paths": []
     },
     {
-      "task_id": "I02B-VERIFY-R2-TEST",
+      "task_id": "I03-VERIFY-ARCH",
       "owner_role": "reviewer",
-      "agent_types": ["i02b-r2-test-reviewer", "test-reviewer"],
+      "agent_types": ["i03-arch-reviewer", "i03-r2-boundaries", "architecture-reviewer"],
       "write_paths": [],
       "allow_protected_paths": []
     }
