@@ -76,6 +76,7 @@ const openProjection = async (
     warn: (fields: Record<string, unknown>, msg: string) => void;
     info: (fields: Record<string, unknown>, msg: string) => void;
   },
+  batchSize: number | undefined,
 ): Promise<{ deps: ProjectionBuilderDeps; close: () => Promise<void> } | null> => {
   if (projectionDatabaseUrl === undefined) {
     logger.warn(
@@ -93,6 +94,7 @@ const openProjection = async (
     projection: store,
     worldId,
     now: () => new Date(),
+    ...(batchSize === undefined ? {} : { batchSize }),
     logger: { info: (fields, msg) => logger.info(fields, msg) },
   };
 
@@ -137,7 +139,13 @@ async function main(): Promise<void> {
 
   const workerOwner = `worker:${config.deploymentId}:${String(process.pid)}`;
 
-  const projection = await openProjection(config.projectionDatabaseUrl, db, config.worldId, logger);
+  const projection = await openProjection(
+    config.projectionDatabaseUrl,
+    db,
+    config.worldId,
+    logger,
+    config.projectionBatchSize,
+  );
 
   // Пересборка — отдельный режим, а не побочный эффект запуска: стереть проекцию мира, потому
   // что «процесс всё равно стартует», однажды сотрёт её у того, кто этого не хотел (D7).

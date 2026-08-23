@@ -49,6 +49,21 @@ export type Config = {
    * зритель видит замерший мир и не знает почему.
    */
   readonly projectionDatabaseUrl: string | undefined;
+  /**
+   * Сколько событий сборщик проекции применяет за один шаг (одну транзакцию).
+   *
+   * Умолчание живёт в `projection-builder.ts` рядом с самим шагом; здесь только возможность его
+   * переопределить. Знак операционный, а не тестовый: мир с большим отставанием проекции — это
+   * выбор между «догнать быстрее одной длинной транзакцией» и «не держать длинную транзакцию на
+   * работающей базе», и делает его тот, кто эксплуатирует, а не тот, кто писал умолчание.
+   *
+   * Побочно это делает ПРОВЕРЯЕМЫМ многопачечный догон. При пачке 200 и мире из полутора десятков
+   * событий догон целиком укладывается в одну транзакцию, поэтому убить сборщик ПОСРЕДИ него
+   * невозможно — а именно это и требует наблюдать D6 («процесс убит и запущен заново»). Первая
+   * редакция acceptance-теста D6 этого не учла и проходила, ничего не проверив: три SIGKILL не
+   * заставали сборщик за работой ни разу.
+   */
+  readonly projectionBatchSize: number | undefined;
 };
 
 const LOCAL_DEPLOYMENT_ID = 'local-dev-unset';
@@ -58,6 +73,18 @@ const DEFAULTS = {
   nodeEnv: 'development' as NodeEnv,
   worldId: 'world:prototype',
 };
+
+/** Размер пачки: положительное целое либо не задан. Ноль остановил бы сборщик молча. */
+function parseProjectionBatchSize(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim().length === 0) return undefined;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(
+      `Invalid config: PROJECTION_BATCH_SIZE must be a positive integer, got ${JSON.stringify(raw)}.`,
+    );
+  }
+  return parsed;
+}
 
 /**
  * Темп читается из окружения, но ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ живёт не здесь, а в `world-tempo.ts`
@@ -156,6 +183,7 @@ export function parseConfig(env: Record<string, string | undefined>): Config {
     worldId:
       (env['WORLD_ID']?.trim() ?? '').length > 0 ? env['WORLD_ID']!.trim() : DEFAULTS.worldId,
     worldMinutesPerRealSecond: parseWorldTempo(env['WORLD_MINUTES_PER_REAL_SECOND']),
+    projectionBatchSize: parseProjectionBatchSize(env['PROJECTION_BATCH_SIZE']),
     projectionDatabaseUrl:
       (env['PROJECTION_DATABASE_URL']?.trim() ?? '').length > 0
         ? env['PROJECTION_DATABASE_URL']!.trim()
