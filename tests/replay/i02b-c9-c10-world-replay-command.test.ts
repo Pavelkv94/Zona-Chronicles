@@ -1,4 +1,19 @@
 /**
+ * Набор `replay` — единственный, где живут сквозные проверки восстановления мира.
+ *
+ * I03: до этого каталог `tests/replay/` содержал ровно один файл — заглушку, обещавшую, что
+ * «настоящий replay-набор появится в I02B». Он появился, но лёг в `tests/acceptance/`, а
+ * заглушка осталась. `pnpm test:replay` запускался с `--passWithNoTests` и потому НЕ МОГ УПАСТЬ:
+ * шаг полного gate, названный «replay», проходил, ничего не проверив, и попадал в отчёт как
+ * пройденный. Найдено собственным прогоном `verify:full`, когда шаг не напечатал ни одной
+ * строки результата.
+ *
+ * Файл перенесён сюда, заглушка удалена, `--passWithNoTests` снят: пустой каталог теперь роняет
+ * gate, а не молчит. Проверка от переноса не изменилась ни на строку и по-прежнему исполняется
+ * в `verify:full`.
+ *
+ * ---
+ *
  * `world replay` — команда действительно сравнивает и действительно падает при расхождении
  * (ACCEPTANCE C9/C10, `PLAN.md` §2, задание "последний пункт scope итерации").
  *
@@ -36,7 +51,7 @@ import {
   type TestDatabase,
 } from '../../packages/persistence/src/__fixtures__/test-database.ts';
 import { currentBundles } from '../../apps/cli/src/world.ts';
-import { spawnWorldCliDirect } from './support/spawn-world-cli.ts';
+import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
 const ROUTE_ID = 'route:yard-to-bridge';

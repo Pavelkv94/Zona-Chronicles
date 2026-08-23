@@ -21,7 +21,7 @@
     "test:integration": "vitest run --project integration",
     "test:contract": "vitest run --project contract",
     "test:acceptance": "vitest run --project acceptance",
-    "test:replay": "vitest run --project replay --passWithNoTests",
+    "test:replay": "vitest run --project replay",
     "test:coverage": "vitest run --coverage",
     "security:secrets": "node scripts/security/scan-secrets.ts",
     "security:dependencies": "node scripts/security/scan-dependencies.ts",

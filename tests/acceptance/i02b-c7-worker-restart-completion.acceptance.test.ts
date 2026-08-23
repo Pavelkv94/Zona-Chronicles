@@ -20,7 +20,7 @@ import {
   createTestDatabase,
   type TestDatabase,
 } from '../../packages/persistence/src/__fixtures__/test-database.ts';
-import { spawnWorldCliDirect } from './support/spawn-world-cli.ts';
+import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
 // route:yard-to-bridge (40 мин) годится только агентам, начинающим в loc:quiet-yard — при

@@ -25,7 +25,7 @@ import { type SpawnSyncReturns, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-const CLI_ENTRY = fileURLToPath(new URL('../../../apps/cli/src/main.ts', import.meta.url));
+const CLI_ENTRY = fileURLToPath(new URL('../../apps/cli/src/main.ts', import.meta.url));
 
 /**
  * Собранные `dist` рабочих пакетов, без которых порождённый CLI не стартует.
@@ -37,7 +37,7 @@ const CLI_ENTRY = fileURLToPath(new URL('../../../apps/cli/src/main.ts', import.
  * причину: acceptance зависит от `pnpm build`, и это должно быть видно сразу.
  */
 const REQUIRED_DIST_ENTRIES = ['contracts', 'domain', 'content', 'persistence'].map((name) =>
-  fileURLToPath(new URL(`../../../packages/${name}/dist/index.js`, import.meta.url)),
+  fileURLToPath(new URL(`../../packages/${name}/dist/index.js`, import.meta.url)),
 );
 
 let distChecked = false;

@@ -28,7 +28,7 @@ import {
   type TestDatabase,
 } from '../../packages/persistence/src/__fixtures__/test-database.ts';
 import { seedWorld } from '../../apps/cli/src/world.ts';
-import { spawnWorldCliDirect } from './support/spawn-world-cli.ts';
+import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
 const WORLD_ID = 'world:prototype';

@@ -23,7 +23,7 @@ import {
   createTestDatabase,
   type TestDatabase,
 } from '../../packages/persistence/src/__fixtures__/test-database.ts';
-import { spawnWorldCliDirect } from './support/spawn-world-cli.ts';
+import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
 const AGENT_ID = 'agent:rook';

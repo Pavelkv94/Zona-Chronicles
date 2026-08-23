@@ -27,7 +27,7 @@
  * silently leaving — it is a scope boundary of what a process-level acceptance test can observe.
  */
 import { describe, expect, it } from 'vitest';
-import { spawnWorldCliDirect } from './support/spawn-world-cli.ts';
+import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
 

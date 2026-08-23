@@ -37,7 +37,7 @@
  * be worth adding when I01-T4 lands).
  */
 import { describe, expect, it } from 'vitest';
-import { POISONED_NETWORK_ENV, spawnWorldCliViaPnpm } from './support/spawn-world-cli.ts';
+import { POISONED_NETWORK_ENV, spawnWorldCliViaPnpm } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
 const NO_DB_TIMEOUT_MS = 5_000;

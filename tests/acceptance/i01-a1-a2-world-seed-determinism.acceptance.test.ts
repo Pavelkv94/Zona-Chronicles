@@ -15,7 +15,7 @@
  */
 import { decodeSnapshot, isValidationFailure } from '@zona/contracts';
 import { describe, expect, it } from 'vitest';
-import { spawnWorldCliDirect } from './support/spawn-world-cli.ts';
+import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 /**
  * "не должно быть ниже 100 в gate без решения lead-а" (CLAUDE.md; ACCEPTANCE "Что НЕ является
