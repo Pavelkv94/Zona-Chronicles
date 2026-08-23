@@ -588,7 +588,15 @@ export const runWorldSnapshotCommand = async (db: DatabaseConnection): Promise<C
  * `pnpm world replay` без предшествующего `world snapshot` именно поэтому — команде есть от чего
  * реплеить с первого дня жизни мира.
  */
-export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<CliResult> => {
+export const runWorldReplayCommand = async (
+  db: DatabaseConnection,
+  args: readonly string[] = [],
+): Promise<CliResult> => {
+  // M-C второго раунда: явный флаг для квалификационного прогона §7. Без него сравнить replay на
+  // старом и новом профиле невозможно — загрузка снимка бросает, то есть процедура, которой
+  // ADR-010 обосновывает жёсткость проверки, через CLI недоступна. Флаг не умолчание и не тихий:
+  // прогон под ним печатает предупреждение отдельной строкой.
+  const acceptUnqualifiedProfile = args.includes('--accept-unqualified-profile');
   const state = await loadWorldState(db, PROTOTYPE_WORLD.worldId);
   if (state === null) {
     return {
@@ -611,6 +619,7 @@ export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<Cli
     stored = await loadLatestSnapshot(db, state.worldId, {
       bundles,
       runtimeProfile: currentDeterministicRuntimeProfile(),
+      ...(acceptUnqualifiedProfile ? { acceptUnqualifiedProfile: true } : {}),
     });
   } catch (error) {
     if (error instanceof UnqualifiedRuntimeProfileError) {
@@ -618,7 +627,8 @@ export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<Cli
         stdout:
           `world replay: сверка НЕ ВЫПОЛНЕНА — профиль выполнения не квалифицирован.\n${error.message}\n` +
           'Это не расхождение мира с журналом: мир цел, но текущий runtime ещё не прошёл ' +
-          'compatibility suite (§7 07_MVP_MECHANICS_SPEC).\n',
+          'compatibility suite (§7 07_MVP_MECHANICS_SPEC).\n' +
+          'Для квалификационного прогона: world replay --accept-unqualified-profile.\n',
         exitCode: 3,
       };
     }
@@ -634,6 +644,13 @@ export const runWorldReplayCommand = async (db: DatabaseConnection): Promise<Cli
   );
 
   const lines = [
+    ...(acceptUnqualifiedProfile
+      ? [
+          'ВНИМАНИЕ: сверка выполняется под НЕКВАЛИФИЦИРОВАННЫМ профилем выполнения ' +
+            '(--accept-unqualified-profile). Совпадение checksum здесь — вход в процедуру ' +
+            'квалификации §7, а не её результат.',
+        ]
+      : []),
     `Снимок: sequence ${String(snapshot.last_sequence)}` +
       (bootstrapped ? ' (в базе снимков не было — восстановлен из seed)' : ''),
     `Применено событий суффикса: ${String(result.appliedEventCount)}`,

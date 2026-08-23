@@ -361,6 +361,16 @@ describe('snapshot-store: запись и чтение снимков (C8, C11)'
         runtimeProfile: runtimeProfile(),
       }),
     ).rejects.toBeInstanceOf(UnqualifiedRuntimeProfileError);
+
+    // M-C второго раунда: §7 определяет квалификацию нового runtime как сравнение replay на
+    // старом и новом профиле. Без явного согласия такое сравнение неисполнимо — загрузка
+    // бросает. Флаг делает процедуру исполнимой и НЕ меняет умолчания (проверено строкой выше).
+    const accepted = await loadLatestSnapshot(db, FIXTURE_WORLD_ID, {
+      bundles: bundles(),
+      runtimeProfile: runtimeProfile(),
+      acceptUnqualifiedProfile: true,
+    });
+    expect(accepted?.deterministic_runtime_profile.prng_version).toBe('xoshiro256++/2');
   });
 
   /**

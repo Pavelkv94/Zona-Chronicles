@@ -78,6 +78,27 @@ export interface SnapshotContent {
 export interface LoadSnapshotContext {
   readonly bundles: Snapshot['bundles'];
   readonly runtimeProfile: DeterministicRuntimeProfile;
+  /**
+   * Прочитать снимок, СНЯТЫЙ под неквалифицированным профилем (M-C, второй раунд верификации).
+   *
+   * Существует ради одной процедуры и только ради неё. §7 `07_MVP_MECHANICS_SPEC` определяет
+   * квалификацию нового runtime как «сравнить replay и resimulation regression bank на старом и
+   * новом profile». Без этого флага такое сравнение НЕИСПОЛНИМО: загрузка старого снимка на новом
+   * профиле бросает, то есть процедура, которой ADR-010 обосновывает жёсткость проверки, через
+   * поставляемый API недоступна. Мир с непрочитываемыми снимками не реплеится вовсе — это ещё и
+   * противоречит OPS-04.
+   *
+   * НЕ обходной путь: вызывающий, поставивший этот флаг, обязан сообщить об этом наружу. `world
+   * replay` требует явного `--accept-unqualified-profile` и печатает предупреждение отдельной
+   * строкой. Умолчание не меняется — без флага несовместимость остаётся громким отказом.
+   *
+   * Чего этот флаг НЕ решает: канонический мир продолжает изменяться `executeCommand`, который
+   * снимков не читает вовсе, поэтому процесс с неквалифицированным профилем по-прежнему может
+   * дописывать события. Настоящее исправление — симметричная проверка на пути ЗАПИСИ — требует
+   * durable «квалифицированного профиля мира», то есть ещё колонки и миграции; записано
+   * требованием в I03 (см. REVIEW итерации, M-C).
+   */
+  readonly acceptUnqualifiedProfile?: boolean;
 }
 
 /**
@@ -200,7 +221,7 @@ const rowToSnapshot = (
     snapshot.deterministic_runtime_profile,
     context.runtimeProfile,
   );
-  if (isValidationFailure(compatible)) {
+  if (isValidationFailure(compatible) && context.acceptUnqualifiedProfile !== true) {
     throw new UnqualifiedRuntimeProfileError(
       `persistence: снимок ${label} снят под несовместимым профилем выполнения: ` +
         `${compatible.errors.map((issue) => `${issue.path} ${issue.message}`).join('; ')}. ` +

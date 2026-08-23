@@ -147,7 +147,7 @@ export async function runCliAsync(argv: readonly string[], config: CliConfig): P
       case 'world snapshot':
         return await runWorldSnapshotCommand(db);
       case 'world replay':
-        return await runWorldReplayCommand(db);
+        return await runWorldReplayCommand(db, commandArgs);
       default:
         // Реестр пометил команду как требующую базу, но здесь её нет — честный отказ вместо
         // молчаливого падения в синхронный путь, который базу не откроет.
