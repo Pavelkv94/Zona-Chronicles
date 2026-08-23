@@ -11,6 +11,7 @@ import { worldPrngPositionsMigration } from './0009-world-prng-positions.ts';
 import { backfillPrngPositionsMigration } from './0010-backfill-prng-positions.ts';
 import { observerProjectionMigration } from './0011-observer-projection.ts';
 import { worldQualifiedProfileMigration } from './0012-world-qualified-profile.ts';
+import { snapshotBundlesMigration } from './0013-snapshot-bundles.ts';
 
 export type { Migration } from './types.ts';
 
@@ -36,4 +37,5 @@ export const migrations: readonly Migration[] = [
   backfillPrngPositionsMigration,
   observerProjectionMigration,
   worldQualifiedProfileMigration,
+  snapshotBundlesMigration,
 ];

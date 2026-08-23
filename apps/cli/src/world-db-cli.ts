@@ -33,6 +33,7 @@ import {
   parseDatabaseConnectionUrl,
   replayFromSnapshot,
   runMigrations,
+  SnapshotBundleMismatchError,
   UnqualifiedRuntimeProfileError,
   repairWorldPrngPositions,
   UnqualifiedCanonicalWriterError,
@@ -711,6 +712,22 @@ export const runWorldReplayCommand = async (
       ...(acceptUnqualifiedProfile ? { acceptUnqualifiedProfile: true } : {}),
     });
   } catch (error) {
+    if (error instanceof SnapshotBundleMismatchError) {
+      // M6 независимого аудита I03. Прежде этот случай приходил как «снимок невосполним», а при
+      // отсутствии снимка — как «РАСХОЖДЕНИЕ … нарушение SIM-01». И то и другое ложно обвиняло
+      // мир: он цел, изменились правила или контент. Оператор шёл искать поломку детерминизма,
+      // которой нет, — а настоящее нарушение SIM-01 при этом стало бы неотличимо от рутинной
+      // правки контента, то есть детектор терял смысл в обе стороны.
+      return {
+        stdout:
+          `world replay: сверка НЕ ВЫПОЛНЕНА — снимок снят под другими правилами или контентом.\n${error.message}\n` +
+          'Это НЕ нарушение SIM-01 и не порча мира. Мир, посчитанный по прежнему контенту, ' +
+          'сверять с нынешним нельзя: это сравнение двух разных миров.\n' +
+          'Что делать: либо восстановить bundle той версии, либо пересоздать мир под текущей ' +
+          '("world init"), либо снять новый снимок и сверять от него.\n',
+        exitCode: 4,
+      };
+    }
     if (error instanceof UnqualifiedRuntimeProfileError) {
       return {
         stdout:

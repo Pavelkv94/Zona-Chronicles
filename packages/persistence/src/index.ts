@@ -65,6 +65,7 @@ export {
   loadLatestSnapshot,
   loadSnapshotAt,
   writeSnapshot,
+  SnapshotBundleMismatchError,
 } from './snapshot-store.ts';
 
 export type { PersistentRandomSourceOptions } from './prng-positions.ts';

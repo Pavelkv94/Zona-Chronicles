@@ -173,6 +173,13 @@ export interface WorldSnapshotsTable {
   qualified_runtime_profile: ColumnType<unknown, string | null, string | null>;
   canonical_state: ColumnType<unknown, string, string>;
   deterministic_runtime_profile: ColumnType<unknown, string, string>;
+  /**
+   * Bundles (rules/content/schema), под которыми снят снимок (I03, миграция 0013, M6 аудита).
+   *
+   * `null` — снимок снят до этой колонки: различить «мир испорчен» и «изменился контент» для него
+   * нечем, и отказ остаётся общим. Backfill невозможен — bundles нигде больше не записаны.
+   */
+  bundles: ColumnType<unknown, string | null, string | null>;
   created_at: ColumnType<Date, Date, Date>;
 }
 

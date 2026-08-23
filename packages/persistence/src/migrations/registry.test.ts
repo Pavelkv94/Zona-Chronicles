@@ -97,6 +97,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'world-qualified-profile',
     checksum: '2d5f8080b1b983f34247954218ca662786b0b941eaeef2c5070d8a6f3b816010',
   },
+  {
+    id: '0013',
+    name: 'snapshot-bundles',
+    checksum: 'e43bd83acbb5120911ce97d956c29cba5d2aaaeb05d46440332f4ed499985fb1',
+  },
 ];
 
 describe('реестр миграций', () => {

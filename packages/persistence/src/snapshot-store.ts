@@ -146,6 +146,9 @@ export const writeSnapshot = async (
         snapshot.deterministic_runtime_profile,
         `${label}.deterministic_runtime_profile`,
       ),
+      // Записываются ради ДИАГНОСТИКИ, а не защиты: защиту даёт checksum, в который они и так
+      // входят. Без них «мир испорчен» и «изменился контент» неразличимы (M6 аудита I03).
+      bundles: requireCanonical(snapshot.bundles, `${label}.bundles`),
       created_at: createdAt,
     })
     .execute();
@@ -161,6 +164,17 @@ export const writeSnapshot = async (
  * журнал разошлись; второе — что мир цел, но текущий runtime ещё не квалифицирован (§7). Раньше
  * `world replay` возвращал на оба один и тот же ненулевой код.
  */
+/**
+ * Снимок снят под другими bundles: контент или правила изменились после того, как он был записан.
+ *
+ * Отдельный класс, а не общий Error, ровно затем, чтобы вызывающий мог ответить по-разному.
+ * `world replay` при обычном расхождении печатает «нарушение SIM-01» и выходит с 1; здесь мир цел,
+ * и такой ответ был бы ложным обвинением (M6 независимого аудита I03).
+ */
+export class SnapshotBundleMismatchError extends Error {
+  override readonly name = 'SnapshotBundleMismatchError';
+}
+
 export class UnqualifiedRuntimeProfileError extends Error {
   readonly code = 'UNQUALIFIED_RUNTIME_PROFILE';
 
@@ -185,6 +199,8 @@ const rowToSnapshot = (
     readonly prng_stream_positions: unknown;
     readonly canonical_state: unknown;
     readonly deterministic_runtime_profile: unknown;
+    /** `null` — снимок снят до миграции 0013 (см. проверку ниже). */
+    readonly bundles?: unknown;
     readonly created_at: Date;
   },
   context: LoadSnapshotContext,
@@ -201,6 +217,35 @@ const rowToSnapshot = (
     canonical_state: row.canonical_state,
     checksum: row.checksum,
   };
+
+  /**
+   * Сначала bundles, потом checksum — и порядок здесь несёт смысл, а не стиль.
+   *
+   * M6 независимого аудита I03: смена версии контента меняет checksum bundle, читающая сторона
+   * передаёт ТЕКУЩИЕ bundles, и checksum ожидаемо не сходится. Прежде это давало отказ «снимок
+   * невосполним — расхождение обязано быть сбоем», а `world replay` печатал «нарушение SIM-01».
+   * Обвинение не по адресу: мир цел, изменился контент, и оператор шёл искать несуществующую
+   * поломку. Проверив bundles первыми, мы отвечаем на вопрос «что именно разошлось» до того, как
+   * назовём это порчей.
+   *
+   * Снимки, снятые до миграции 0013, поля не имеют: для них различить нечем, и отказ остаётся
+   * общим — прежнее поведение сохранено, а не подменено догадкой.
+   */
+  const storedBundles = row.bundles as Snapshot['bundles'] | null;
+  if (storedBundles !== null && storedBundles !== undefined) {
+    const stored = requireCanonical(storedBundles, `${label}.bundles(снимок)`);
+    const supplied = requireCanonical(context.bundles, `${label}.bundles(текущие)`);
+    if (stored !== supplied) {
+      throw new SnapshotBundleMismatchError(
+        `persistence: снимок ${label} снят под ДРУГИМИ bundles.\n` +
+          `  в снимке: ${stored}\n` +
+          `  сейчас:   ${supplied}\n` +
+          'Это НЕ порча мира и НЕ нарушение SIM-01: изменились правила или контент, а снимок ' +
+          'остался прежним. Мир, посчитанный по старому контенту, нельзя сверять с новым — ' +
+          'сверка была бы сравнением двух разных миров.',
+      );
+    }
+  }
 
   const verified = verifySnapshotChecksum(snapshot);
   if (isValidationFailure(verified)) {
