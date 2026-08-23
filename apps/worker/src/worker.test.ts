@@ -18,6 +18,17 @@ function instantSleeper(): { sleep: (ms: number) => Promise<void> } {
   return { sleep: () => Promise.resolve() };
 }
 
+/**
+ * Sleeper, отдающий управление МАКРОЗАДАЧАМ.
+ *
+ * `instantSleeper` возвращает `Promise.resolve()`, то есть микрозадачу: цикл `while` с таким
+ * sleeper-ом крутится, не выпуская event loop, и `setTimeout` в тесте не срабатывает НИКОГДА —
+ * тест не падает, а виснет. Проверено: первая редакция тестов ниже висела 600 секунд.
+ */
+function yieldingSleeper(): { sleep: (ms: number) => Promise<void> } {
+  return { sleep: () => new Promise<void>((resolve) => setTimeout(resolve, 0)) };
+}
+
 describe('createWorker', () => {
   it('stop() waits for an in-flight step to finish before resolving, and does not lose it', async () => {
     const step1 = deferred<void>();
@@ -111,5 +122,64 @@ describe('createWorker', () => {
 
     await worker.stop();
     expect(step).not.toHaveBeenCalled();
+  });
+
+  /**
+   * M1 независимого архитектурного аудита I03, воспроизведён исполнением.
+   *
+   * Отказ ОДНОГО шага не имеет права уносить весь цикл в тишину. До этой правки `runLoop` не имел
+   * ни одного `catch`, а `start()` не вешал `.catch` на `loopPromise`: любая ошибка шага
+   * становилась unhandled rejection УЖЕ ПОСЛЕ возврата `main()`, то есть мимо внешнего
+   * `main().catch(...)`, и мир просто останавливался молча.
+   *
+   * Проверено на живом мире: worker с исправным `DATABASE_URL` и НЕСУЩЕСТВУЮЩЕЙ базой проекции
+   * переставал двигать канонический мир — событий через 12 секунд ровно столько, сколько было до
+   * запуска.
+   */
+  it('отказ шага назван и не убивает цикл', async () => {
+    const failures: unknown[] = [];
+    let calls = 0;
+    const worker = createWorker({
+      clock: fakeClock(),
+      sleeper: yieldingSleeper(),
+      pollIntervalMs: 0,
+      step: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('шаг упал');
+        return await Promise.resolve();
+      },
+      onStepError: (error) => {
+        failures.push(error);
+      },
+    });
+
+    worker.start();
+    while (calls < 3) await new Promise((resolve) => setTimeout(resolve, 1));
+    await worker.stop();
+
+    expect(failures).toHaveLength(1);
+    expect(String(failures[0])).toContain('шаг упал');
+    // Цикл ЖИВ: шаги продолжились. Иначе «мир идёт непрерывно» (PR-04) держалось бы на
+    // отсутствии ошибок, а не на устройстве.
+    expect(calls).toBeGreaterThanOrEqual(3);
+  });
+
+  it('без обработчика отказ шага тоже не роняет цикл и не оставляет unhandled rejection', async () => {
+    let calls = 0;
+    const worker = createWorker({
+      clock: fakeClock(),
+      sleeper: yieldingSleeper(),
+      pollIntervalMs: 0,
+      step: async () => {
+        calls += 1;
+        if (calls === 1) throw new Error('без обработчика');
+        return await Promise.resolve();
+      },
+    });
+
+    worker.start();
+    while (calls < 3) await new Promise((resolve) => setTimeout(resolve, 1));
+    await expect(worker.stop()).resolves.toBeUndefined();
+    expect(calls).toBeGreaterThanOrEqual(3);
   });
 });

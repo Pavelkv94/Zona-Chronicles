@@ -139,13 +139,40 @@ async function main(): Promise<void> {
 
   const workerOwner = `worker:${config.deploymentId}:${String(process.pid)}`;
 
-  const projection = await openProjection(
-    config.projectionDatabaseUrl,
-    db,
-    config.worldId,
-    logger,
-    config.projectionBatchSize,
-  );
+  /**
+   * Открытие проекции НЕ обязано удаться, чтобы мир пошёл.
+   *
+   * M1 независимого архитектурного аудита I03, вторая его половина, найденная живой пробой уже
+   * ПОСЛЕ починки первой: worker с исправным `DATABASE_URL` и несуществующей базой проекции
+   * выходил с кодом 1 ещё на старте, и мир не двигался вовсе. Причём при НЕЗАДАННОМ
+   * `PROJECTION_DATABASE_URL` тот же worker честно предупреждал и работал. То есть «проекции
+   * нет» переживалось, а «проекция сломана» — нет; ровно эта несогласованность и была дефектом.
+   *
+   * Открытие повторяется на каждом шаге, пока не удастся: недоступная база — состояние
+   * временное, и требовать перезапуска процесса ради того, что чинится само, значит превращать
+   * неполадку наблюдения в остановку мира.
+   */
+  const openProjectionSafely = async (): Promise<Awaited<ReturnType<typeof openProjection>>> => {
+    try {
+      return await openProjection(
+        config.projectionDatabaseUrl,
+        db,
+        config.worldId,
+        logger,
+        config.projectionBatchSize,
+      );
+    } catch (error) {
+      logger.error(
+        { worldId: config.worldId, error: String(error) },
+        'projection.open.failed: мир идёт, но собрать наблюдаемую картину пока нечем',
+      );
+      return null;
+    }
+  };
+
+  let projection = await openProjectionSafely();
+  /** Проекция настроена, но недоступна: отличается от «не настроена вовсе». */
+  const projectionConfigured = config.projectionDatabaseUrl !== undefined;
 
   // Пересборка — отдельный режим, а не побочный эффект запуска: стереть проекцию мира, потому
   // что «процесс всё равно стартует», однажды сотрёт её у того, кто этого не хотел (D7).
@@ -163,10 +190,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  /** Сколько шагов подряд не удалось собрать проекцию. Сбрасывается первым успешным. */
+  let projectionFailures = 0;
+
   const worker = createWorker({
     clock,
     sleeper,
     pollIntervalMs: POLL_INTERVAL_MS,
+    onStepError: (error) => {
+      logger.error({ worldId: config.worldId, error: String(error) }, 'worker.step.failed');
+    },
     step: createWorldStep({
       startWorldTime: startState.worldTime,
       realNowMs: () => clock.now(),
@@ -180,7 +213,33 @@ async function main(): Promise<void> {
         // Проекция догоняется ПОСЛЕ шага мира, в том же цикле. Отдельный процесс дал бы вторую
         // точку отказа и вторую задержку между фактом и его видимостью, а выигрыша не дал бы:
         // писатель проекции всё равно один.
-        if (projection !== null) await runProjectionStep(projection.deps);
+        //
+        // Но её отказ ИЗОЛИРОВАН, и это M1 независимого архитектурного аудита I03,
+        // воспроизведённый исполнением: worker с исправным `DATABASE_URL` и несуществующей базой
+        // проекции переставал двигать КАНОНИЧЕСКИЙ мир. Проекция — read model и не источник
+        // факта (`PLAN.md` §7.5); её недоступность обязана делать мир НЕВИДИМЫМ, а не
+        // ОСТАНОВЛЕННЫМ. Обратное ставит наблюдение выше наблюдаемого.
+        //
+        // Молчать при этом нельзя: зритель увидит замерший мир и не поймёт, почему. Отказ
+        // называется в логе на каждом шаге, а не один раз, — «перестало обновляться» это
+        // состояние, а не событие.
+        if (projection === null && projectionConfigured) {
+          // Настроена, но не открылась. Пробуем снова — молча, чтобы не удваивать шум: об отказе
+          // уже сказано, а успех будет виден по возобновившейся ленте.
+          projection = await openProjectionSafely();
+        }
+        if (projection !== null) {
+          try {
+            await runProjectionStep(projection.deps);
+            projectionFailures = 0;
+          } catch (error) {
+            projectionFailures += 1;
+            logger.error(
+              { worldId: config.worldId, error: String(error), consecutive: projectionFailures },
+              'projection.step.failed: мир продолжает идти, но зритель его больше не видит',
+            );
+          }
+        }
         return { claimed: result.claimed, worldTime: result.worldTime };
       },
       logger: {

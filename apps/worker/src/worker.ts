@@ -28,6 +28,14 @@ export type WorkerDeps = {
   readonly step: StepFn;
   readonly pollIntervalMs: number;
   readonly logger?: WorkerLogger;
+  /**
+   * Что делать с отказом шага. Вызывается вместо того, чтобы уронить цикл.
+   *
+   * Необязателен НАМЕРЕННО, и умолчание — не «проглотить»: без обработчика цикл всё равно
+   * продолжается, а отказ уходит в `logger.info` с полем `error`. Обязательный параметр заставил
+   * бы каждый вызов придумывать обработчик, и первый же придумал бы пустой.
+   */
+  readonly onStepError?: (error: unknown) => void;
 };
 
 export type Worker = {
@@ -42,12 +50,35 @@ export function createWorker(deps: WorkerDeps): Worker {
   let started = false;
   let loopPromise: Promise<void> | null = null;
 
+  /**
+   * M1 независимого архитектурного аудита I03: отказ ОДНОГО шага не имеет права уносить цикл.
+   *
+   * До этой правки здесь не было ни одного `catch`. Отказ `deps.step()` выходил из `runLoop`,
+   * а `start()` не вешал `.catch` на `loopPromise` — то есть становился unhandled rejection УЖЕ
+   * ПОСЛЕ возврата `main()` и проходил мимо внешнего `main().catch(...)`. Мир останавливался
+   * МОЛЧА, и это воспроизведено на живом мире: worker с исправным `DATABASE_URL` и
+   * несуществующей базой проекции переставал двигать канонический мир вовсе.
+   *
+   * Почему цикл продолжается, а не останавливается на отказе. Шаг — это опрос, а не транзакция:
+   * канонические записи атомарны сами по себе (`command-handler.ts`), и неудавшийся шаг не
+   * оставляет полузаписи. Отказ здесь означает «в этот раз не получилось» — недоступная база,
+   * потерянный advisory lock, упавшая проекция. Остановка мира по такому поводу превращает
+   * временную неполадку в постоянную и требует человека там, где достаточно следующей секунды.
+   *
+   * Молчание при этом запрещено: отказ обязан быть НАЗВАН — через `onStepError`, если он задан,
+   * и в лог в любом случае.
+   */
   async function runLoop(): Promise<void> {
     while (!stopping) {
       const startedAt = deps.clock.now();
       deps.logger?.info({ at: startedAt }, 'worker.step.start');
-      await deps.step();
-      deps.logger?.info({ at: deps.clock.now() }, 'worker.step.done');
+      try {
+        await deps.step();
+        deps.logger?.info({ at: deps.clock.now() }, 'worker.step.done');
+      } catch (error) {
+        deps.logger?.info({ at: deps.clock.now(), error: String(error) }, 'worker.step.failed');
+        deps.onStepError?.(error);
+      }
 
       if (stopping) {
         break;
@@ -62,7 +93,13 @@ export function createWorker(deps: WorkerDeps): Worker {
     }
     started = true;
     stopping = false;
-    loopPromise = runLoop();
+    // `.catch` здесь — второй слой, а не дубль: `runLoop` уже ловит отказы шага, но отказать
+    // может и он сам (например `deps.sleeper.sleep`). Без этого такой отказ снова стал бы
+    // unhandled rejection после возврата `main()`.
+    loopPromise = runLoop().catch((error: unknown) => {
+      deps.logger?.info({ error: String(error) }, 'worker.loop.failed');
+      deps.onStepError?.(error);
+    });
   }
 
   async function stop(): Promise<void> {

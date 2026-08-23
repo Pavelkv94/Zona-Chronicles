@@ -52,6 +52,7 @@ import {
 } from '../../packages/persistence/src/index.ts';
 import type { WorldEvent } from '../../packages/contracts/src/index.ts';
 import { currentBundles, currentDeterministicRuntimeProfile } from '../../apps/cli/src/world.ts';
+import { killAndWait } from '../support/kill-child.ts';
 import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const WORKER_ENTRY = fileURLToPath(new URL('../../apps/worker/src/main.ts', import.meta.url));
@@ -150,8 +151,7 @@ describe('I03 D1/D2 — скорость мира не меняет канони
       }
       throw new Error(`worker (темп ${String(tempo)}) не довёл мир до ${String(expected)} событий`);
     } finally {
-      worker.kill('SIGKILL');
-      await new Promise((resolve) => worker.once('exit', resolve));
+      await killAndWait(worker);
     }
   };
 

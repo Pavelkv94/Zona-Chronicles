@@ -63,6 +63,7 @@ import {
   loadObserverEvents,
   parseProjectionDatabaseUrl,
 } from '../../packages/projections/src/index.ts';
+import { killAndWait } from '../support/kill-child.ts';
 import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 /**
@@ -203,8 +204,7 @@ describe('I03 D6 — убитый сборщик проекции догоняе
           await sleep(25);
         }
       } finally {
-        worker.kill('SIGKILL');
-        await new Promise((resolve) => worker.once('exit', resolve));
+        await killAndWait(worker);
       }
     }
 
@@ -240,8 +240,7 @@ describe('I03 D6 — убитый сборщик проекции догоняе
       // Курсор строго возрастает и не имеет дыр: 1..N.
       expect(feed.map((row) => row.seq)).toEqual(canonicalEventIds.map((_, index) => index + 1));
     } finally {
-      survivor.kill('SIGKILL');
-      await new Promise((resolve) => survivor.once('exit', resolve));
+      await killAndWait(survivor);
     }
   }, 180_000);
 });
