@@ -89,8 +89,23 @@ const openProjection = async (
   const store: ProjectionDatabase = createProjectionDatabase(
     parseProjectionDatabaseUrl(projectionDatabaseUrl),
   );
+  /**
+   * Сборщик читает канон под СВОЕЙ ролью, а не под ролью worker-а — M3 независимого аудита I03.
+   *
+   * Раньше сюда передавалось `db`, то есть подключение под `zona_worker` с `INSERT`/`UPDATE` на
+   * весь канон. Роль `zona_projection` с ровно нужными SELECT-грантами существовала в матрице и
+   * не использовалась НИ ОДНИМ работающим путём — а матрица, которую никто не исполняет, будет
+   * принята за enforcement (ADR-008 требует отдельной identity для projection builder).
+   *
+   * Подключение то же самое физически: `projection_*` и канонические таблицы живут в одной базе,
+   * поэтому строка `PROJECTION_DATABASE_URL` годится и для чтения канона — разница в РОЛИ.
+   * Второй пул соединений при этом не создаётся зря: он и так был нужен под проекцию.
+   */
+  const canonicalUnderProjectionRole = createDatabase(
+    parseDatabaseConnectionUrl(projectionDatabaseUrl),
+  );
   const deps: ProjectionBuilderDeps = {
-    canonical: db,
+    canonical: canonicalUnderProjectionRole,
     projection: store,
     worldId,
     now: () => new Date(),
@@ -103,7 +118,13 @@ const openProjection = async (
     await createProjectionAtGenesis(deps, await requireGenesis(db, worldId));
   }
 
-  return { deps, close: async () => await store.destroy() };
+  return {
+    deps,
+    close: async () => {
+      await store.destroy();
+      await canonicalUnderProjectionRole.destroy();
+    },
+  };
 };
 
 async function main(): Promise<void> {

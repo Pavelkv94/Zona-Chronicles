@@ -357,6 +357,21 @@ export interface WorldContentSnapshot {
     readonly name: string;
     readonly description: string;
   }[];
+  /**
+   * Маршруты мира. Добавлены в I03 (M3 независимого аудита) ради ПРАВ, а не ради удобства.
+   *
+   * Сборщику проекции нужна карта, и раньше он брал маршруты из `loadWorldState` — а тот читает
+   * `worlds`, `agents` и `scheduled_actions`, то есть требует прав почти на весь канон. Из-за
+   * этого builder ходил под ролью worker-а (INSERT/UPDATE на всё), и матрица least privilege
+   * существовала, но никем не исполнялась. Маршруты — такая же статическая часть мира, как
+   * локации; читая их отсюда, сборщик обходится SELECT-ом на четыре таблицы.
+   */
+  readonly routes: readonly {
+    readonly id: string;
+    readonly fromLocationId: string;
+    readonly toLocationId: string;
+    readonly travelMinutes: number;
+  }[];
   readonly agentNames: Readonly<Record<string, string>>;
 }
 
@@ -364,12 +379,18 @@ export const loadWorldContent = async (
   db: DatabaseConnection,
   worldId: string,
 ): Promise<WorldContentSnapshot> => {
-  const [locations, agents] = await Promise.all([
+  const [locations, routes, agents] = await Promise.all([
     db
       .selectFrom('locations')
       .select(['location_id', 'name', 'description'])
       .where('world_id', '=', worldId)
       .orderBy('location_id')
+      .execute(),
+    db
+      .selectFrom('routes')
+      .select(['route_id', 'from_location_id', 'to_location_id', 'travel_minutes'])
+      .where('world_id', '=', worldId)
+      .orderBy('route_id')
       .execute(),
     db
       .selectFrom('agents')
@@ -384,6 +405,12 @@ export const loadWorldContent = async (
       id: row.location_id,
       name: row.name,
       description: row.description,
+    })),
+    routes: routes.map((row) => ({
+      id: row.route_id,
+      fromLocationId: row.from_location_id,
+      toLocationId: row.to_location_id,
+      travelMinutes: requireSafeInteger(row.travel_minutes, `routes.travel_minutes(${row.route_id})`),
     })),
     agentNames: Object.fromEntries(agents.map((row) => [row.agent_id, row.name])),
   };
@@ -402,8 +429,19 @@ export const loadWorldContent = async (
  * всех остальных. Подписчиков будет больше одного (лента, карта, летопись I16), и каждый обязан
  * вести свою позицию.
  *
- * Checksum события ПРОВЕРЯЕТСЯ, как и в `loadWorldEvents`: строка outbox хранит `jsonb`, который
- * не сохраняет канонический порядок ключей, и точность обратного чтения обязана быть проверяемой.
+ * Checksum события ПРОВЕРЯЕТСЯ — сверкой с журналом, а не с собственной колонкой.
+ *
+ * До M2 независимого архитектурного аудита I03 эта строка докстринга была НЕПРАВДОЙ: выполнялся
+ * только `decodeWorldEvent(payload)`, то есть проверка ФОРМЫ, а не тождества факту, и колонки
+ * checksum в `outbox` нет вовсе. Между тем это ЕДИНСТВЕННЫЙ вход проекции: расхождение здесь
+ * означает, что экран показывает не то, что произошло, и узнать об этом неоткуда. ADR-010 §10.2
+ * обосновывает выбор `jsonb` для payload именно наличием сверки — без неё обоснование повисало.
+ *
+ * Колонка checksum в `outbox` НЕ добавлена намеренно. Она хранила бы вторую копию значения,
+ * которое уже есть в `world_events`, — и сверка двух копий одной записи ничего не доказывает,
+ * если обе испортились вместе. `world_events` append-only и защищён грантами (`INSERT` без
+ * `UPDATE`/`DELETE` ни у кого), поэтому именно он — сторона, с которой сверяются, а не ещё одна
+ * равноправная копия. Цена — join на каждую пачку; она мала и платится однократно за событие.
  */
 export const loadOutboxEventsAfter = async (
   db: DatabaseConnection,
@@ -418,10 +456,15 @@ export const loadOutboxEventsAfter = async (
   }
   const rows = await db
     .selectFrom('outbox')
-    .select(['event_id', 'sequence', 'payload'])
-    .where('world_id', '=', worldId)
-    .where('sequence', '>', String(afterSequence))
-    .orderBy('sequence')
+    .innerJoin('world_events', (join) =>
+      join
+        .onRef('world_events.event_id', '=', 'outbox.event_id')
+        .onRef('world_events.world_id', '=', 'outbox.world_id'),
+    )
+    .select(['outbox.event_id', 'outbox.sequence', 'outbox.payload', 'world_events.event_checksum'])
+    .where('outbox.world_id', '=', worldId)
+    .where('outbox.sequence', '>', String(afterSequence))
+    .orderBy('outbox.sequence')
     .limit(limit)
     .execute();
 
@@ -431,6 +474,18 @@ export const loadOutboxEventsAfter = async (
       throw new Error(
         `persistence: строка outbox события ${row.event_id} не является валидным событием: ` +
           decoded.errors.map((issue) => `${issue.path} ${issue.message}`).join('; '),
+      );
+    }
+
+    // Форма валидна — это ещё не значит, что факт тот же. Сверяем с checksum, снятым при записи
+    // в журнал: изменённое поле события даёт другой checksum, и проекция обязана остановиться,
+    // а не собрать картину чужого мира.
+    const actual = requireChecksum(decoded.value, `outbox(${row.event_id})`);
+    if (actual !== row.event_checksum) {
+      throw new Error(
+        `persistence: строка outbox события ${row.event_id} разошлась с журналом ` +
+          `(в журнале ${row.event_checksum}, в outbox ${actual}). Проекция собирается ТОЛЬКО из ` +
+          'фактов журнала; расхождение обязано быть сбоем, а не тихо другим фактом на экране.',
       );
     }
     return decoded.value;

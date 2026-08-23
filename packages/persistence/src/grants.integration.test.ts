@@ -147,6 +147,46 @@ describe('B7 — гранты ролей', () => {
     });
   });
 
+  /**
+   * M3 независимого архитектурного аудита I03. Роль сборщика проекции существовала в матрице и не
+   * использовалась НИ ОДНИМ работающим путём: builder ходил в канон под `zona_worker` с
+   * `INSERT`/`UPDATE` на всё. Матрица, которую никто не исполняет, будет принята за enforcement.
+   *
+   * Здесь проверяется ГРАНИЦА роли с обеих сторон: сборщику ХВАТАЕТ его прав (это доказывает
+   * acceptance D6, где настоящий worker собирает проекцию под этой ролью) и он НЕ МОЖЕТ большего.
+   * Список ниже — канонические таблицы, которых сборщик не читает по построению; попадание любой
+   * из них в его гранты означало бы, что «least privilege» снова стало декларацией.
+   */
+  it('projection builder не имеет доступа к тому, что ему не нужно (M3)', async () => {
+    await asRole(db, ROLE_NAMES.projection, async (client) => {
+      for (const table of ['worlds', 'scheduled_actions', 'command_results']) {
+        const message = await expectDenied(client, `select 1 from ${table} limit 1`);
+        expect(message, `таблица ${table}`).toMatch(/permission denied/i);
+      }
+    });
+  });
+
+  it('projection builder читает ровно то, что читает сборщик (M3, положительная сторона)', async () => {
+    await asRole(db, ROLE_NAMES.projection, async (client) => {
+      // Ровно то, что перечислено в `loadWorldContent`, `loadOutboxEventsAfter` и
+      // `genesisFromSnapshot`. Отказ здесь означал бы, что сборщик не сможет работать под своей
+      // ролью и его снова придётся вернуть под роль worker-а.
+      for (const table of [
+        'locations',
+        'routes',
+        'agents',
+        'outbox',
+        'world_events',
+        'world_snapshots',
+      ]) {
+        await expect(
+          client.query(`select 1 from ${table} limit 1`),
+          `таблица ${table}`,
+        ).resolves.toBeDefined();
+      }
+    });
+  });
+
   it('projection builder читает историю, но не пишет её', async () => {
     await asRole(db, ROLE_NAMES.projection, async (client) => {
       const read = await client.query(`select count(*)::int as n from world_events`);

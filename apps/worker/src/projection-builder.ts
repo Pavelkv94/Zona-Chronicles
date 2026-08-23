@@ -105,16 +105,17 @@ const mapEdges = (
 
 /** Карта мира для seed проекции: локации из контента, маршруты из состояния. */
 const loadMap = async (deps: ProjectionBuilderDeps) => {
-  const [state, content] = await Promise.all([
-    loadWorldState(deps.canonical, deps.worldId),
-    loadWorldContent(deps.canonical, deps.worldId),
-  ]);
-  if (state === null) {
+  // Только `loadWorldContent`, без `loadWorldState`: M3 независимого аудита I03. `loadWorldState`
+  // читает `worlds`, `agents` и `scheduled_actions` — то есть требует прав почти на весь канон, и
+  // ради него сборщик ходил под ролью worker-а с INSERT/UPDATE на всё. Маршруты теперь приходят
+  // из контента, и сборщику хватает SELECT-а на четыре таблицы.
+  const content = await loadWorldContent(deps.canonical, deps.worldId);
+  if (content.locations.length === 0) {
     throw new Error(
       `projection-builder: мир ${deps.worldId} не создан — собирать проекцию не из чего`,
     );
   }
-  return { nodes: mapNodes(content.locations), edges: mapEdges(Object.values(state.routes)) };
+  return { nodes: mapNodes(content.locations), edges: mapEdges(content.routes) };
 };
 
 /**

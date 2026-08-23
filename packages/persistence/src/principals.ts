@@ -60,6 +60,12 @@ export const GRANT_MATRIX: Readonly<Record<RoleName, Readonly<Record<string, rea
       world_events: ['SELECT'],
       locations: ['SELECT'],
       routes: ['SELECT'],
+      // I03, M3 независимого аудита: сборщик проекции получил СВОЮ роль вместо роли worker-а, и
+      // список ниже — ровно то, что он читает, не больше. `agents` — имена для карты,
+      // `world_snapshots` — генезисная расстановка (её нельзя вывести из журнала). Ни `worlds`,
+      // ни `scheduled_actions`, ни `command_results` он не читает и права на них не имеет.
+      agents: ['SELECT'],
+      world_snapshots: ['SELECT'],
       outbox: ['SELECT', 'UPDATE'],
       // I03: builder ВЛАДЕЕТ проекцией — пишет её и пересобирает (D7). DELETE нужен именно для
       // пересборки: проекция не источник факта, и единственный способ её починить — собрать
