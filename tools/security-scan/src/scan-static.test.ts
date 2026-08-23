@@ -6,8 +6,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   CHILD_PROCESS_TEMPLATE_SAMPLE,
   CLEAN_STATIC_SAMPLE,
+  DOC_DOMAIN_URL_SAMPLES,
   EVAL_CALL_SAMPLE,
   HARDCODED_URL_SAMPLE,
+  LOOPBACK_LOOKALIKE_URL_SAMPLES,
+  LOOPBACK_URL_SAMPLES,
   NEW_FUNCTION_SAMPLE,
 } from './__fixtures__/static-samples.ts';
 import { findStaticFindings, runStaticScan } from './scan-static.ts';
@@ -56,6 +59,35 @@ describe('findStaticFindings', () => {
       policy,
     );
     expect(findings.some((f) => f.id === 'hardcoded-network-url')).toBe(true);
+  });
+
+  /**
+   * I03: границы сужения `hardcoded-network-url`. Три теста, потому что сужение может провалиться
+   * тремя разными способами: не сработать вовсе, сработать слишком широко или сработать по
+   * подстроке. Первое сделало бы gate шумным, второе — слепым, третье — обходимым.
+   */
+  it('does not flag loopback addresses (negative: собственный процесс — не внешний канал)', () => {
+    const findings = findStaticFindings(
+      [{ path: 'apps/api/src/config.ts', content: LOOPBACK_URL_SAMPLES }],
+      policy,
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('does not flag RFC 2606 .example documentation names (negative)', () => {
+    const findings = findStaticFindings(
+      [{ path: 'apps/api/src/config.test.ts', content: DOC_DOMAIN_URL_SAMPLES }],
+      policy,
+    );
+    expect(findings).toEqual([]);
+  });
+
+  it('still flags an external host that merely CONTAINS a loopback or doc name (positive: сужение привязано к концу адреса, а не к подстроке)', () => {
+    const findings = findStaticFindings(
+      [{ path: 'apps/api/src/z.ts', content: LOOPBACK_LOOKALIKE_URL_SAMPLES }],
+      policy,
+    );
+    expect(findings.filter((f) => f.id === 'hardcoded-network-url')).toHaveLength(2);
   });
 
   it('does not flag safe execFileSync usage with array args (negative)', () => {

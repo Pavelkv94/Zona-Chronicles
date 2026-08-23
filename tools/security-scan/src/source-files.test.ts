@@ -70,6 +70,39 @@ describe('collectSourceFiles', () => {
     expect(paths).toEqual([]);
   });
 
+  /**
+   * I03: сборочный вывод — не исходник, и «не исходник» обязано быть ПРАВИЛОМ, а не списком.
+   *
+   * Найдено исполнением, а не рассуждением: `apps/web` (Next.js) кладёт сборку в `.next/`,
+   * которого в списке исключений не было, и `security:static` начал выдавать 54 находки в
+   * минифицированных чанках. Хуже самих находок то, что вердикт скана стал ЗАВИСЕТЬ ОТ ТОГО,
+   * СОБИРАЛИ ЛИ ПРОЕКТ: `pnpm verify` запускает security до build, поэтому на чистом дереве
+   * проверка проходила, а после любой сборки или E2E-прогона — падала. Контроль, у которого
+   * два разных ответа на одном коммите, не контроль.
+   *
+   * Поэтому исключается не имя `.next`, а КЛАСС: директория, чьё имя начинается с точки.
+   * Список имён требует помнить о нём при добавлении каждого инструмента — ровно то, о чём
+   * никто не помнит. Следующий инструмент со своим `.cache`/`.vercel`/`.svelte-kit` закрыт
+   * заранее.
+   */
+  it('excludes dot-directories anywhere under the scan roots (negative: build output is not source)', () => {
+    // Содержимое намеренно безобидное. Положить сюда настоящую запрещённую конструкцию
+    // означало бы, что этот файл сам становится находкой `security:static` — сканируется-то и
+    // он. Проверяется СБОР файлов, а не разбор их содержимого: если файл не собран, его текст
+    // не важен вовсе.
+    write('apps/web/.next/static/chunks/minified.js', 'noise');
+    write('apps/web/.next/server/ssr.js', 'noise');
+    write('packages/domain/.cache/tmp.ts', 'noise');
+    const paths = collectSourceFiles(repoRoot).files.map((f) => f.path);
+    expect(paths).toEqual([]);
+  });
+
+  it('collects a real source file whose own name starts with a dot (positive: the rule is about directories)', () => {
+    write('apps/api/src/.generated-marker.ts', 'export const marker = 1;');
+    const paths = collectSourceFiles(repoRoot).files.map((f) => f.path);
+    expect(paths).toContain('apps/api/src/.generated-marker.ts');
+  });
+
   it('collects explicitly listed root config files when present (positive: N11 — root build/lint configs)', () => {
     write('eslint.config.mjs', 'export default [];');
     write('vitest.config.ts', 'export default {};');

@@ -46,7 +46,24 @@ const isEnoent = (error: unknown): boolean =>
 
 const SCAN_ROOTS = ['apps', 'packages', 'tools', 'scripts', 'tests'] as const;
 const SCAN_EXTENSIONS = ['.ts', '.tsx', '.js', '.mjs', '.cjs'] as const;
-const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', '.turbo', 'coverage']);
+const EXCLUDED_DIR_NAMES = new Set(['node_modules', 'dist', 'coverage']);
+
+/**
+ * Директория, чьё имя начинается с точки, исходником не считается.
+ *
+ * I03: `apps/web` (Next.js) кладёт сборку в `.next/`, которого в списке имён не было, и
+ * `security:static` выдал 54 находки в минифицированных чанках. Опаснее самих находок то, что
+ * вердикт скана стал зависеть от того, СОБИРАЛИ ЛИ ПРОЕКТ: `pnpm verify` запускает security до
+ * build, поэтому на чистом дереве проверка проходила, а после любой сборки или E2E-прогона
+ * падала. Контроль с двумя разными ответами на одном коммите — не контроль.
+ *
+ * Дописать `.next` к списку значило бы починить случай, а не класс: список имён нужно помнить
+ * при добавлении каждого инструмента, и именно о нём никто не помнит. Правило закрывает и
+ * `.turbo` (потому и убран из списка выше), и любой будущий `.cache`/`.vercel`.
+ *
+ * Правило про ДИРЕКТОРИИ, не про файлы: `.eslintrc.cjs` и подобные — исходники и читаются.
+ */
+const isDotDirectory = (name: string): boolean => name.startsWith('.');
 
 /** Корневые config-файлы вне SCAN_ROOTS, тоже исполняемый код репозитория (N11). */
 const ROOT_CONFIG_FILES = [
@@ -72,7 +89,7 @@ export const collectSourceFiles = (repoRoot: string): SourceCollectionResult => 
     }
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        if (EXCLUDED_DIR_NAMES.has(entry.name)) continue;
+        if (EXCLUDED_DIR_NAMES.has(entry.name) || isDotDirectory(entry.name)) continue;
         walk(
           `${absoluteDir}/${entry.name}`,
           relativeDir === '' ? entry.name : `${relativeDir}/${entry.name}`,

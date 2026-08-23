@@ -6,7 +6,16 @@ import { parseConfig } from './config.ts';
  * быть скелетом с `/health` и теперь показывает мир; без проекции показывать нечего, а
  * отвечающий пустотой сервис неотличим от работающего с пустым миром.
  */
-const PROJECTION_DB = 'postgres://zona_api:pw@localhost:5432/zona';
+/**
+ * Пароль в тестовой строке подключения берётся ИЗ СПИСКА задокументированных заглушек
+ * (`security/policy.json`, `non_secret_placeholders.values`), а не выдумывается.
+ *
+ * Первая редакция писала `pw` — правило `credential-url` считает секретом всё, чего нет в
+ * списке, и делает это намеренно: отличить «короткий выдуманный пароль» от «настоящего
+ * короткого пароля» текстом невозможно, поэтому список закрытый. `pnpm security:secrets`
+ * падал на этом файле, и падал справедливо.
+ */
+const PROJECTION_DB = 'postgres://zona_api:zona_local_dev_only@localhost:5432/zona';
 
 describe('parseConfig', () => {
   it('returns documented defaults when no relevant env vars are set', () => {
@@ -111,9 +120,9 @@ describe('parseConfig', () => {
      * на честном слове вместо грантов.
      */
     it('DATABASE_URL не подставляется вместо PROJECTION_DATABASE_URL', () => {
-      expect(() => parseConfig({ DATABASE_URL: 'postgres://zona:pw@localhost:5432/zona' })).toThrow(
-        /PROJECTION_DATABASE_URL/,
-      );
+      expect(() =>
+        parseConfig({ DATABASE_URL: 'postgres://zona:zona_local_dev_only@localhost:5432/zona' }),
+      ).toThrow(/PROJECTION_DATABASE_URL/);
     });
   });
 
