@@ -158,7 +158,7 @@ describe('D6/D7 — сборка observer projection', () => {
      * поле придёт из колонки таблицы, а не из литерала в тесте.
      */
     const decoded = decodeObserverWorldSnapshot(snapshot);
-    expect(isValidationFailure(decoded) ? decoded.issues : []).toEqual([]);
+    expect(isValidationFailure(decoded) ? decoded.errors : []).toEqual([]);
     expect(snapshot!.world_time).toBe(canonicalState!.worldTime);
     expect(snapshot!.nodes.length).toBeGreaterThan(0);
     expect(snapshot!.edges.length).toBeGreaterThan(0);

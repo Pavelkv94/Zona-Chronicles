@@ -264,6 +264,70 @@ describe('D9/D10: возобновление потока', () => {
     await app.close();
   });
 
+  /**
+   * ГРАНИЦА D10, а не только явная дыра. Условие сброса — `cursor + 1 < earliest`, и обе его
+   * стороны наблюдаемы: сдвиг на единицу в одну сторону даёт ЛОЖНЫЕ сбросы исправным клиентам
+   * (лента перезапрашивается на каждом переподключении), в другую — МОЛЧАЛИВУЮ потерю ровно
+   * одного события. Проверялась только явная дыра (5 против 50), при которой оба сдвига
+   * выглядят одинаково.
+   */
+  it('дыры нет (следующее доступное — ровно следующее за курсором): поток идёт, сброса нет', async () => {
+    const app = server(
+      port({
+        loadEvents: async () =>
+          await Promise.resolve({ events: [feedEvent(6)], earliestAvailableSequence: 6 }),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream?last_event_id=5',
+      payloadAsStream: true,
+    });
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      response.stream().on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).toString('utf8').includes('id: 6')) resolve();
+      });
+    });
+
+    const text = Buffer.concat(chunks).toString('utf8');
+    expect(text).toContain('id: 6');
+    expect(text).not.toContain(`event: ${OBSERVER_STREAM_EVENT_NAMES.reset}`);
+
+    response.stream().destroy();
+    await app.close();
+  });
+
+  it('пропущено ровно одно событие — это уже дыра, и клиент о ней узнаёт', async () => {
+    const app = server(
+      port({
+        loadEvents: async () =>
+          await Promise.resolve({ events: [feedEvent(7)], earliestAvailableSequence: 7 }),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream?last_event_id=5',
+      payloadAsStream: true,
+    });
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      response.stream().on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.stream().on('end', () => resolve());
+    });
+
+    const text = Buffer.concat(chunks).toString('utf8');
+    expect(text).toContain('"reason":"reset_required"');
+    expect(text).not.toContain(`event: ${OBSERVER_STREAM_EVENT_NAMES.event}`);
+
+    await app.close();
+  });
+
   it('непригодный Last-Event-ID даёт 400, а не молчаливый старт с нуля', async () => {
     const app = server();
     const response = await app.inject({ method: 'GET', url: '/v1/stream?last_event_id=abc' });
