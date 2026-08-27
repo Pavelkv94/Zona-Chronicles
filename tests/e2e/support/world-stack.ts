@@ -88,10 +88,40 @@ export interface WorldStackOptions {
   readonly worldMinutesPerRealSecond?: number;
 }
 
+/**
+ * Убирает процессы стека, пережившие ЖЁСТКОЕ завершение предыдущего прогона.
+ *
+ * `stop()` в `finally` не выполняется, когда убивают весь процесс-дерево: три процесса стека
+ * (worker, api, next) остаются жить, держат соединения к базе и жгут процессор. Это не теория —
+ * в I03 три осиротевших `apps/api` подняли load average до восьми, и acceptance-тест
+ * детерминизма потратил 18 секунд на порождение процесса вместо 0.8. Диагноз «тест сломался»
+ * напрашивался сам и был бы неверен.
+ *
+ * Тот же приём, что `createTestDatabase` применяет к базам мёртвых PID, и по той же причине:
+ * уборка в `finally` не переживает `SIGKILL`, поэтому уборка нужна и НА ВХОДЕ.
+ *
+ * Убиваются только процессы ЭТОГО репозитория и только известных стеку видов — чужой `next` или
+ * `node` в системе не трогается.
+ */
+const sweepStaleStackProcesses = (): void => {
+  const patterns = [
+    `${REPO_ROOT}apps/worker/src/main.ts`,
+    `${REPO_ROOT}apps/api/src/main.ts`,
+    `${REPO_ROOT}apps/web/node_modules/.bin/next`,
+  ];
+  for (const pattern of patterns) {
+    // `pkill -f` по полному пути: совпадение по абсолютному пути этого репозитория исключает
+    // чужие процессы с похожим именем.
+    spawnSync('pkill', ['-f', pattern], { stdio: 'ignore' });
+  }
+};
+
 export const startWorldStack = async (
   label: string,
   options: WorldStackOptions = {},
 ): Promise<WorldStack> => {
+  sweepStaleStackProcesses();
+
   const apiPort = 3200 + (process.pid % 200);
   const webPort = 3400 + (process.pid % 200);
   const testDb: TestDatabase = await createTestDatabase(`e2e_${label}`);
