@@ -37,7 +37,6 @@ import {
 import {
   DeterministicRandomSource,
   FixedClock,
-  testRulesetVersions,
   type AgentState,
   type RouteDefinition as DomainRouteDefinition,
   type RulesetVersions,
@@ -83,9 +82,17 @@ export interface HostRuntimeProfile {
  * Когда у `Ruleset` появятся коэффициенты (§7), они добавляются сюда вместе с итерацией,
  * которая их вводит — иначе checksum снова начнёт лгать о содержимом.
  */
-export function rulesBundleContent(
-  versions: RulesetVersions = testRulesetVersions(),
-): Record<string, unknown> {
+/**
+ * Умолчания у `versions` НЕТ, и это не забывчивость (m13 независимого аудита I03).
+ *
+ * Прежде здесь стояло `= testRulesetVersions()`: тестовое значение на продуктовом пути. Ровно
+ * такое умолчание у соседнего `bundlesFor` уже стоило дефекта — CLI перешёл на версию контента
+ * из пакета, worker остался на умолчании, bundles разошлись, и мир перестал читать генезисный
+ * снимок; падение приходило проверкой checksum, то есть в третьем месте, далеко от причины.
+ * Там умолчание убрали, здесь — оставили. Один и тот же вывод, применённый наполовину, работает
+ * как не применённый вовсе.
+ */
+export function rulesBundleContent(versions: RulesetVersions): Record<string, unknown> {
   return { versions: { ...versions } };
 }
 

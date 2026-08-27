@@ -169,6 +169,7 @@ export {
   type Snapshot,
   BundleRefSchema,
   DeterministicRuntimeProfileSchema,
+  decodeDeterministicRuntimeProfile,
   EXACT_MATCH_PROFILE_FIELDS,
   MAJOR_MINOR_PROFILE_FIELDS,
   SNAPSHOT_CHECKSUM_EXCLUDED_FIELDS,

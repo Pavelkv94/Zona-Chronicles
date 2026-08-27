@@ -102,6 +102,60 @@ const mapEdges = (
     travel_minutes: route.travelMinutes,
   }));
 
+/** Форма генезисного состояния, нужная сборщику: мировое время и расстановка агентов. */
+type GenesisShape = {
+  readonly worldTime: string;
+  readonly agents: Readonly<
+    Record<
+      string,
+      {
+        readonly id: string;
+        readonly locationId: string;
+        readonly status: 'idle' | 'traveling';
+        readonly routeId: string | null;
+      }
+    >
+  >;
+};
+
+/**
+ * Проверяет форму прочитанного снимка и отказывает НАЗВАННОЙ причиной.
+ *
+ * Проверяется ровно то, что читает сборщик, — не весь `WorldState`: требовать здесь полный
+ * контракт значило бы связать проекцию с частями канонического состояния, которые ей не нужны и
+ * которые она переживёт без изменений.
+ */
+const requireGenesisShape = (value: unknown, worldId: string): GenesisShape => {
+  const fail = (what: string): never => {
+    throw new Error(
+      `projection-builder: генезисный снимок мира ${worldId} имеет неожиданную форму (${what}). ` +
+        'Собирать проекцию из него нельзя: недостающее поле стало бы `undefined` на карте, а не ' +
+        'отказом, и зритель увидел бы мир, которого не было.',
+    );
+  };
+
+  if (typeof value !== 'object' || value === null) return fail('не объект');
+  const candidate = value as { worldTime?: unknown; agents?: unknown };
+  if (typeof candidate.worldTime !== 'string') return fail('worldTime не строка');
+  if (typeof candidate.agents !== 'object' || candidate.agents === null) {
+    return fail('agents не объект');
+  }
+
+  for (const [agentId, agent] of Object.entries(candidate.agents as Record<string, unknown>)) {
+    if (typeof agent !== 'object' || agent === null) return fail(`агент ${agentId} не объект`);
+    const shape = agent as { id?: unknown; locationId?: unknown; status?: unknown };
+    if (typeof shape.id !== 'string') return fail(`агент ${agentId}: id не строка`);
+    if (shape.locationId !== null && typeof shape.locationId !== 'string') {
+      return fail(`агент ${agentId}: locationId не строка и не null`);
+    }
+    if (shape.status !== 'idle' && shape.status !== 'traveling') {
+      return fail(`агент ${agentId}: неизвестный status ${String(shape.status)}`);
+    }
+  }
+
+  return value as GenesisShape;
+};
+
 /** Карта мира для seed проекции: локации из контента, маршруты из состояния. */
 const loadMap = async (deps: ProjectionBuilderDeps) => {
   // Только `loadWorldContent`, без `loadWorldState`: M3 независимого аудита I03. `loadWorldState`
@@ -150,20 +204,15 @@ export const genesisFromSnapshot = async (
   });
   if (snapshot === null) return null;
 
-  const state = snapshot.canonical_state as {
-    readonly worldTime: string;
-    readonly agents: Readonly<
-      Record<
-        string,
-        {
-          readonly id: string;
-          readonly locationId: string;
-          readonly status: 'idle' | 'traveling';
-          readonly routeId: string | null;
-        }
-      >
-    >;
-  };
+  /**
+   * Состояние из снимка ПРОВЕРЯЕТСЯ, а не приводится типом (m10 независимого аудита I03).
+   *
+   * `as` — обещание компилятору, а не факт: `canonical_state` приходит из jsonb, то есть из-за
+   * границы процесса. Снимок с другой формой прошёл бы приведение молча, и проекция собралась бы
+   * из неполного мира: агент без локации превратился бы в `undefined` на карте, а не в отказ.
+   * Место прибытия — единственное, что проекция берёт из снимка, и брать его на веру нельзя.
+   */
+  const state = requireGenesisShape(snapshot.canonical_state, worldId);
   const content = await loadWorldContent(canonical, worldId);
 
   return {
@@ -252,7 +301,7 @@ export const runProjectionStep = async (
     // есть с пустой лентой и историей, которой уже не восстановить.
     throw new Error(
       `projection-builder: проекции мира ${deps.worldId} не существует. Она создаётся вместе с ` +
-        'миром ("world init") либо пересобирается явно ("world projection rebuild"): сборщик не ' +
+        'миром ("world init") либо пересобирается явно ("pnpm worker --rebuild-projection"): сборщик не ' +
         'знает начальной расстановки агентов и придумать её не имеет права.',
     );
   }

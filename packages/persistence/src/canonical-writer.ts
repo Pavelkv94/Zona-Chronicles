@@ -24,6 +24,7 @@
  */
 import {
   isValidationFailure,
+  decodeDeterministicRuntimeProfile,
   verifyRuntimeProfileCompatibility,
   type DeterministicRuntimeProfile,
 } from '@zona/contracts';
@@ -92,7 +93,23 @@ export const qualifyCanonicalWriter = async (
     );
   }
 
-  const qualified = row.qualified_runtime_profile as DeterministicRuntimeProfile;
+  /**
+   * Профиль ПРОВЕРЯЕТСЯ схемой, а не приводится типом (m10 независимого аудита I03).
+   *
+   * `as` — обещание компилятору, а не факт: значение пришло из jsonb, то есть из-за границы
+   * процесса. Профиль с недостающим полем прошёл бы приведение молча, а дальше сравнивался бы
+   * с кандидатом как валидный — и «квалификация пройдена» означало бы «сравнили с мусором».
+   * Это тот самый шлюз, который не должен пропускать; проверять его вход обязательно.
+   */
+  const decoded = decodeDeterministicRuntimeProfile(row.qualified_runtime_profile);
+  if (isValidationFailure(decoded)) {
+    throw new UnqualifiedCanonicalWriterError(
+      `persistence: у мира ${worldId} записан профиль выполнения, не соответствующий схеме: ` +
+        `${decoded.errors.map((issue) => `${issue.path} ${issue.message}`).join('; ')}. ` +
+        'Сравнивать кандидата с ним нельзя: «сравнили с мусором» — это не квалификация.',
+    );
+  }
+  const qualified = decoded.value;
   const compatible = verifyRuntimeProfileCompatibility(qualified, candidate);
   if (isValidationFailure(compatible)) {
     throw new UnqualifiedCanonicalWriterError(

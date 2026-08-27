@@ -145,6 +145,22 @@ export const CANONICAL_TRANSACTION_ISOLATION_LEVEL = 'read committed';
 
 export type DeterministicRuntimeProfile = Static<typeof DeterministicRuntimeProfileSchema>;
 
+/**
+ * Разбирает профиль выполнения, ПРОЧИТАННЫЙ ИЗ ХРАНИЛИЩА (m10 независимого аудита I03).
+ *
+ * Нужен там, где раньше стояло `as DeterministicRuntimeProfile`. Приведение типом — обещание
+ * компилятору, а не факт: значение приходит из jsonb, то есть из-за границы процесса. Профиль с
+ * недостающим полем проходил приведение молча и дальше сравнивался с кандидатом как валидный —
+ * то есть «квалификация пройдена» означало «сравнили с мусором».
+ */
+export function decodeDeterministicRuntimeProfile(
+  input: unknown,
+): ValidationResult<DeterministicRuntimeProfile> {
+  const issues = schemaIssues(DeterministicRuntimeProfileSchema, input);
+  if (issues.length > 0) return { errors: issues };
+  return { value: input as DeterministicRuntimeProfile };
+}
+
 export const SnapshotSchema = Type.Object(
   {
     world_id: NamespacedIdSchema,
