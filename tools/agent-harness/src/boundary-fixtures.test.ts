@@ -140,6 +140,17 @@ const domainFiles: Readonly<Record<string, string>> = {
   'date-parse.ts': "export const bad = (): number => Date.parse('2026-01-01');\n",
   'math-random.ts': 'export const bad = (): number => Math.random();\n',
   'process-env.ts': "export const bad = (): string | undefined => process.env['X'];\n",
+  // m11 независимого аудита I03: у этих правил не было НИ ОДНОЙ фикстуры, то есть по ADR-003
+  // их не существовало. Ниже — по одному нарушителю на правило.
+  //
+  // coreExternalAllowlist: ядру разрешены относительные импорты, `node:`, `@zona/*` и поимённо
+  // перечисленные внешние. Перечисление запрещённого не может быть полным, разрешённого — может,
+  // и именно поэтому проверять надо ОТКАЗ на неизвестном имени, а не отсутствие известных.
+  'core-external-import.ts': "import 'pino';\nexport const marker = true;\n",
+  // no-deprecated-core: снятые с поддержки встроенные модули Node. `domain` среди них — и это
+  // не совпадение с именем пакета проекта, а ровно тот случай, когда опечатка в импорте даёт
+  // молчаливо работающий, но неверный модуль.
+  'deprecated-core.ts': "import 'punycode';\nexport const marker = true;\n",
   'crypto-random-uuid.ts': 'export const bad = (): string => crypto.randomUUID();\n',
   // M2 верификации I01: computed-доступ и globalThis обходили прежние селекторы —
   // проверено исполнением, файл с этими формами давал eslint exit 0.
@@ -186,7 +197,18 @@ const domainFiles: Readonly<Record<string, string>> = {
     "import { PACKAGE_NAME } from '@zona/contracts';\nexport const legal = PACKAGE_NAME;\n",
 };
 
+const domainBoundaryFiles: Readonly<Record<string, string>> = {
+  // domain-depends-on-contracts-only: домену разрешён ТОЛЬКО contracts. `content` — данные, но
+  // это не делает его допустимой зависимостью ядра: правило про направление, а не про «опасность».
+  'domain-to-content.ts': "import '../../../content/src/index.ts';\nexport const marker = true;\n",
+};
+
 const simulationFiles: Readonly<Record<string, string>> = {
+  // simulation-depends-on-contracts-and-domain: симуляции разрешены contracts и domain.
+  // persistence — адаптер, и путь к нему из симуляции означал бы, что детерминированное ядро
+  // знает про БД.
+  'simulation-to-persistence.ts':
+    "import '../../../persistence/src/database.ts';\nexport const marker = true;\n",
   'sim-to-pg.ts': "import { Pool } from 'pg';\nexport type _P = Pool;\n",
   // no-unresolvable/no-circular не прогоняются через eslint (только depcruise видит SIMULATION_DIR
   // как аргумент CLI ниже, а eslint — только DOMAIN_DIR), поэтому размещены здесь: нет риска, что
@@ -209,6 +231,13 @@ const contractsFiles: Readonly<Record<string, string>> = {
 };
 
 /** minor 7: content-is-data-only не имел фикстуры. */
+const contractsBoundaryFiles: Readonly<Record<string, string>> = {
+  // packages-do-not-depend-on-apps: направление зависимости задано ADR-002, и до I03 у правила
+  // не было фикстуры. Пакет, узнавший про приложение, разворачивает граф целиком.
+  'contracts-to-api.ts':
+    "import '../../../../apps/api/src/server.ts';\nexport const marker = true;\n",
+};
+
 const contentFiles: Readonly<Record<string, string>> = {
   'content-to-domain.ts':
     "import { PACKAGE_NAME } from '@zona/domain';\nexport const _x = PACKAGE_NAME;\n",
@@ -320,11 +349,21 @@ const runCapture = (command: string, args: readonly string[]): string => {
   }
 };
 
+/**
+ * Таймаут поднят: harness запускает eslint и depcruise по НЕСКОЛЬКИМ каталогам фикстур, и после
+ * m11 их стало больше — правила, у которых раньше не было ни одной фикстуры, теперь имеют по
+ * нарушителю. Десяти секунд перестало хватать, и hook падал по таймауту, помечая ВСЕ 68 проверок
+ * пропущенными: набор выглядел бы «не упавшим». Сокращать проверки ради таймаута нельзя — это
+ * ровно та сделка, ради удобства которой контроль и слабеет.
+ */
 beforeAll(() => {
   sweepStaleFixtureDirs();
   try {
     for (const dir of FIXTURE_DIRS) mkdirSync(dir, { recursive: true });
     for (const [name, content] of Object.entries(domainFiles)) {
+      writeFileSync(resolve(DOMAIN_DIR, name), content);
+    }
+    for (const [name, content] of Object.entries(domainBoundaryFiles)) {
       writeFileSync(resolve(DOMAIN_DIR, name), content);
     }
     for (const [name, content] of Object.entries(simulationFiles)) {
@@ -334,6 +373,9 @@ beforeAll(() => {
       writeFileSync(resolve(REPRESENTATION_DIR, name), content);
     }
     for (const [name, content] of Object.entries(contractsFiles)) {
+      writeFileSync(resolve(CONTRACTS_DIR, name), content);
+    }
+    for (const [name, content] of Object.entries(contractsBoundaryFiles)) {
       writeFileSync(resolve(CONTRACTS_DIR, name), content);
     }
     for (const [name, content] of Object.entries(contentFiles)) {
@@ -395,7 +437,7 @@ beforeAll(() => {
     // не остаются в packages/domain и packages/simulation.
     cleanupFixtures();
   }
-});
+}, 120_000);
 
 afterAll(() => {
   // Повторная защита: если beforeAll не добежал до try (например, упал mkdirSync на первой
@@ -441,6 +483,8 @@ describe('boundary fixtures — eslint (A2, DEV-02, SIM-01)', () => {
     ['performance-now.ts', 'no-restricted-syntax', 'wall clock запрещён'],
     ['ts-enum.ts', 'no-restricted-syntax', 'enum запрещён'],
     ['ts-namespace.ts', 'no-restricted-syntax', 'namespaces запрещены'],
+    // m11 независимого аудита I03 — правила, у которых не было ни одной фикстуры.
+    ['core-external-import.ts', 'no-restricted-imports', 'каноническому ядру разрешены'],
     ['import-kysely.ts', 'no-restricted-imports', "'kysely' import is restricted"],
     ['import-pg.ts', 'no-restricted-imports', "'pg' import is restricted"],
     ['import-fastify.ts', 'no-restricted-imports', "'fastify' import is restricted"],
@@ -573,6 +617,29 @@ describe('boundary fixtures — dependency-cruiser (A2, ADR-002/003/006)', () =>
     expect(hasDepViolation('api-to-scripts.ts', 'apps-do-not-depend-on-scripts-or-tests')).toBe(
       true,
     );
+  });
+
+  /**
+   * m11 независимого архитектурного аудита I03: у этих правил не было НИ ОДНОЙ фикстуры, то есть
+   * по ADR-003 их не существовало. Правило, которое никто не пробовал нарушить, могло быть молча
+   * выключено переопределением — так уже случалось в I02B с запретом LLM-импортов.
+   */
+  it('packages/domain -> packages/content: domain-depends-on-contracts-only', () => {
+    expect(hasDepViolation('domain-to-content.ts', 'domain-depends-on-contracts-only')).toBe(true);
+  });
+
+  it('packages/simulation -> packages/persistence: simulation-depends-on-contracts-and-domain', () => {
+    expect(
+      hasDepViolation('simulation-to-persistence.ts', 'simulation-depends-on-contracts-and-domain'),
+    ).toBe(true);
+  });
+
+  it('packages/contracts -> apps/api: packages-do-not-depend-on-apps', () => {
+    expect(hasDepViolation('contracts-to-api.ts', 'packages-do-not-depend-on-apps')).toBe(true);
+  });
+
+  it('deprecated core module: no-deprecated-core', () => {
+    expect(hasDepViolation('deprecated-core.ts', 'no-deprecated-core')).toBe(true);
   });
 
   it('apps/web -> packages/persistence: правило покрывает ОБА приложения observer-пути', () => {
