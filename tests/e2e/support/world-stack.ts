@@ -128,15 +128,6 @@ export const startWorldStack = async (
     children.push(child);
   };
 
-  spawnChild('node', ['apps/worker/src/main.ts'], {
-    DATABASE_URL: databaseUrl,
-    PROJECTION_DATABASE_URL: databaseUrlFor(databaseUrl, 'zona_projection', ROLE_PASSWORD),
-    // Быстрый темп: сценарий не должен ждать сорок секунд реального времени, чтобы увидеть
-    // завершение пути. На то, КАКИМИ будут события, это не влияет (D2) — только на «когда».
-    WORLD_MINUTES_PER_REAL_SECOND: String(options.worldMinutesPerRealSecond ?? 60),
-    LOG_LEVEL: 'silent',
-  });
-
   spawnChild('node', ['apps/api/src/main.ts'], {
     PROJECTION_DATABASE_URL: databaseUrlFor(databaseUrl, 'zona_api', ROLE_PASSWORD),
     PORT: String(apiPort),
@@ -159,6 +150,31 @@ export const startWorldStack = async (
 
   const webUrl = `http://localhost:${String(webPort)}`;
   await waitFor(reachable(webUrl), 'экран наблюдателя');
+
+  /**
+   * Worker поднимается ПОСЛЕДНИМ, после того как экран уже отвечает.
+   *
+   * Причина — кредит темпа, найденный независимым аудитом I03 и воспроизведённый исполнением:
+   * горизонт растёт от старта ПРОЦЕССА, а мировое время двигают только события, поэтому
+   * простаивающий worker копит неизрасходованное время. Пока он стартовал первым, к моменту
+   * команды успевало накопиться больше сорока мировых минут — ровно длина маршрута, — и путь
+   * завершался мгновенно, а состояние «в пути» не существовало ни в один наблюдаемый момент.
+   * D13 при этом падал не на своём утверждении, а на карте, и выглядел сломанным сценарием.
+   *
+   * Порядок ничего не ломает: пока команд нет, двигать нечего. Зато мир начинает идти тогда же,
+   * когда за ним начинают смотреть, — что и требуется сценарию про наблюдаемость.
+   *
+   * Это ОБХОД дефекта, а не его починка: сам кредит остаётся и вынесен владельцу
+   * (`REPORT.md` §5.4).
+   */
+  spawnChild('node', ['apps/worker/src/main.ts'], {
+    DATABASE_URL: databaseUrl,
+    PROJECTION_DATABASE_URL: databaseUrlFor(databaseUrl, 'zona_projection', ROLE_PASSWORD),
+    // Быстрый темп: сценарий не должен ждать сорок секунд реального времени, чтобы увидеть
+    // завершение пути. На то, КАКИМИ будут события, это не влияет (D2) — только на «когда».
+    WORLD_MINUTES_PER_REAL_SECOND: String(options.worldMinutesPerRealSecond ?? 60),
+    LOG_LEVEL: 'silent',
+  });
 
   return {
     webUrl,
