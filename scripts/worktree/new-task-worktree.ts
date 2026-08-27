@@ -36,6 +36,8 @@ type TaskDeclaration = {
   readonly owner_role: string;
   readonly write_paths: readonly string[];
   readonly allow_protected_paths?: readonly string[];
+  /** Имена сессий, которым принадлежит задача: hook сопоставляет роль по `agent_type` payload-а. */
+  readonly agent_types?: readonly string[];
 };
 
 const fail = (message: string): never => {
@@ -119,7 +121,78 @@ const writeSet: TaskDeclaration = {
   ...(task!.allow_protected_paths === undefined
     ? {}
     : { allow_protected_paths: task!.allow_protected_paths }),
+  ...(task!.agent_types === undefined ? {} : { agent_types: task!.agent_types }),
 };
+
+/**
+ * АВТОРИТЕТНЫЙ write set лежит в дереве LEAD-А, а не в worktree задачи, и обновляется здесь.
+ *
+ * B1 независимого архитектурного аудита I03, воспроизведённый живым прогоном: hook
+ * `pre-tool-use-bash` берёт `projectRoot` из `input.cwd`, а in-process subagent наследует cwd
+ * родительской сессии. Значит файл, который скрипт кладёт в дерево задачи, НЕ ЧИТАЕТСЯ НИКОГДА —
+ * он остаётся только человекочитаемой копией. Само ограничение известно и записано в
+ * `writeset.ts`; дефект был не в нём, а в том, что обновление авторитетного файла оставалось
+ * ручной обязанностью, о которой ничто не напоминало.
+ *
+ * Цена ошибки измерена: в I03 в дереве lead-а остался write set ПРОШЛОЙ итерации, все четыре
+ * ревьюерские сессии получили fail-closed на любой Bash — включая `pwd` — и раунд верификации
+ * был потерян целиком. Сессии при этом работали и писали отчёты, которые никуда не дошли.
+ *
+ * Поэтому создание worktree теперь ОБНОВЛЯЕТ файл в дереве lead-а: задача этой итерации
+ * добавляется или заменяется, а записи ЧУЖОЙ итерации удаляются целиком. Удаление намеренно:
+ * именно уцелевшая запись прошлой итерации и создала ложное впечатление, что права объявлены.
+ */
+const leadWriteSetPath = join(projectRoot, '.claude', 'writeset.json');
+const iterationId = typeof map.iteration_id === 'string' ? map.iteration_id : taskIdArg!;
+
+type LeadWriteSetFile = {
+  readonly '//'?: string;
+  readonly iteration_id?: string;
+  readonly tasks?: readonly TaskDeclaration[];
+};
+
+let existing: LeadWriteSetFile = {};
+if (existsSync(leadWriteSetPath)) {
+  try {
+    existing = JSON.parse(readFileSync(leadWriteSetPath, 'utf8')) as LeadWriteSetFile;
+  } catch {
+    // Нечитаемый файл — не повод продолжать молча: права объявляет он.
+    fail(`Не разобран ${leadWriteSetPath}. Почините или удалите — молча перезаписывать нельзя.`);
+  }
+}
+
+const sameIteration = existing.iteration_id === iterationId;
+const kept = sameIteration
+  ? (existing.tasks ?? []).filter((entry) => entry.task_id !== task!.task_id)
+  : [];
+if (!sameIteration && (existing.tasks ?? []).length > 0) {
+  process.stdout.write(
+    `ВНИМАНИЕ: ${leadWriteSetPath} описывал итерацию ${String(existing.iteration_id ?? '(без id)')}, ` +
+      `а создаётся задача ${iterationId}. Записи прошлой итерации удалены: именно уцелевшая ` +
+      'запись прошлой итерации однажды обнулила права всем ревьюерам (B1 аудита I03).\n',
+  );
+}
+
+writeFileSync(
+  leadWriteSetPath,
+  `${JSON.stringify(
+    {
+      '//':
+        'Авторитетный write set: hook читает ИМЕННО ЭТОТ файл (projectRoot из input.cwd). ' +
+        'Обновляется скриптом task:worktree; править вручную можно, но тогда легко забыть — ' +
+        'именно так был потерян раунд верификации I03.',
+      iteration_id: iterationId,
+      tasks: [...kept, writeSet],
+    },
+    null,
+    2,
+  )}
+`,
+  'utf8',
+);
+process.stdout.write(`Авторитетный write set обновлён: ${leadWriteSetPath}
+`);
+
 mkdirSync(join(worktreeDir, '.claude'), { recursive: true });
 writeFileSync(
   join(worktreeDir, '.claude', 'writeset.json'),

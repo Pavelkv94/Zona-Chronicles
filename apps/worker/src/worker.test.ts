@@ -190,7 +190,7 @@ describe('createWorker', () => {
    * отказов только логировался и ни на что не влиял; проверяем, что теперь влияет и что
    * молчания не наступает НИКОГДА.
    */
-  it('частота жалоб на отказ убывает, но жалоба не смолкает', async () => {
+  it('частота жалоб на отказ убывает, но жалоба не смолкает', () => {
     const reported: number[] = [];
     for (let consecutive = 1; consecutive <= 1000; consecutive += 1) {
       if (shouldReportProjectionFailure(consecutive)) reported.push(consecutive);
