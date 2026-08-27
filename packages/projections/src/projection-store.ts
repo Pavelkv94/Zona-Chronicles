@@ -6,6 +6,7 @@
  * не код, а гранты: `zona_api` имеет только `SELECT` на `projection_*`, поэтому вызов writer-а из
  * API отвергнет БАЗА, а не соглашение (D5).
  */
+import { sql } from 'kysely';
 import type { ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
 import type { ObserverProjectionState } from './observer-fold.ts';
 import { type ProjectionDatabase, requireSafeInteger } from './projection-database.ts';
@@ -289,4 +290,40 @@ export const resetProjection = async (db: ProjectionDatabase, worldId: string): 
     await trx.deleteFrom('projection_locations').where('world_id', '=', worldId).execute();
     await trx.deleteFrom('projection_state').where('world_id', '=', worldId).execute();
   });
+};
+
+/**
+ * Проверяет, что роль подключения НЕ ИМЕЕТ доступа к каноническим таблицам (D5, m6 аудита I03).
+ *
+ * ## Зачем это в рантайме, если есть гранты и тесты
+ *
+ * Гранты доказывают, что роль `zona_api` бессильна. Они НЕ доказывают, что API подключился
+ * именно ею. Одна опечатка в окружении — `PROJECTION_DATABASE_URL` со значением `DATABASE_URL` —
+ * и observer-путь ходит под ролью worker-а: код тот же, тесты те же, D5 нарушен, и ни один
+ * контроль этого не заметит. Именно так граница, выраженная правами, теряется на развёртывании.
+ *
+ * Проверка спрашивает у САМОЙ БАЗЫ, а не у конфигурации: `has_table_privilege` отвечает про
+ * действующее подключение. Отсутствие таблицы — не отказ: схема проекции может жить отдельно от
+ * канонической, и требовать наличия канонических таблиц значило бы навязать топологию.
+ */
+export const assertObserverRoleIsReadOnly = async (db: ProjectionDatabase): Promise<void> => {
+  const rows = await sql<{ readonly table_name: string; readonly allowed: boolean | null }>`
+    select t.table_name,
+           case when to_regclass('public.' || t.table_name) is null then null
+                else has_table_privilege(current_user, 'public.' || t.table_name, 'SELECT')
+           end as allowed
+      from (values ('world_events'), ('worlds'), ('agents'), ('command_results'),
+                   ('scheduled_actions'), ('world_snapshots'), ('outbox')) as t(table_name)
+  `.execute(db);
+
+  const reachable = rows.rows.filter((row) => row.allowed === true).map((row) => row.table_name);
+  if (reachable.length > 0) {
+    const who = await sql<{ readonly current_user: string }>`select current_user`.execute(db);
+    throw new Error(
+      `projections: observer-путь подключён ролью "${who.rows[0]?.current_user ?? '?'}", у которой ` +
+        `есть доступ к каноническим таблицам: ${reachable.join(', ')}. Это нарушение D5/OPS-02, и ` +
+        'почти всегда причина одна: PROJECTION_DATABASE_URL совпал с DATABASE_URL. Наблюдатель ' +
+        'обязан быть бессилен ПРАВАМИ, а не тем, что его код не пишет таких запросов.',
+    );
+  }
 };

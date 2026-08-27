@@ -17,10 +17,15 @@
  */
 import type { FastifyInstance } from 'fastify';
 import { Type } from '@sinclair/typebox';
+import { TypeCompiler } from '@sinclair/typebox/compiler';
 import {
   OBSERVER_STREAM_EVENT_NAMES,
   ObserverEventSchema,
+  ObserverStreamResetSchema,
   ObserverWorldSnapshotSchema,
+  decodeObserverEvent,
+  isValidationFailure,
+  type ObserverEvent,
   type ObserverStreamReset,
 } from '@zona/contracts';
 import type { ObserverPort } from './observer-port.ts';
@@ -63,11 +68,49 @@ const DEFAULT_STREAM_POLL_MS = 500;
 const KEEP_ALIVE_MS = 15_000;
 
 /** Один кадр SSE. Формат текстовый и построчный — собирается здесь, а не разбросан по коду. */
+/**
+ * Кадр SSE — ЕДИНСТВЕННЫЙ публичный ответ вне сериализации Fastify по схеме (m7 аудита I03).
+ *
+ * Обычные маршруты отдают ответ через TypeBox: схема с `additionalProperties: false` отсекает
+ * лишнее поле на выходе. Поток пишется в сокет напрямую, поэтому такой отсечки у него нет — и
+ * именно потоком утекло бы поле, случайно попавшее в объект из колонки таблицы. Тип на входе
+ * этого не ловит: он проверяется при компиляции, а лишнее поле приходит в рантайме.
+ *
+ * Поэтому данные кадра проверяются схемой ПЕРЕД записью. Отказ громкий: молча отправить
+ * непроверенное — ровно то, от чего защищает `additionalProperties: false` на остальных путях.
+ */
+/** Проверка кадра события контрактом: та же схема, что у ленты, включая additionalProperties. */
+const eventIssues = (value: unknown): readonly string[] => {
+  const decoded = decodeObserverEvent(value);
+  return isValidationFailure(decoded)
+    ? decoded.errors.map((issue) => `${issue.path} ${issue.message}`)
+    : [];
+};
+
+/**
+ * Проверка управляющего кадра. Схема заморожена вместе с остальным observer-контрактом.
+ *
+ * Отдельного декодера у неё нет — она не пересекает границу процесса в обратную сторону, — поэтому
+ * проверка идёт компилятором TypeBox напрямую.
+ */
+const resetChecker = TypeCompiler.Compile(ObserverStreamResetSchema);
+const resetIssues = (value: unknown): readonly string[] =>
+  [...resetChecker.Errors(value)].map((issue) => `${issue.path} ${issue.message}`);
+
 const sseFrame = (input: {
   readonly id?: number;
   readonly event: string;
   readonly data: unknown;
+  readonly validate?: (value: unknown) => readonly string[];
 }): string => {
+  const issues = input.validate?.(input.data) ?? [];
+  if (issues.length > 0) {
+    throw new Error(
+      `observer-routes: кадр потока "${input.event}" не соответствует контракту: ` +
+        `${issues.join('; ')}. Поток — единственный публичный ответ вне сериализации по схеме, ` +
+        'поэтому проверка здесь и есть та самая отсечка лишнего.',
+    );
+  }
   const lines = [
     ...(input.id === undefined ? [] : [`id: ${String(input.id)}`]),
     `event: ${input.event}`,
@@ -201,19 +244,47 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
         reason: 'reset_required',
         earliest_available_sequence: first.earliestAvailableSequence,
       };
-      reply.raw.write(sseFrame({ event: OBSERVER_STREAM_EVENT_NAMES.reset, data: reset }));
+      reply.raw.write(
+        sseFrame({
+          event: OBSERVER_STREAM_EVENT_NAMES.reset,
+          data: reset,
+          validate: resetIssues,
+        }),
+      );
       reply.raw.end();
       return reply;
     }
 
+    /**
+     * Кадр, не прошедший контракт, ЗАВЕРШАЕТ поток, а не подвешивает его.
+     *
+     * Заголовки уже отправлены, поэтому обычный путь Fastify «бросить и получить 500» здесь
+     * недоступен: исключение из обработчика оставило бы соединение открытым навсегда, и зритель
+     * ждал бы событий, которых не будет. Проверено исполнением — тест на утёкшее поле висел до
+     * таймаута. Закрытое соединение EventSource переоткрывает сам, и следующая попытка либо
+     * получит исправный кадр, либо снова закроется — но зритель не окажется в тишине, приняв её
+     * за спокойный мир.
+     */
+    const writeEvent = (event: ObserverEvent): boolean => {
+      try {
+        reply.raw.write(
+          sseFrame({
+            id: event.projection_sequence,
+            event: OBSERVER_STREAM_EVENT_NAMES.event,
+            data: event,
+            validate: eventIssues,
+          }),
+        );
+        return true;
+      } catch (error) {
+        request.log.error({ worldId, error: String(error) }, 'observer.stream.contract_violation');
+        reply.raw.end();
+        return false;
+      }
+    };
+
     for (const event of first.events) {
-      reply.raw.write(
-        sseFrame({
-          id: event.projection_sequence,
-          event: OBSERVER_STREAM_EVENT_NAMES.event,
-          data: event,
-        }),
-      );
+      if (!writeEvent(event)) return reply;
       cursor = event.projection_sequence;
     }
 
@@ -235,13 +306,7 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
       }
       quietPolls = 0;
       for (const event of page.events) {
-        reply.raw.write(
-          sseFrame({
-            id: event.projection_sequence,
-            event: OBSERVER_STREAM_EVENT_NAMES.event,
-            data: event,
-          }),
-        );
+        if (!writeEvent(event)) return reply;
         cursor = event.projection_sequence;
       }
     }

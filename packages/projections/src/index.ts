@@ -27,6 +27,7 @@ export { createProjectionDatabase, parseProjectionDatabaseUrl } from './projecti
 
 export type { ObserverEventPage, ProjectionCursor } from './projection-store.ts';
 export {
+  assertObserverRoleIsReadOnly,
   initializeProjection,
   loadObserverEvents,
   loadObserverSnapshot,

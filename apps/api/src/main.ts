@@ -8,6 +8,7 @@
  */
 import pino from 'pino';
 import {
+  assertObserverRoleIsReadOnly,
   createProjectionDatabase,
   loadObserverEvents,
   loadObserverSnapshot,
@@ -36,6 +37,16 @@ async function main(): Promise<void> {
   const projection = createProjectionDatabase(
     parseProjectionDatabaseUrl(config.projectionDatabaseUrl),
   );
+
+  /**
+   * D5 проверяется у САМОЙ БАЗЫ при старте, а не только грантами и тестами (m6 аудита I03).
+   *
+   * Гранты доказывают, что роль `zona_api` бессильна. Они не доказывают, что API подключился
+   * именно ею: одна опечатка в окружении — и observer-путь ходит под ролью worker-а. Код тот же,
+   * тесты те же, граница потеряна на развёртывании. Отказ на старте громкий: сервис, читающий
+   * канонические таблицы, не должен подняться вовсе.
+   */
+  await assertObserverRoleIsReadOnly(projection);
 
   const app = buildServer({
     deploymentId: config.deploymentId,

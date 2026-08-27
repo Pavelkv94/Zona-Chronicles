@@ -55,6 +55,16 @@ const ReadyResponseSchema = Type.Object(
   { additionalProperties: false },
 );
 
+/** Ответ, когда зависимость недоступна: причина названа, а не спрятана за кодом статуса. */
+const NotReadyResponseSchema = Type.Object(
+  {
+    status: Type.Literal('not_ready'),
+    reason: Type.Literal('projection_unavailable'),
+    detail: Type.String(),
+  },
+  { additionalProperties: false },
+);
+
 /** Builds the Fastify instance. Server construction has no side effects beyond route registration. */
 export function buildServer(deps: BuildServerDeps): FastifyInstance {
   const app = Fastify().withTypeProvider<TypeBoxTypeProvider>();
@@ -69,9 +79,35 @@ export function buildServer(deps: BuildServerDeps): FastifyInstance {
 
   // Readiness (§12 03_TECHNICAL_DESIGN) отличается от liveness: в I00 без зависимостей для проверки,
   // поэтому реализация — фиксированный ответ. Реальная readiness-логика (DB/outbox) появится позже.
-  app.get('/ready', { schema: { response: { 200: ReadyResponseSchema } } }, () => ({
-    status: 'ready' as const,
-  }));
+  /**
+   * Готовность СПРАШИВАЕТСЯ у зависимости, а не объявляется (m5 аудита I03).
+   *
+   * До I03 у сервиса не было зависимостей вовсе, и фиксированный `ready` был честен. Теперь есть
+   * хранилище проекции, и «ready» без обращения к нему означает «процесс запустился», а не «могу
+   * обслуживать» — то есть балансировщик направит трафик туда, где все `/v1/*` ответят ошибкой.
+   *
+   * Различие, ради которого проверка устроена именно так: НЕДОСТУПНАЯ база и ОТСУТСТВУЮЩИЙ мир —
+   * разные вещи. Первое — не готов; второе — готов, просто показывать пока нечего. Обращение к
+   * `loadSnapshot` различает их само: недоступность бросает, отсутствие мира даёт `null`.
+   */
+  app.get(
+    '/ready',
+    { schema: { response: { 200: ReadyResponseSchema, 503: NotReadyResponseSchema } } },
+    async (_request, reply) => {
+      const observer = deps.observer;
+      if (observer === undefined) return { status: 'ready' as const };
+      try {
+        await observer.observer.loadSnapshot(observer.worldId);
+        return { status: 'ready' as const };
+      } catch (error) {
+        return await reply.status(503).send({
+          status: 'not_ready' as const,
+          reason: 'projection_unavailable',
+          detail: String(error),
+        });
+      }
+    },
+  );
 
   if (deps.allowedOrigins !== undefined && deps.allowedOrigins.length > 0) {
     // Только GET: список методов перечислен ЯВНО и совпадает с тем, что API вообще умеет (D4).

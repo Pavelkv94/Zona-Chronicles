@@ -335,3 +335,102 @@ describe('D9/D10: возобновление потока', () => {
     await app.close();
   });
 });
+
+describe('m5/m7 независимого аудита I03 — готовность и контракт потока', () => {
+  /**
+   * m5. `/ready` без обращения к зависимости означает «процесс запустился», а не «могу
+   * обслуживать»: балансировщик направит трафик туда, где все `/v1/*` ответят ошибкой.
+   *
+   * Проверяются ОБА исхода, потому что различать их и есть смысл проверки: недоступная база —
+   * не готов, отсутствующий мир — готов, просто показывать нечего.
+   */
+  it('недоступная проекция даёт 503 с названной причиной', async () => {
+    const app = server(
+      port({
+        loadSnapshot: async () => await Promise.reject(new Error('connection refused')),
+      }),
+    );
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toMatchObject({
+      status: 'not_ready',
+      reason: 'projection_unavailable',
+    });
+    await app.close();
+  });
+
+  it('мира ещё нет — сервис ГОТОВ: показывать нечего, но обслуживать он может', async () => {
+    const app = server(port({ loadSnapshot: async () => await Promise.resolve(null) }));
+    const response = await app.inject({ method: 'GET', url: '/ready' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ status: 'ready' });
+    await app.close();
+  });
+
+  /**
+   * m7. Поток — единственный публичный ответ вне сериализации по схеме: остальные маршруты
+   * отдают ответ через TypeBox, где `additionalProperties: false` отсекает лишнее поле, а кадр
+   * пишется в сокет напрямую. Лишнее поле приходит не из литерала в коде (его поймал бы
+   * компилятор), а из колонки таблицы в рантайме — поэтому проверка нужна именно на выходе.
+   */
+  it('лишнее поле в событии не уходит в поток, а роняет запрос', async () => {
+    const leaky = { ...feedEvent(2), last_event_sequence: 7 } as unknown as ObserverEvent;
+    const app = server(
+      port({
+        loadEvents: async () =>
+          await Promise.resolve({ events: [leaky], earliestAvailableSequence: 1 }),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream',
+      headers: { 'last-event-id': '1' },
+      payloadAsStream: true,
+    });
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      response.stream().on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.stream().on('end', () => resolve());
+      response.stream().on('close', () => resolve());
+    });
+
+    const text = Buffer.concat(chunks).toString('utf8');
+    // Главное: утёкшего поля в проводе НЕТ.
+    expect(text).not.toContain('last_event_sequence');
+    response.stream().destroy();
+    await app.close();
+  });
+
+  it('исправное событие в поток проходит — проверка не запрещает нормальную работу', async () => {
+    const app = server(
+      port({
+        loadEvents: async (_worldId, options) =>
+          await Promise.resolve({
+            events: options.after < 2 ? [feedEvent(2)] : [],
+            earliestAvailableSequence: 1,
+          }),
+      }),
+    );
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream',
+      headers: { 'last-event-id': '1' },
+      payloadAsStream: true,
+    });
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      response.stream().on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+        if (Buffer.concat(chunks).toString('utf8').includes('id: 2')) resolve();
+      });
+    });
+    expect(Buffer.concat(chunks).toString('utf8')).toContain('id: 2');
+    response.stream().destroy();
+    await app.close();
+  });
+});
