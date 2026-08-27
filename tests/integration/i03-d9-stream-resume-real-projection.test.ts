@@ -240,4 +240,48 @@ describe('D9 — переподключение не теряет событий
 
     expect(live).toEqual([8, 9]);
   });
+
+  /**
+   * Обработчик потока не отклоняется, когда зритель ушёл, а хранилище стало недоступно.
+   *
+   * Найдено полным прогоном, а не прогоном этого файла: файл зеленел («3 passed»), а код возврата
+   * набора был единицей — vitest считает необработанные отклонения на уровне ПРОГОНА. Fastify на
+   * отклонённый промис пытается ответить ошибкой, а заголовки уже ушли, и получается
+   * `ERR_HTTP_HEADERS_SENT`.
+   *
+   * Здесь это воспроизводится честно: поток открыт, клиент уходит, хранилище закрывается. Именно
+   * такая последовательность и бывает в жизни — вкладку закрыли, база ушла на обслуживание.
+   */
+  it('уход зрителя и падение хранилища не дают необработанного отклонения', async () => {
+    const app = server();
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream',
+      headers: { 'last-event-id': '0' },
+      payloadAsStream: true,
+    });
+    expect(response.statusCode).toBe(200);
+
+    // Зритель ушёл посреди потока.
+    response.stream().destroy();
+
+    // И хранилище стало недоступно: следующий опрос обязан упасть.
+    const casualty = createProjectionDatabase(parseProjectionDatabaseUrl(migrated.testDb.url));
+    await casualty.destroy();
+
+    const rejections: unknown[] = [];
+    const onRejection = (error: unknown): void => {
+      rejections.push(error);
+    };
+    process.on('unhandledRejection', onRejection);
+    try {
+      // Дольше интервала опроса: цикл обязан успеть сходить в базу хотя бы раз.
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    } finally {
+      process.off('unhandledRejection', onRejection);
+      await app.close();
+    }
+
+    expect(rejections).toEqual([]);
+  });
 });

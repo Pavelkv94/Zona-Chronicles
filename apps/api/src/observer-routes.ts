@@ -229,6 +229,39 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
       closed = true;
     });
 
+    /**
+     * Запись в поток, переживающая УХОД КЛИЕНТА.
+     *
+     * Найдено полным прогоном, а не прогоном файла: зритель, закрывший вкладку посреди кадра,
+     * заставлял `reply.raw.write` бросить на разрушенном сокете. Ошибка выходила из async-хендлера
+     * УЖЕ ПОСЛЕ отправки заголовков, Fastify пытался ответить ошибкой и падал с
+     * `ERR_HTTP_HEADERS_SENT` — необработанным rejection. Тестовый файл при этом зеленел: vitest
+     * считает такие ошибки на уровне ПРОГОНА, а не файла, и код возврата отличался от «3 passed».
+     *
+     * Уход клиента — не сбой сервера. Это самое обычное событие: вкладку закрывают. Поэтому
+     * запись возвращает `false` и помечает поток закрытым, а не бросает.
+     */
+    const safeWrite = (chunk: string): boolean => {
+      if (closed || reply.raw.destroyed || reply.raw.writableEnded) return false;
+      try {
+        reply.raw.write(chunk);
+        return true;
+      } catch {
+        closed = true;
+        return false;
+      }
+    };
+
+    /** Завершение потока с тем же условием: закрывать уже закрытое — не ошибка, а шум. */
+    const safeEnd = (): void => {
+      if (reply.raw.destroyed || reply.raw.writableEnded) return;
+      try {
+        reply.raw.end();
+      } catch {
+        closed = true;
+      }
+    };
+
     // Первая же выборка отвечает на вопрос, доступна ли запрошенная позиция (D10).
     const first = await observer.loadEvents(worldId, { after: cursor, limit: MAX_EVENT_PAGE });
     if (
@@ -244,14 +277,14 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
         reason: 'reset_required',
         earliest_available_sequence: first.earliestAvailableSequence,
       };
-      reply.raw.write(
+      safeWrite(
         sseFrame({
           event: OBSERVER_STREAM_EVENT_NAMES.reset,
           data: reset,
           validate: resetIssues,
         }),
       );
-      reply.raw.end();
+      safeEnd();
       return reply;
     }
 
@@ -267,7 +300,7 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
      */
     const writeEvent = (event: ObserverEvent): boolean => {
       try {
-        reply.raw.write(
+        return safeWrite(
           sseFrame({
             id: event.projection_sequence,
             event: OBSERVER_STREAM_EVENT_NAMES.event,
@@ -275,10 +308,10 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
             validate: eventIssues,
           }),
         );
-        return true;
       } catch (error) {
+        // Сюда попадает ТОЛЬКО нарушение контракта: отказ записи `safeWrite` уже поглотил.
         request.log.error({ worldId, error: String(error) }, 'observer.stream.contract_violation');
-        reply.raw.end();
+        safeEnd();
         return false;
       }
     };
@@ -288,30 +321,47 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
       cursor = event.projection_sequence;
     }
 
+    /**
+     * Обработчик потока НЕ ИМЕЕТ ПРАВА отклоняться после отправки заголовков.
+     *
+     * Fastify на отклонённый промис пытается ответить ошибкой, а заголовки уже ушли — получается
+     * `ERR_HTTP_HEADERS_SENT` и НЕОБРАБОТАННЫЙ rejection. Найдено полным прогоном: файл теста
+     * зеленел («3 passed»), а код возврата всего набора был единицей — vitest считает такие
+     * ошибки на уровне прогона, а не файла.
+     *
+     * Источник в цикле опроса: он продолжает ходить в базу и после того, как зритель ушёл, — а
+     * закрытие соединения для внедрённого запроса не всегда поднимает `close`. Любой отказ здесь
+     * означает «поток дальше не идёт», и правильный ответ — назвать причину и закрыть, а не
+     * отдать её Fastify, которому уже нечего с ней делать.
+     */
     let quietPolls = 0;
-    while (!closed) {
-      await new Promise((resolve) => setTimeout(resolve, streamPollMs));
-      if (closed) break;
-      const page = await observer.loadEvents(worldId, { after: cursor, limit: MAX_EVENT_PAGE });
-      if (page.events.length === 0) {
-        quietPolls += 1;
-        // Комментарий SSE (строка, начинающаяся с двоеточия) — не событие: клиент его
-        // игнорирует. Он нужен, чтобы молчащий мир не выглядел оборванным соединением для
-        // прокси и балансировщиков, которые закрывают тихие потоки по таймауту.
-        if (quietPolls * streamPollMs >= KEEP_ALIVE_MS) {
-          reply.raw.write(': keep-alive\n\n');
-          quietPolls = 0;
+    try {
+      while (!closed) {
+        await new Promise((resolve) => setTimeout(resolve, streamPollMs));
+        if (closed) break;
+        const page = await observer.loadEvents(worldId, { after: cursor, limit: MAX_EVENT_PAGE });
+        if (page.events.length === 0) {
+          quietPolls += 1;
+          // Комментарий SSE (строка, начинающаяся с двоеточия) — не событие: клиент его
+          // игнорирует. Он нужен, чтобы молчащий мир не выглядел оборванным соединением для
+          // прокси и балансировщиков, которые закрывают тихие потоки по таймауту.
+          if (quietPolls * streamPollMs >= KEEP_ALIVE_MS) {
+            if (!safeWrite(': keep-alive\n\n')) break;
+            quietPolls = 0;
+          }
+          continue;
         }
-        continue;
+        quietPolls = 0;
+        for (const event of page.events) {
+          if (!writeEvent(event)) return reply;
+          cursor = event.projection_sequence;
+        }
       }
-      quietPolls = 0;
-      for (const event of page.events) {
-        if (!writeEvent(event)) return reply;
-        cursor = event.projection_sequence;
-      }
+    } catch (error) {
+      request.log.error({ worldId, error: String(error) }, 'observer.stream.aborted');
     }
 
-    reply.raw.end();
+    safeEnd();
     return reply;
   });
 }
