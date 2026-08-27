@@ -395,7 +395,33 @@ export interface WorldContentSnapshot {
   readonly agentNames: Readonly<Record<string, string>>;
 }
 
+/**
+ * Все три чтения — в ОДНОЙ транзакции (m9 независимого аудита I03, то же правило, что D14).
+ *
+ * D14 сформулирован без исключений: «чтение, становящееся артефактом, выполняется в одной
+ * транзакции». Карта проекции — именно такой артефакт, а собиралась она тремя независимыми
+ * запросами. Сегодня гонка теоретическая: локации, маршруты и имена агентов после `world init`
+ * не меняются. Но «сегодня не меняется» — это свойство МИРА С ОДНОЙ МЕХАНИКОЙ, а не гарантия
+ * кода: I04 приносит предметы и нужды, и первое же изменение состава агентов сделало бы карту
+ * склеенной из двух моментов. Исключение, оставленное потому что «пока не стреляет», перестаёт
+ * быть заметным ровно тогда, когда начинает.
+ *
+ * Уровень изоляции тот же, что у `loadWorldState`, и по той же причине: под `read committed`
+ * PostgreSQL берёт новый снимок на КАЖДЫЙ оператор, поэтому транзакция без `repeatable read`
+ * ничего бы не изменила.
+ */
 export const loadWorldContent = async (
+  db: DatabaseConnection,
+  worldId: string,
+): Promise<WorldContentSnapshot> =>
+  db.isTransaction
+    ? await readWorldContent(db, worldId)
+    : await db
+        .transaction()
+        .setIsolationLevel('repeatable read')
+        .execute(async (trx) => await readWorldContent(trx, worldId));
+
+const readWorldContent = async (
   db: DatabaseConnection,
   worldId: string,
 ): Promise<WorldContentSnapshot> => {

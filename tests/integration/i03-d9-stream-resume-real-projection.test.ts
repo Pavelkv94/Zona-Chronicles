@@ -49,6 +49,14 @@ const GENESIS_TIME = '2028-04-26T06:00:00.000Z';
  */
 const GRACE_MS = 1500;
 
+/**
+ * Алфавит Crockford base32 — тот же, что в контракте `event_id`. Взят ЦЕЛИКОМ из него, а не
+ * составлен арифметикой по кодам символов: первая редакция брала `String.fromCharCode(64 + seq)`
+ * и на девятом событии выдала `I`, которой в алфавите нет (исключены I, L, O, U — они путаются с
+ * 1 и 0). Тест падал, и падал справедливо.
+ */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
 const baseState = (): ObserverProjectionState =>
   initialObserverProjection({
     worldId: WORLD_ID,
@@ -69,7 +77,12 @@ const baseState = (): ObserverProjectionState =>
 
 const feedEntry = (seq: number): ObserverEvent => ({
   projection_sequence: seq,
-  event_id: `evt_${String(seq).padStart(3, '0')}`,
+  // Идентификатор соответствует КОНТРАКТУ (ULID: 26 символов Crockford base32), а не просто
+  // «выглядит уникально». Прежняя редакция подставляла `evt_001`, и это работало ровно потому,
+  // что никто не проверял: с появлением проверки кадра (m7 аудита) поток стал справедливо
+  // рваться, а тест — падать по таймауту. Фикстура, не проходящая собственный контракт, — та же
+  // ложь о системе, только со стороны теста.
+  event_id: `evt_${'0'.repeat(25)}${CROCKFORD[seq % CROCKFORD.length]!}`,
   world_time: `2028-04-26T06:${String(seq).padStart(2, '0')}:00.000Z`,
   type: 'journey.started',
   actor_ids: ['agent:one'],
