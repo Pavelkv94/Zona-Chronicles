@@ -1,3 +1,5 @@
+import type { NeedKind, NeedLevel } from '@zona/contracts';
+
 /**
  * Внутреннее (canonical) состояние мира — первый slice (§11 `09_EVENT_AND_COMMAND_CONTRACTS`):
  * агенты и маршруты, достаточные для `journey.start` → `journey.started`.
@@ -20,6 +22,15 @@ export interface AgentState {
   readonly status: AgentStatus;
   /** Маршрут, по которому агент сейчас идёт; `null`, а не отсутствующее поле, когда `idle`. */
   readonly routeId: string | null;
+  /**
+   * Момент мирового времени, с которого отсчитывается каждая нужда (I04, §5).
+   *
+   * Каноническим является ИМЕННО момент, а не значение нужды: значение вычисляется из него
+   * чистой функцией (`needs.ts`) и потому не является фактом. Хранить оба означало бы держать
+   * два источника одной истины, которые однажды разойдутся, — и разойдутся молча, потому что
+   * несогласованность видна только при сравнении.
+   */
+  readonly needBaseline: Readonly<Record<NeedKind, string>>;
 }
 
 export interface RouteDefinition {
@@ -44,23 +55,64 @@ export interface RouteDefinition {
  * зеркало этого состояния плюс операционные поля аренды, которые каноническими не являются и в
  * checksum не входят.
  *
- * `id` — это `event_id` события-причины: детерминирован, уникален и делает связь «действие ↔
- * факт, который его породил» прямой, без отдельного справочника.
+ * `id` детерминирован и уникален; ЧЕМ именно он является, решает вид действия. У завершения
+ * пути это `event_id` события-причины — связь прямая, без отдельного справочника. У пересечения
+ * порога нужды события-причины может не быть вовсе (первое пересечение планируется в генезисе),
+ * поэтому там ключ собирается из агента, нужды и момента. Общее требование одно: по ключу
+ * действие должно быть отличимо от любого другого, включая уже выполненные.
  */
-export interface ScheduledAction {
+interface ScheduledActionBase {
   readonly id: string;
-  readonly kind: 'journey.complete';
   /** Каноническая ISO-метка МИРОВОГО времени, когда действие становится доступным. */
   readonly dueAt: string;
   /** Меньше — раньше. Разводит действия с одинаковым `dueAt` до сравнения id (C4). */
   readonly priority: number;
   readonly entityId: string;
+}
+
+/**
+ * Завершение начатого пути. `id` равен `event_id` события-причины: связь «действие ↔ факт, его
+ * породивший» прямая, без отдельного справочника, и `journey.completed` снимает действие именно
+ * по ней (M7).
+ */
+export interface JourneyCompleteAction extends ScheduledActionBase {
+  readonly kind: 'journey.complete';
   readonly routeId: string;
+}
+
+/**
+ * Пересечение порога нужды (I04).
+ *
+ * `id` НЕ равен id события-причины, и это вынужденно: самое первое пересечение планируется в
+ * генезисе, где событий нет вовсе. Ключ вместо этого детерминирован —
+ * `sched:need:<агент>:<нужда>:<момент>`, — и уникален по построению: у одного агента по одной
+ * нужде не может быть двух ждущих пересечений одновременно.
+ *
+ * Это не «совпадение полей», от которого предостерегает M7: там пара «агент + маршрут» была
+ * ЭВРИСТИКОЙ, верной лишь пока механика одна. Здесь ключ содержит момент срабатывания, поэтому
+ * различает даже два пересечения одной нужды у одного агента.
+ */
+export interface NeedThresholdAction extends ScheduledActionBase {
+  readonly kind: 'need.threshold';
+  readonly need: NeedKind;
+  /** Уровень, которого нужда достигнет к `dueAt`. Ожидание, которое `decide` перепроверяет. */
+  readonly toLevel: NeedLevel;
+}
+
+export type ScheduledAction = JourneyCompleteAction | NeedThresholdAction;
+
+/** Детерминированный ключ действия по нужде. Один источник формата на весь проект. */
+export function needThresholdActionId(agentId: string, need: NeedKind, dueAt: string): string {
+  return `sched:need:${agentId}:${need}:${dueAt}`;
 }
 
 /** Приоритеты по видам действий. Данные, а не магические числа внутри `evolve`. */
 export const SCHEDULED_ACTION_PRIORITY: Readonly<Record<ScheduledAction['kind'], number>> = {
   'journey.complete': 100,
+  // Пересечение порога обрабатывается ПОСЛЕ прибытия при одинаковом `dueAt`: прибывший агент
+  // сначала оказывается на месте, и только потом мир замечает, что он голоден. Обратный порядок
+  // дал бы летопись, где голод наступает у того, кто ещё в пути.
+  'need.threshold': 200,
 };
 
 export interface WorldState {

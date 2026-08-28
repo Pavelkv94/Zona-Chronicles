@@ -158,6 +158,8 @@ export function applyObserverEvent(
           actor_ids: [...event.actor_ids],
           location_id: event.location_id ?? null,
           route_id: event.payload.route_id,
+          need: null,
+          need_level: null,
         },
       };
     }
@@ -192,6 +194,8 @@ export function applyObserverEvent(
           actor_ids: [...event.actor_ids],
           location_id: arrivalLocationId,
           route_id: event.payload.route_id,
+          need: null,
+          need_level: null,
         },
       };
     }
@@ -208,6 +212,39 @@ export function applyObserverEvent(
           actor_ids: [...event.actor_ids],
           location_id: event.location_id ?? null,
           route_id: null,
+          need: null,
+          need_level: null,
+        },
+      };
+    }
+    case 'need.threshold.crossed': {
+      // Проекция ЗАПОМИНАЕТ уровень из факта, а не вычисляет его. Вычислять было бы нечем и не
+      // нужно: значение нужды — производная от коэффициентов ruleset, которых у проекции нет, а
+      // уровень уже установлен доменом и записан в журнал.
+      const actorId = singleActor(event);
+      const agent = base.agents[actorId];
+      const nextAgents =
+        agent === undefined
+          ? base.agents
+          : {
+              ...base.agents,
+              [actorId]: {
+                ...agent,
+                needs: { ...agent.needs, [event.payload.need]: event.payload.to_level },
+              },
+            };
+      return {
+        state: { ...base, agents: nextAgents },
+        emitted: {
+          projection_sequence: projectionSequence,
+          event_id: event.event_id,
+          world_time: event.world_time,
+          type: event.type,
+          actor_ids: [...event.actor_ids],
+          location_id: event.location_id ?? null,
+          route_id: null,
+          need: event.payload.need,
+          need_level: event.payload.to_level,
         },
       };
     }

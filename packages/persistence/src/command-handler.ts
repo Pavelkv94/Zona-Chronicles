@@ -36,7 +36,7 @@ import {
 import {
   DerivedIdFactory,
   FixedClock,
-  FixedRuleset,
+  rulesetFor,
   decide,
   evolve,
   type AgentState,
@@ -262,7 +262,12 @@ const changedAgents = (before: WorldState, after: WorldState): readonly AgentSta
       previous === undefined ||
       previous.locationId !== agent.locationId ||
       previous.status !== agent.status ||
-      previous.routeId !== agent.routeId
+      previous.routeId !== agent.routeId ||
+      // Момент отсчёта нужды меняется, когда агент ест или отдыхает (I04). Перечисление полей
+      // здесь ручное — именно поэтому за ним стоит guard, сверяющий checksum перечитанного
+      // состояния: забытое поле роняет команду, а не тихо теряется.
+      previous.needBaseline.hunger !== agent.needBaseline.hunger ||
+      previous.needBaseline.fatigue !== agent.needBaseline.fatigue
     );
   });
 
@@ -393,7 +398,7 @@ export const executeCommand = async (
         // Ключ происхождения id — (мир, следующая sequence): воспроизводимо при пересимуляции и
         // уникально между командами, потому что принятая команда всегда двигает sequence.
         ids: new DerivedIdFactory(eventIdOriginKey(state.worldId, nextSequence)),
-        ruleset: new FixedRuleset(meta.versions),
+        ruleset: rulesetFor(meta.versions),
       });
 
       const recordedAt = now();
@@ -484,7 +489,9 @@ export const executeCommand = async (
             due_at: action.dueAt,
             priority: action.priority,
             entity_id: action.entityId,
-            route_id: action.routeId,
+            route_id: action.kind === 'journey.complete' ? action.routeId : null,
+            need: action.kind === 'need.threshold' ? action.need : null,
+            to_level: action.kind === 'need.threshold' ? action.toLevel : null,
             lease_owner: null,
             lease_until: null,
             completed_at: null,
@@ -505,7 +512,13 @@ export const executeCommand = async (
       for (const agent of changedAgents(state, nextState)) {
         await trx
           .updateTable('agents')
-          .set({ location_id: agent.locationId, status: agent.status, route_id: agent.routeId })
+          .set({
+            location_id: agent.locationId,
+            status: agent.status,
+            route_id: agent.routeId,
+            hunger_baseline: agent.needBaseline.hunger,
+            fatigue_baseline: agent.needBaseline.fatigue,
+          })
           .where('world_id', '=', command.world_id)
           .where('agent_id', '=', agent.id)
           .execute();

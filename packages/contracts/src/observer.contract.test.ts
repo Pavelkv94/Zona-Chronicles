@@ -49,6 +49,7 @@ const validSnapshot = () => ({
       location_id: 'loc:bridge',
       status: 'idle',
       route_id: null,
+      needs: { hunger: 'normal', fatigue: 'warning' },
     },
   ],
 });
@@ -61,6 +62,8 @@ const validEvent = () => ({
   actor_ids: ['agent:rook'],
   location_id: 'loc:bridge',
   route_id: 'route:yard-to-bridge',
+  need: null,
+  need_level: null,
 });
 
 describe('observer: публичный ответ не несёт канонических и скрытых полей', () => {

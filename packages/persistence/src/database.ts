@@ -73,6 +73,9 @@ export interface AgentsTable {
   location_id: string;
   status: 'idle' | 'traveling';
   route_id: string | null;
+  /** Моменты мирового времени, с которых отсчитываются нужды (миграция 0014). */
+  hunger_baseline: string;
+  fatigue_baseline: string;
 }
 
 /** Append-only журнал фактов. Права на `update`/`delete` не выдаются никому (миграция 0003). */
@@ -147,11 +150,15 @@ export interface OutboxTable {
 export interface ScheduledActionsTable {
   world_id: string;
   action_id: string;
-  kind: 'journey.complete';
+  kind: 'journey.complete' | 'need.threshold';
   due_at: string;
   priority: number;
   entity_id: string;
-  route_id: string;
+  /** `null` у действий, не связанных с маршрутом (нужды, миграция 0014). */
+  route_id: ColumnType<string | null, string | null, string | null>;
+  /** Вид нужды и ожидаемый уровень; заполнены только у `need.threshold` (0014). */
+  need: ColumnType<string | null, string | null, string | null>;
+  to_level: ColumnType<string | null, string | null, string | null>;
   lease_owner: ColumnType<string | null, string | null, string | null>;
   lease_until: ColumnType<Date | null, Date | null, Date | null>;
   completed_at: ColumnType<Date | null, Date | null, Date | null>;

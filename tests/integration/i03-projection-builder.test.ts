@@ -60,6 +60,7 @@ const GENESIS = {
       location_id: 'loc:quiet-yard' as string | null,
       status: 'idle' as const,
       route_id: null,
+      needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
     },
     {
       agent_id: FIXTURE_OTHER_AGENT_ID,
@@ -67,6 +68,7 @@ const GENESIS = {
       location_id: 'loc:quiet-yard' as string | null,
       status: 'idle' as const,
       route_id: null,
+      needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
     },
   ],
 };

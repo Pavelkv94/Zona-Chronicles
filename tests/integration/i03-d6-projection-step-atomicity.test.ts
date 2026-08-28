@@ -79,7 +79,14 @@ const seedState = (): ObserverProjectionState =>
       },
     ],
     agents: [
-      { agent_id: 'agent:one', name: 'Один', location_id: 'loc:a', status: 'idle', route_id: null },
+      {
+        agent_id: 'agent:one',
+        name: 'Один',
+        location_id: 'loc:a',
+        status: 'idle',
+        route_id: null,
+        needs: { hunger: 'normal', fatigue: 'normal' },
+      },
     ],
   });
 
@@ -91,6 +98,8 @@ const feedEntry = (projectionSequence: number, eventId: string): ObserverEvent =
   actor_ids: ['agent:one'],
   location_id: 'loc:a',
   route_id: 'route:a-b',
+  need: null,
+  need_level: null,
 });
 
 describe('D6 — шаг проекции атомарен', () => {

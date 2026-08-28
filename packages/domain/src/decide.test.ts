@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   fixtureDecideContext,
   fixtureJourneyStartCommand,
+  fixtureNeedBaseline,
   fixtureWorldState,
 } from './__fixtures__/world.ts';
 import { decide } from './decide.ts';
+import { testRulesetVersions } from './ports/ruleset.ts';
 
 describe('decide: journey.start -> journey.started (happy path)', () => {
   it('принимает команду и порождает ровно одно событие journey.started', () => {
@@ -35,9 +37,13 @@ describe('decide: journey.start -> journey.started (happy path)', () => {
       world_id: 'world:prototype',
       sequence: 1,
       type: 'journey.started',
-      schema_version: 1,
-      rules_version: '0.1.0',
-      content_version: '0.1.0',
+      // Версии берутся ИЗ ruleset контекста, а не из литералов: событие обязано быть подписано
+      // теми правилами, по которым принято решение, и литерал здесь означал бы проверку
+      // «версия та, которую я вписал», а не «та, которой считал домен». Версия правил уже
+      // менялась (0.1.0 → 0.2.0 в I04), и литерал упал бы, ничего при этом не найдя.
+      schema_version: testRulesetVersions().schemaVersion,
+      rules_version: testRulesetVersions().rulesVersion,
+      content_version: testRulesetVersions().contentVersion,
       actor_ids: ['agent:rook'],
       subject_ids: [],
       location_id: 'loc:quiet-yard',
@@ -105,6 +111,7 @@ describe('decide: journey.start — отказы', () => {
           locationId: 'loc:quiet-yard',
           status: 'traveling',
           routeId: 'route:yard-to-bridge',
+          needBaseline: fixtureNeedBaseline(),
         },
       },
     });

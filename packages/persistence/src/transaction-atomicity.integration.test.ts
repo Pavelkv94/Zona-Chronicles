@@ -3,7 +3,7 @@
  * B6 — конкурентные команды не создают дыр и дублей.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { RUNTIME_ID_PREFIXES, type Command } from '@zona/contracts';
+import { RUNTIME_ID_PREFIXES, type Command, type JourneyStartCommand } from '@zona/contracts';
 import { DerivedIdFactory } from '@zona/domain';
 import {
   createMigratedDatabase,
@@ -34,7 +34,7 @@ import {
 
 const ids = new DerivedIdFactory('i02a-atomicity');
 
-const command = (overrides: Partial<Command> = {}): Command => ({
+const command = (overrides: Partial<JourneyStartCommand> = {}): JourneyStartCommand => ({
   command_id: ids.next(RUNTIME_ID_PREFIXES.command),
   world_id: FIXTURE_WORLD_ID,
   type: 'journey.start',

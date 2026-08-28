@@ -23,7 +23,7 @@ import {
   type WorldDefinition,
 } from '@zona/content';
 import type { DeterministicRuntimeProfile, Snapshot } from '@zona/contracts';
-import type { RulesetVersions } from '@zona/domain';
+import { rulesetFor, type Ruleset, type RulesetVersions } from '@zona/domain';
 import {
   bundlesFor,
   deterministicRuntimeProfileFor,
@@ -62,11 +62,20 @@ export function prototypeRulesetVersions(): RulesetVersions {
   return { ...PROTOTYPE_RULESET_VERSIONS };
 }
 
+/**
+ * Полный ruleset мира прототипа: версии из контента, коэффициенты из домена.
+ *
+ * `rulesetFor` откажется собрать ruleset, если версия правил в контенте разошлась с той, что
+ * знает домен, — и это единственная проверка, которая ловит расхождение двух литералов, живущих
+ * в пакетах без права ссылаться друг на друга.
+ */
+export function prototypeRuleset(): Ruleset {
+  return rulesetFor(prototypeRulesetVersions());
+}
+
 /** `bundles` ровно одного снимка для мира прототипа. */
-export function currentBundles(
-  rulesetVersions: RulesetVersions = prototypeRulesetVersions(),
-): Snapshot['bundles'] {
-  return bundlesFor(PROTOTYPE_WORLD, CONTENT_VERSION, rulesetVersions);
+export function currentBundles(ruleset: Ruleset = prototypeRuleset()): Snapshot['bundles'] {
+  return bundlesFor(PROTOTYPE_WORLD, CONTENT_VERSION, ruleset);
 }
 
 /** `deterministic_runtime_profile` ровно одного снимка. */
@@ -89,7 +98,7 @@ export function seedWorld(
     CONTENT_VERSION,
     seed,
     host,
-    prototypeRulesetVersions(),
+    prototypeRuleset(),
   ) as PrototypeWorld;
 }
 

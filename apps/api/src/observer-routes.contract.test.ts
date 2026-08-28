@@ -40,6 +40,7 @@ const snapshot = (): ObserverWorldSnapshot => ({
       location_id: 'loc:bridge',
       status: 'idle',
       route_id: null,
+      needs: { hunger: 'normal', fatigue: 'normal' },
     },
   ],
 });
@@ -52,6 +53,8 @@ const feedEvent = (sequence: number): ObserverEvent => ({
   actor_ids: ['agent:rook'],
   location_id: 'loc:bridge',
   route_id: 'route:yard-to-bridge',
+  need: null,
+  need_level: null,
 });
 
 const port = (overrides: Partial<ObserverPort> = {}): ObserverPort => ({

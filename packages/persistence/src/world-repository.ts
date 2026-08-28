@@ -6,10 +6,14 @@
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
 import {
+  NEED_KINDS,
+  NEED_LEVELS,
   decodeWorldEvent,
   isValidationFailure,
   requireCanonical,
   requireChecksum,
+  type NeedKind,
+  type NeedLevel,
   type WorldEvent,
 } from '@zona/contracts';
 import { sql } from 'kysely';
@@ -145,6 +149,40 @@ export const initializeWorld = async (
             location_id: agent.locationId,
             status: agent.status,
             route_id: agent.routeId,
+            hunger_baseline: agent.needBaseline.hunger,
+            fatigue_baseline: agent.needBaseline.fatigue,
+          })),
+        )
+        .execute();
+    }
+
+    /**
+     * Расписание генезиса записывается ВМЕСТЕ с миром (I04).
+     *
+     * До I04 свежий мир расписания не имел, и этой ветки не было — она бы ничего не делала.
+     * Нужды его завели: первое пересечение порога планируется при создании мира, потому что
+     * событий у него ещё нет. Без записи оно осталось бы только в снимке, и мир никогда не
+     * проголодался бы — при этом `world replay` честно закричал бы о расхождении checksum,
+     * обвиняя детерминизм в том, что сделала забытая вставка. Так дефект и был найден.
+     */
+    const scheduled = Object.values(state.scheduledActions);
+    if (scheduled.length > 0) {
+      await trx
+        .insertInto('scheduled_actions')
+        .values(
+          scheduled.map((action) => ({
+            world_id: state.worldId,
+            action_id: action.id,
+            kind: action.kind,
+            due_at: action.dueAt,
+            priority: action.priority,
+            entity_id: action.entityId,
+            route_id: action.kind === 'journey.complete' ? action.routeId : null,
+            need: action.kind === 'need.threshold' ? action.need : null,
+            to_level: action.kind === 'need.threshold' ? action.toLevel : null,
+            lease_owner: null,
+            lease_until: null,
+            completed_at: null,
           })),
         )
         .execute();
@@ -243,6 +281,7 @@ const readWorldState = async (
       locationId: row.location_id,
       status: row.status,
       routeId: row.route_id,
+      needBaseline: { hunger: row.hunger_baseline, fatigue: row.fatigue_baseline },
     };
   }
 
@@ -258,14 +297,7 @@ const readWorldState = async (
 
   const scheduledActions: Record<string, ScheduledAction> = {};
   for (const row of actionRows) {
-    scheduledActions[row.action_id] = {
-      id: row.action_id,
-      kind: row.kind,
-      dueAt: row.due_at,
-      priority: row.priority,
-      entityId: row.entity_id,
-      routeId: row.route_id,
-    };
+    scheduledActions[row.action_id] = scheduledActionFromRow(row);
   }
 
   return {
@@ -591,4 +623,58 @@ export const loadWorldEvents = async (
     }
     return event;
   });
+};
+
+/**
+ * Строка расписания → действие домена, с разбором по виду.
+ *
+ * Проверка `check` в схеме уже запрещает строку, у которой поля не соответствуют виду (миграция
+ * 0014). Здесь она повторена не из недоверия к базе, а потому что колонки объявлены nullable для
+ * ВСЕХ строк: без явного отказа `route_id` пришлось бы приводить к строке утверждением, и
+ * рассинхронизация схемы с кодом дала бы действие с `undefined` вместо маршрута — то есть тихую
+ * порчу канонического состояния вместо названной ошибки.
+ */
+const scheduledActionFromRow = (row: {
+  readonly action_id: string;
+  readonly kind: 'journey.complete' | 'need.threshold';
+  readonly due_at: string;
+  readonly priority: number;
+  readonly entity_id: string;
+  readonly route_id: string | null;
+  readonly need: string | null;
+  readonly to_level: string | null;
+}): ScheduledAction => {
+  const base = {
+    id: row.action_id,
+    dueAt: row.due_at,
+    priority: row.priority,
+    entityId: row.entity_id,
+  };
+
+  if (row.kind === 'journey.complete') {
+    if (row.route_id === null) {
+      throw new Error(`scheduled_actions.${row.action_id}: завершение пути без маршрута`);
+    }
+    return { ...base, kind: 'journey.complete', routeId: row.route_id };
+  }
+
+  if (row.need === null || row.to_level === null) {
+    throw new Error(`scheduled_actions.${row.action_id}: пересечение порога без нужды или уровня`);
+  }
+  if (!(NEED_KINDS as readonly string[]).includes(row.need)) {
+    throw new Error(
+      `scheduled_actions.${row.action_id}: неизвестный вид нужды ${JSON.stringify(row.need)}`,
+    );
+  }
+  if (!(NEED_LEVELS as readonly string[]).includes(row.to_level)) {
+    throw new Error(
+      `scheduled_actions.${row.action_id}: неизвестный уровень ${JSON.stringify(row.to_level)}`,
+    );
+  }
+  return {
+    ...base,
+    kind: 'need.threshold',
+    need: row.need as NeedKind,
+    toLevel: row.to_level as NeedLevel,
+  };
 };

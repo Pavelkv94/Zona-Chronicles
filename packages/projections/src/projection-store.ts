@@ -7,7 +7,14 @@
  * API отвергнет БАЗА, а не соглашение (D5).
  */
 import { sql } from 'kysely';
-import type { ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
+import {
+  NEED_KINDS,
+  NEED_LEVELS,
+  type NeedKind,
+  type NeedLevel,
+  type ObserverEvent,
+  type ObserverWorldSnapshot,
+} from '@zona/contracts';
 import type { ObserverProjectionState } from './observer-fold.ts';
 import { type ProjectionDatabase, requireSafeInteger } from './projection-database.ts';
 
@@ -98,6 +105,10 @@ export const loadObserverSnapshot = async (
         location_id: row.location_id,
         status: row.status === 'traveling' ? ('traveling' as const) : ('idle' as const),
         route_id: row.route_id,
+        needs: {
+          hunger: needLevelFromRow(row.hunger_level, row.agent_id, 'hunger'),
+          fatigue: needLevelFromRow(row.fatigue_level, row.agent_id, 'fatigue'),
+        },
       })),
     };
   });
@@ -151,6 +162,8 @@ export const loadObserverEvents = async (
       actor_ids: row.actor_ids,
       location_id: row.location_id,
       route_id: row.route_id,
+      need: needKindFromRow(row.need, row.event_id),
+      need_level: needLevelFromNullableRow(row.need_level, row.event_id),
     })),
     earliestAvailableSequence:
       earliest === undefined
@@ -185,6 +198,8 @@ export const saveProjectionStep = async (
           actor_ids: [...event.actor_ids],
           location_id: event.location_id,
           route_id: event.route_id,
+          need: event.need,
+          need_level: event.need_level,
         })
         .execute();
     }
@@ -197,6 +212,8 @@ export const saveProjectionStep = async (
           location_id: agent.location_id,
           status: agent.status,
           route_id: agent.route_id,
+          hunger_level: agent.needs.hunger,
+          fatigue_level: agent.needs.fatigue,
         })
         .where('world_id', '=', state.worldId)
         .where('agent_id', '=', agent.agent_id)
@@ -268,6 +285,8 @@ export const initializeProjection = async (
             location_id: agent.location_id,
             status: agent.status,
             route_id: agent.route_id,
+            hunger_level: agent.needs.hunger,
+            fatigue_level: agent.needs.fatigue,
           })),
         )
         .execute();
@@ -326,4 +345,29 @@ export const assertObserverRoleIsReadOnly = async (db: ProjectionDatabase): Prom
         'обязан быть бессилен ПРАВАМИ, а не тем, что его код не пишет таких запросов.',
     );
   }
+};
+
+/**
+ * Уровень нужды из колонки проекции. Неизвестное значение — ГРОМКИЙ сбой, а не подстановка
+ * `normal`: строка, которую записал не этот код, означает рассинхронизацию схемы и кода, и
+ * молчаливая подстановка показала бы зрителю спокойного агента вместо голодного.
+ */
+const needLevelFromRow = (value: string, agentId: string, need: string): NeedLevel => {
+  if ((NEED_LEVELS as readonly string[]).includes(value)) return value as NeedLevel;
+  throw new Error(
+    `projection: у агента ${agentId} уровень нужды "${need}" равен ${JSON.stringify(value)}, ` +
+      `а известны только ${NEED_LEVELS.join(', ')}`,
+  );
+};
+
+const needLevelFromNullableRow = (value: string | null, eventId: string): NeedLevel | null =>
+  value === null ? null : needLevelFromRow(value, eventId, 'событие ленты');
+
+const needKindFromRow = (value: string | null, eventId: string): NeedKind | null => {
+  if (value === null) return null;
+  if ((NEED_KINDS as readonly string[]).includes(value)) return value as NeedKind;
+  throw new Error(
+    `projection: у события ${eventId} вид нужды равен ${JSON.stringify(value)}, ` +
+      `а известны только ${NEED_KINDS.join(', ')}`,
+  );
 };

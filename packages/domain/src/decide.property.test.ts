@@ -7,7 +7,7 @@ import { evolve } from './evolve.ts';
 import { FixedClock } from './ports/clock.ts';
 import { SequentialIdFactory } from './ports/id-factory.ts';
 import { DeterministicRandomSource } from './ports/random-source.ts';
-import { FixedRuleset, testRulesetVersions } from './ports/ruleset.ts';
+import { testRuleset } from './ports/ruleset.ts';
 
 /**
  * `recorded_at` — операционный wall clock, который домен не производит (см. `decide.ts`,
@@ -40,7 +40,7 @@ describe('decide + evolve: replay determinism', () => {
               clock: new FixedClock(isoWorldTime),
               random: new DeterministicRandomSource(seed),
               ids: new SequentialIdFactory(seed),
-              ruleset: new FixedRuleset(testRulesetVersions()),
+              ruleset: testRuleset(),
             };
             const result = decide(state, command, context);
             if (result.kind !== 'accepted') {
@@ -68,7 +68,7 @@ describe('decide + evolve: replay determinism', () => {
           clock: new FixedClock('2034-05-17T18:20:00Z'),
           random: new DeterministicRandomSource(seed),
           ids: new SequentialIdFactory(seed),
-          ruleset: new FixedRuleset(testRulesetVersions()),
+          ruleset: testRuleset(),
         });
         expect(JSON.parse(JSON.stringify(state))).toStrictEqual(before);
       }),

@@ -37,11 +37,17 @@ import {
 import {
   DeterministicRandomSource,
   FixedClock,
+  SCHEDULED_ACTION_PRIORITY,
+  needThresholdActionId,
+  nextThresholdCrossing,
   type AgentState,
+  type NeedThresholdAction,
   type RouteDefinition as DomainRouteDefinition,
-  type RulesetVersions,
+  type Ruleset,
+  type ScheduledAction,
   type WorldState,
 } from '@zona/domain';
+import { NEED_KINDS, type NeedKind } from '@zona/contracts';
 
 /**
  * Форма контента, которую требует генератор. Совпадает с `WorldDefinition` из `@zona/content`
@@ -92,8 +98,11 @@ export interface HostRuntimeProfile {
  * Там умолчание убрали, здесь — оставили. Один и тот же вывод, применённый наполовину, работает
  * как не применённый вовсе.
  */
-export function rulesBundleContent(versions: RulesetVersions): Record<string, unknown> {
-  return { versions: { ...versions } };
+export function rulesBundleContent(ruleset: Ruleset): Record<string, unknown> {
+  // Коэффициенты хешируются ВМЕСТЕ с версиями, а не отдельно: иначе изменение порога при
+  // неизменной версии осталось бы необнаружимым, и checksum лгал бы о содержимом правил — тот
+  // самый дефект M3, из-за которого сюда вообще перестали передавать заглушку `{}`.
+  return { versions: { ...ruleset.versions }, needs: { ...ruleset.needs } };
 }
 
 function canonicalInstant(iso: string, label: string): string {
@@ -115,7 +124,7 @@ interface SeededAgents {
  * минимально: I01 не моделирует ничего сверх "какой мир получился при этом seed" (PLAN §5, out
  * of scope: Utility AI, планы, экономика).
  */
-function seedAgents(content: GeneratorContent, seed: number): SeededAgents {
+function seedAgents(content: GeneratorContent, seed: number, worldTime: string): SeededAgents {
   const random = new DeterministicRandomSource(seed);
   const agents: Record<string, AgentState> = {};
   const prngStreamPositions: Record<string, number> = {};
@@ -137,6 +146,12 @@ function seedAgents(content: GeneratorContent, seed: number): SeededAgents {
       locationId: location.id,
       status: 'idle',
       routeId: null,
+      // Свежий мир начинается с сытых и отдохнувших агентов: момент отсчёта каждой нужды равен
+      // стартовому времени мира. Иное значение было бы утверждением об истории, которой не было.
+      needBaseline: Object.fromEntries(NEED_KINDS.map((need) => [need, worldTime])) as Record<
+        NeedKind,
+        string
+      >,
     };
     // `drawIndex` внутри потока начинается с 0 (RandomDraw); позиция после одного draw — 1.
     prngStreamPositions[streamKey] = draw.drawIndex + 1;
@@ -171,10 +186,10 @@ export function bundlesFor(
   contentVersion: string,
   // Умолчания НЕТ намеренно: пока оно было, два вызывающих подставляли разные версии, и
   // расхождение проявлялось не здесь, а падением проверки checksum снимка в третьем месте.
-  rulesetVersions: RulesetVersions,
+  ruleset: Ruleset,
 ): Snapshot['bundles'] {
   return {
-    rules: bundleRefFor(rulesetVersions.rulesVersion, rulesBundleContent(rulesetVersions)),
+    rules: bundleRefFor(ruleset.versions.rulesVersion, rulesBundleContent(ruleset)),
     content: bundleRefFor(contentVersion, content),
     // Содержимое — сами JSON Schema документы, версия и состав принадлежат контрактам
     // (`schema-bundle.ts`): bundle схем — их артефакт, а не CLI (M3, A9).
@@ -225,7 +240,7 @@ export function seedWorld(
   contentVersion: string,
   seed: number,
   host: HostRuntimeProfile,
-  rulesetVersions: RulesetVersions,
+  ruleset: Ruleset,
 ): SeededWorld {
   if (!Number.isSafeInteger(seed)) {
     throw new Error(`world: seed обязан быть безопасным целым, получено ${String(seed)}`);
@@ -234,7 +249,7 @@ export function seedWorld(
   const clock = new FixedClock(content.initialWorldTime);
   const worldTime = canonicalInstant(clock.now().iso, 'initialWorldTime контента');
 
-  const { agents, prngStreamPositions } = seedAgents(content, seed);
+  const { agents, prngStreamPositions } = seedAgents(content, seed, worldTime);
   const routes = buildRoutes(content);
 
   const state: WorldState = {
@@ -244,9 +259,17 @@ export function seedWorld(
     sequence: 0,
     agents,
     routes,
-    // Свежепорождённый мир событий не имел, поэтому и расписания у него нет: оно выводится
-    // из событий (`evolve`), а не задаётся при создании.
-    scheduledActions: {},
+    // Расписание свежего мира НЕ пусто, и это исключение названо явно.
+    //
+    // Общее правило прежнее: расписание выводится из событий (`evolve`). Нужды его нарушают в
+    // единственной точке — самой первой. Голод начинается не с события, а с существования
+    // агента: событий у нового мира нет вовсе, а первое пересечение порога обязано быть
+    // запланировано, иначе оно не наступит никогда и мир останется вечно сытым.
+    //
+    // Дальше правило действует без изъятий: каждое следующее пересечение планирует `evolve` по
+    // факту предыдущего. Replay это не ломает — он начинается со СНИМКА, а расписание входит в
+    // снимок и покрыто его checksum.
+    scheduledActions: initialNeedSchedule(agents, ruleset),
   };
 
   const snapshotWithoutChecksum: Omit<Snapshot, 'checksum'> = {
@@ -256,7 +279,7 @@ export function seedWorld(
     // Нет независимого источника wall clock у in-memory CLI без БД (см. заголовок файла) —
     // created_at делит момент с world_time, а не притворяется настоящими часами.
     created_at: worldTime,
-    bundles: bundlesFor(content, contentVersion, rulesetVersions),
+    bundles: bundlesFor(content, contentVersion, ruleset),
     deterministic_runtime_profile: deterministicRuntimeProfileFor(host),
     prng_stream_positions: prngStreamPositions,
     canonical_state: state,
@@ -268,4 +291,39 @@ export function seedWorld(
   };
 
   return { seed, content, state, snapshot };
+}
+
+/**
+ * Первые пересечения порогов для всех агентов свежего мира.
+ *
+ * Момент считается той же функцией, что и все последующие (`nextThresholdCrossing`), — второго
+ * способа вычислить порог в проекте нет и быть не должно: разойдясь, они дали бы мир, где
+ * первое событие голода наступает не тогда, когда голод достигает порога.
+ */
+function initialNeedSchedule(
+  agents: Readonly<Record<string, AgentState>>,
+  ruleset: Ruleset,
+): Readonly<Record<string, ScheduledAction>> {
+  const scheduled: Record<string, ScheduledAction> = {};
+  for (const agent of Object.values(agents)) {
+    for (const need of NEED_KINDS) {
+      const crossing = nextThresholdCrossing(
+        agent.needBaseline[need],
+        'normal',
+        ruleset.needs[need],
+      );
+      if (crossing === null) continue;
+      const action: NeedThresholdAction = {
+        id: needThresholdActionId(agent.id, need, crossing.at),
+        kind: 'need.threshold',
+        dueAt: crossing.at,
+        priority: SCHEDULED_ACTION_PRIORITY['need.threshold'],
+        entityId: agent.id,
+        need,
+        toLevel: crossing.level,
+      };
+      scheduled[action.id] = action;
+    }
+  }
+  return scheduled;
 }

@@ -341,6 +341,23 @@ export const DRAW_COUNT_UNIT = defineNumericUnit({
  * усечена — иначе два разных текста дают один момент, и checksum перестаёт быть функцией
  * канонического состояния.
  */
+/**
+ * Нормализованная величина нужды `[0, 1]` (I04, `07_MVP_MECHANICS_SPEC` §5).
+ *
+ * Minor unit — одна тысячная, потому что канонически сериализуемое значение обязано быть ЦЕЛЫМ:
+ * `0.45` в rules bundle отвергается `canonicalize` как «дробное число», и это не придирка —
+ * дробь в JSON зависит от платформы округления, а checksum правил обязан быть одинаковым везде.
+ * Порог 0.45 записывается как 450 и читается через эту единицу, а не делением на 1000 в трёх
+ * местах, которые однажды разойдутся.
+ */
+export const NEED_FRACTION_UNIT = defineNumericUnit({
+  id: 'ratio.need',
+  description: 'Величина нужды 0..1; minor unit — тысячная (3 знака).',
+  minorUnitsPerMajor: 1000,
+  min: 0,
+  max: 1000,
+});
+
 export const MILLISECOND_UNIT = defineNumericUnit({
   id: 'time.second',
   description: 'Момент/длительность в секундах; minor unit — миллисекунда (3 знака).',

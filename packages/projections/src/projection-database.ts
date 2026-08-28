@@ -59,6 +59,9 @@ export interface ProjectionAgentsTable {
   location_id: string | null;
   status: string;
   route_id: string | null;
+  /** Уровень каждой нужды, запомненный из факта `need.threshold.crossed` (миграция 0014). */
+  hunger_level: string;
+  fatigue_level: string;
 }
 
 export interface ProjectionEventsTable {
@@ -70,6 +73,9 @@ export interface ProjectionEventsTable {
   actor_ids: string[];
   location_id: string | null;
   route_id: string | null;
+  /** Нужда и достигнутый уровень; `null` у событий, к нуждам не относящихся (0014). */
+  need: string | null;
+  need_level: string | null;
 }
 
 /**

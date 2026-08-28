@@ -59,7 +59,13 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
   const mutableRoutes = routes as Record<string, WorldState['routes'][string]>;
   travelMinutes.forEach((minutes, index) => {
     const id = agentId(index);
-    mutableAgents[id] = { id, locationId: 'loc:a', status: 'idle', routeId: null };
+    mutableAgents[id] = {
+      id,
+      locationId: 'loc:a',
+      status: 'idle',
+      routeId: null,
+      needBaseline: { hunger: T0, fatigue: T0 },
+    };
     mutableRoutes[`route:${String(index)}`] = {
       id: `route:${String(index)}`,
       fromLocationId: 'loc:a',

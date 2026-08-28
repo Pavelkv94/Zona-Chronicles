@@ -10,9 +10,9 @@ import { requireChecksum } from '../../packages/contracts/src/index.ts';
 import {
   DerivedIdFactory,
   FixedClock,
-  FixedRuleset,
   decide,
   evolve,
+  testRuleset,
   testRulesetVersions,
   type RandomDraw,
   type RandomSource,
@@ -168,7 +168,7 @@ describe('I02A B8/B9 — durable мир', () => {
           clock: new FixedClock(initial.worldTime),
           random: new NoRandomness(),
           ids: new DerivedIdFactory(`${initial.worldId}:${String(initial.sequence + 1)}`),
-          ruleset: new FixedRuleset(testRulesetVersions()),
+          ruleset: testRuleset(),
         },
       );
       expect(decided.kind).toBe('accepted');

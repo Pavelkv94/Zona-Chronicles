@@ -15,20 +15,48 @@
  * навсегда (C6).
  */
 import { sql } from 'kysely';
-import { RUNTIME_ID_PREFIXES, compareByCodePoint, type Command } from '@zona/contracts';
+import {
+  NEED_KINDS,
+  NEED_LEVELS,
+  RUNTIME_ID_PREFIXES,
+  compareByCodePoint,
+  type Command,
+  type NeedKind,
+  type NeedLevel,
+} from '@zona/contracts';
 import { DerivedIdFactory } from '@zona/domain';
 import type { DatabaseConnection } from './database.ts';
 import { executeCommand, type CommandExecution } from './command-handler.ts';
 import { loadWorldMeta, loadWorldState } from './world-repository.ts';
 
-export interface ClaimedAction {
+interface ClaimedActionBase {
   readonly actionId: string;
-  readonly kind: 'journey.complete';
   readonly dueAt: string;
   readonly priority: number;
   readonly entityId: string;
+}
+
+export interface ClaimedJourneyCompleteAction extends ClaimedActionBase {
+  readonly kind: 'journey.complete';
   readonly routeId: string;
 }
+
+export interface ClaimedNeedThresholdAction extends ClaimedActionBase {
+  readonly kind: 'need.threshold';
+  readonly need: NeedKind;
+  readonly toLevel: NeedLevel;
+}
+
+/**
+ * Захваченное действие — РАЗМЕЧЕННЫЙ union, а не запись с необязательными полями.
+ *
+ * Разница не косметическая: `commandFor` обязан разобрать вид и построить команду СВОЕГО типа.
+ * Пока тип был одним видом, `commandFor` строил `journey.complete` безусловно, и добавленный вид
+ * действия превратился бы в команду завершения пути — компилятор бы промолчал, потому что тип
+ * строки SQL здесь пишется РУКОЙ и `returning` его не проверяет. Разметка возвращает проверку:
+ * ветка без своего вида не компилируется.
+ */
+export type ClaimedAction = ClaimedJourneyCompleteAction | ClaimedNeedThresholdAction;
 
 export interface ClaimOptions {
   readonly worldId: string;
@@ -83,11 +111,13 @@ export const claimDueActions = async (
 
   const claimed = await sql<{
     action_id: string;
-    kind: 'journey.complete';
+    kind: string;
     due_at: string;
     priority: number;
     entity_id: string;
-    route_id: string;
+    route_id: string | null;
+    need: string | null;
+    to_level: string | null;
   }>`
     update scheduled_actions target
        set lease_owner = ${options.owner}, lease_until = ${leaseUntil}
@@ -105,20 +135,13 @@ export const claimDueActions = async (
       ) as picked
      where target.world_id = picked.world_id and target.action_id = picked.action_id
     returning target.action_id, target.kind, target.due_at, target.priority,
-              target.entity_id, target.route_id
+              target.entity_id, target.route_id, target.need, target.to_level
   `.execute(db);
 
   // `returning` не гарантирует порядок; он восстанавливается тем же ключом, что и в запросе,
   // иначе стабильность обработки зависела бы от плана выполнения (C4).
   return [...claimed.rows]
-    .map((row) => ({
-      actionId: row.action_id,
-      kind: row.kind,
-      dueAt: row.due_at,
-      priority: row.priority,
-      entityId: row.entity_id,
-      routeId: row.route_id,
-    }))
+    .map(claimedActionFromRow)
     .sort(
       (a, b) =>
         compareByCodePoint(a.dueAt, b.dueAt) ||
@@ -126,6 +149,61 @@ export const claimDueActions = async (
         compareByCodePoint(a.entityId, b.entityId) ||
         compareByCodePoint(a.actionId, b.actionId),
     );
+};
+
+/**
+ * Строка захвата → действие, с ГРОМКИМ отказом на несоответствие вида и полей.
+ *
+ * Проверка `check` миграции 0014 уже запрещает такую строку. Здесь она повторена не из
+ * недоверия к базе: колонки объявлены nullable для всех видов, поэтому без явного отказа
+ * `route_id` пришлось бы приводить утверждением, и рассинхронизация схемы с кодом дала бы
+ * команду с `undefined` вместо маршрута — то есть тихую порчу вместо названной ошибки.
+ */
+const claimedActionFromRow = (row: {
+  readonly action_id: string;
+  readonly kind: string;
+  readonly due_at: string;
+  readonly priority: number;
+  readonly entity_id: string;
+  readonly route_id: string | null;
+  readonly need: string | null;
+  readonly to_level: string | null;
+}): ClaimedAction => {
+  const base = {
+    actionId: row.action_id,
+    dueAt: row.due_at,
+    priority: row.priority,
+    entityId: row.entity_id,
+  };
+
+  if (row.kind === 'journey.complete') {
+    if (row.route_id === null) {
+      throw new Error(`scheduler: действие ${row.action_id} завершает путь без маршрута`);
+    }
+    return { ...base, kind: 'journey.complete', routeId: row.route_id };
+  }
+
+  if (row.kind === 'need.threshold') {
+    if (
+      row.need === null ||
+      row.to_level === null ||
+      !(NEED_KINDS as readonly string[]).includes(row.need) ||
+      !(NEED_LEVELS as readonly string[]).includes(row.to_level)
+    ) {
+      throw new Error(
+        `scheduler: действие ${row.action_id} по нужде несёт ${JSON.stringify(row.need)}/` +
+          `${JSON.stringify(row.to_level)}, а ожидались вид нужды и уровень из словаря`,
+      );
+    }
+    return {
+      ...base,
+      kind: 'need.threshold',
+      need: row.need as NeedKind,
+      toLevel: row.to_level as NeedLevel,
+    };
+  }
+
+  throw new Error(`scheduler: неизвестный вид действия ${JSON.stringify(row.kind)}`);
 };
 
 export interface TickOptions {
@@ -379,16 +457,43 @@ const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Prom
 export const commandFor = (
   action: ClaimedAction,
   world: { readonly worldId: string; readonly schemaVersion: number },
-): Command => ({
-  command_id: new DerivedIdFactory(`${action.actionId}:command`).next(RUNTIME_ID_PREFIXES.command),
-  world_id: world.worldId,
-  type: 'journey.complete',
-  schema_version: world.schemaVersion,
-  actor_id: action.entityId,
-  issued_at_world_time: action.dueAt,
-  correlation_id: new DerivedIdFactory(`${action.actionId}:correlation`).next(
-    RUNTIME_ID_PREFIXES.correlation,
-  ),
-  caused_by_event_id: action.actionId,
-  payload: { route_id: action.routeId },
-});
+): Command => {
+  const envelope = {
+    command_id: new DerivedIdFactory(`${action.actionId}:command`).next(
+      RUNTIME_ID_PREFIXES.command,
+    ),
+    world_id: world.worldId,
+    schema_version: world.schemaVersion,
+    actor_id: action.entityId,
+    issued_at_world_time: action.dueAt,
+    correlation_id: new DerivedIdFactory(`${action.actionId}:correlation`).next(
+      RUNTIME_ID_PREFIXES.correlation,
+    ),
+  };
+
+  switch (action.kind) {
+    case 'journey.complete':
+      return {
+        ...envelope,
+        type: 'journey.complete',
+        // У завершения пути `action_id` РАВЕН `event_id` события-причины, поэтому причинность
+        // выражается прямо. У пересечения порога причины-события может не быть вовсе (первое
+        // планируется в генезисе), и синтетический `evt:`-id был бы подделкой ссылки.
+        caused_by_event_id: action.actionId,
+        payload: { route_id: action.routeId },
+      };
+    case 'need.threshold':
+      return {
+        ...envelope,
+        type: 'need.threshold.cross',
+        payload: { need: action.need, to_level: action.toLevel },
+      };
+    default:
+      return assertNeverAction(action);
+  }
+};
+
+/** Новый вид действия без своей ветки не сузится до `never` — `pnpm typecheck` упадёт. */
+function assertNeverAction(action: never): never {
+  throw new Error(`scheduler: необработанный вид действия ${JSON.stringify(action)}`);
+}

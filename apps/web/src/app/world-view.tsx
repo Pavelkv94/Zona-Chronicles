@@ -20,7 +20,7 @@
  * существует (D4). Открытая вкладка, десять вкладок или ноль — журнал одинаков (D3).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
+import type { NeedKind, NeedLevel, ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
 import { OBSERVER_STREAM_EVENT_NAMES } from '@zona/contracts';
 import { fetchEvents, fetchSnapshot } from './observer-client.ts';
 
@@ -31,6 +31,17 @@ const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
   'journey.started': 'вышел в путь',
   'journey.completed': 'дошёл',
   'plan.invalidated': 'план отменён',
+  'need.threshold.crossed': 'изменилось состояние',
+};
+
+/**
+ * Состояние агента словами. `normal` не имеет подписи намеренно: «Грач спокоен» — это не
+ * событие, а отсутствие события, и в ленте оно означало бы, что произошло что-то, чего не было.
+ * Восстановление читается по паре «нужда + уровень», а не по отдельному слову.
+ */
+const NEED_LEVEL_LABELS: Record<NeedKind, Record<NeedLevel, string>> = {
+  hunger: { normal: 'сыт', warning: 'голоден', critical: 'изголодался' },
+  fatigue: { normal: 'бодр', warning: 'устал', critical: 'вымотан' },
 };
 
 /**
@@ -41,9 +52,13 @@ const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
  */
 const describe = (event: ObserverEvent): string => {
   const who = event.actor_ids.join(', ');
-  const what = EVENT_LABELS[event.type];
   const where = event.location_id === null ? '' : ` — ${event.location_id}`;
-  return `${who} ${what}${where}`;
+  // Событие о нужде читается своим состоянием, а не общей подписью: «Грач голоден» говорит
+  // зрителю то же, что факт, а «Грач изменилось состояние» не говорит ничего.
+  if (event.need !== null && event.need_level !== null) {
+    return `${who}: ${NEED_LEVEL_LABELS[event.need][event.need_level]}${where}`;
+  }
+  return `${who} ${EVENT_LABELS[event.type]}${where}`;
 };
 
 const worldClock = (iso: string): string => iso.replace('T', ' ').replace('.000Z', '');

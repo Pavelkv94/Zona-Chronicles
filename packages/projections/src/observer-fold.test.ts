@@ -34,6 +34,7 @@ const seed = () =>
         location_id: 'loc:quiet-yard',
         status: 'idle',
         route_id: null,
+        needs: { hunger: 'normal', fatigue: 'normal' },
       },
     ],
   });
@@ -86,6 +87,7 @@ describe('свёртка: агент в пути не стоит ни в одн�
       location_id: null,
       status: 'traveling',
       route_id: 'route:yard-to-bridge',
+      needs: { hunger: 'normal', fatigue: 'normal' },
     });
     expect(emitted.projection_sequence).toBe(1);
     expect(emitted.type).toBe('journey.started');

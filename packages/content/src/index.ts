@@ -73,7 +73,12 @@ export const CONTENT_VERSION = '0.2.0';
  */
 export const PROTOTYPE_RULESET_VERSIONS = {
   schemaVersion: 1,
-  rulesVersion: '0.1.0',
+  // 0.2.0 — I04: у правил появились НАСТОЯЩИЕ коэффициенты (скорость роста нужд и пороги §5).
+  // Rules bundle хешируется от содержимого ruleset, поэтому коэффициенты при прежней версии
+  // дали бы два разных мира под одним именем правил. Литерал обязан совпадать с
+  // `RULES_VERSION` в `@zona/domain` — совпадение проверяется тестом в `apps/cli`, потому что
+  // content не имеет права импортировать domain и общего литерала быть не может.
+  rulesVersion: '0.2.0',
   contentVersion: CONTENT_VERSION,
 } as const;
 

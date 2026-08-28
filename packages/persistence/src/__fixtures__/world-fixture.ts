@@ -28,12 +28,14 @@ export const fixtureState = (): WorldState => ({
       locationId: FIXTURE_START_LOCATION_ID,
       status: 'idle',
       routeId: null,
+      needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
     },
     [FIXTURE_OTHER_AGENT_ID]: {
       id: FIXTURE_OTHER_AGENT_ID,
       locationId: FIXTURE_START_LOCATION_ID,
       status: 'idle',
       routeId: null,
+      needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
     },
   },
   routes: {
@@ -83,7 +85,13 @@ export const fixtureInitializationWithAgents = (count: number): WorldInitializat
   const agentNames: Record<string, string> = {};
   for (let index = 0; index < count; index += 1) {
     const id = `agent:racer-${String(index).padStart(2, '0')}`;
-    agents[id] = { id, locationId: FIXTURE_START_LOCATION_ID, status: 'idle', routeId: null };
+    agents[id] = {
+      id,
+      locationId: FIXTURE_START_LOCATION_ID,
+      status: 'idle',
+      routeId: null,
+      needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
+    };
     agentNames[id] = `Бегун ${String(index)}`;
   }
   return {

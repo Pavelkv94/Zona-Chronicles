@@ -8,7 +8,7 @@ import {
 } from '@zona/contracts';
 import { PROTOTYPE_WORLD } from '@zona/content';
 import { describe, expect, it } from 'vitest';
-import { prototypeRulesetVersions, rulesBundleContent, seedWorld } from './world.ts';
+import { prototypeRuleset, rulesBundleContent, seedWorld } from './world.ts';
 
 function decodedSnapshot(seed: number) {
   const { snapshot } = seedWorld(seed);
@@ -124,13 +124,14 @@ describe('seedWorld', () => {
     // домена (I03). Проверка от этого стала строже — она сверяет фактические версии мира.
     expect(
       isValidationFailure(
-        verifyBundleRef(rulesBundleContent(prototypeRulesetVersions()), snapshot.bundles.rules),
+        verifyBundleRef(rulesBundleContent(prototypeRuleset()), snapshot.bundles.rules),
       ),
     ).toBe(false);
 
-    const tampered = JSON.parse(
-      JSON.stringify(rulesBundleContent(prototypeRulesetVersions())),
-    ) as Record<string, unknown>;
+    const tampered = JSON.parse(JSON.stringify(rulesBundleContent(prototypeRuleset()))) as Record<
+      string,
+      unknown
+    >;
     (tampered['versions'] as Record<string, unknown>)['contentVersion'] = '0.1.1';
     expect(isValidationFailure(verifyBundleRef(tampered, snapshot.bundles.rules))).toBe(true);
   });

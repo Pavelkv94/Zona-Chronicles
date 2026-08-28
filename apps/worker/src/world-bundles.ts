@@ -16,11 +16,12 @@
  * бы из мира, посчитанного по другим правилам).
  */
 import { CONTENT_VERSION, PROTOTYPE_RULESET_VERSIONS, PROTOTYPE_WORLD } from '@zona/content';
+import { rulesetFor } from '@zona/domain';
 import type { DeterministicRuntimeProfile, Snapshot } from '@zona/contracts';
 import { bundlesFor, deterministicRuntimeProfileFor } from '@zona/simulation';
 
 export const worldBundles = (): Snapshot['bundles'] =>
-  bundlesFor(PROTOTYPE_WORLD, CONTENT_VERSION, { ...PROTOTYPE_RULESET_VERSIONS });
+  bundlesFor(PROTOTYPE_WORLD, CONTENT_VERSION, rulesetFor({ ...PROTOTYPE_RULESET_VERSIONS }));
 
 export const worldRuntimeProfile = (): DeterministicRuntimeProfile =>
   deterministicRuntimeProfileFor({

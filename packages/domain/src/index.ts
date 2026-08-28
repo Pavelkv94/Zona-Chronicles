@@ -14,16 +14,36 @@ export type { IdFactory } from './ports/id-factory.ts';
 export { DerivedIdFactory, SequentialIdFactory } from './ports/id-factory.ts';
 
 export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
-export { FixedRuleset, testRulesetVersions } from './ports/ruleset.ts';
+export {
+  FixedRuleset,
+  PROTOTYPE_NEEDS,
+  RULES_VERSION,
+  rulesetFor,
+  testRuleset,
+  testRulesetVersions,
+} from './ports/ruleset.ts';
+
+export type { NeedConfig, NeedThresholdCrossing } from './needs.ts';
+export {
+  betterThan,
+  isWorsening,
+  needLevelAt,
+  needLevelOf,
+  needValueAt,
+  nextThresholdCrossing,
+  requireValidNeedConfig,
+} from './needs.ts';
 
 export type {
   AgentState,
   AgentStatus,
+  JourneyCompleteAction,
+  NeedThresholdAction,
   RouteDefinition,
   ScheduledAction,
   WorldState,
 } from './state.ts';
-export { SCHEDULED_ACTION_PRIORITY } from './state.ts';
+export { SCHEDULED_ACTION_PRIORITY, needThresholdActionId } from './state.ts';
 
 export type { DecideContext, DecideRejection, DecideResult, DraftWorldEvent } from './decide.ts';
 export { decide } from './decide.ts';

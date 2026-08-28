@@ -11,7 +11,13 @@
  * доменной логике и replay (§3 контракта, комментарий `world-event.ts`).
  */
 import { type WorldEvent, assertNeverWorldEvent } from '@zona/contracts';
-import { SCHEDULED_ACTION_PRIORITY, type ScheduledAction, type WorldState } from './state.ts';
+import {
+  SCHEDULED_ACTION_PRIORITY,
+  needThresholdActionId,
+  type NeedThresholdAction,
+  type ScheduledAction,
+  type WorldState,
+} from './state.ts';
 
 export function evolve(state: WorldState, event: WorldEvent): WorldState {
   const bumped: WorldState = {
@@ -31,6 +37,8 @@ export function evolve(state: WorldState, event: WorldEvent): WorldState {
       return applyJourneyStarted(bumped, event);
     case 'journey.completed':
       return applyJourneyCompleted(bumped, event);
+    case 'need.threshold.crossed':
+      return applyNeedThresholdCrossed(bumped, event);
     case 'plan.invalidated':
       // Планы и потребности агентов — вне scope I01 (§5 плана итерации); envelope уже
       // заморожен (§11), поэтому ветка обязана существовать уже сейчас (A8), даже без
@@ -122,6 +130,7 @@ function applyJourneyCompleted(
       // обязаны продолжать применяться так, как их записали.
       return !(
         causedByIds.size === 0 &&
+        action.kind === 'journey.complete' &&
         action.entityId === actorId &&
         action.routeId === route.id
       );
@@ -136,4 +145,71 @@ function applyJourneyCompleted(
     },
     scheduledActions: remaining,
   };
+}
+
+/**
+ * Пересечение порога нужды (I04).
+ *
+ * Момент отсчёта нужды НЕ меняется: агент не поел, он просто дольше не ел. Меняется расписание —
+ * выполненное пересечение уходит, следующее появляется, если оно есть.
+ *
+ * Следующий момент берётся ИЗ СОБЫТИЯ, а не вычисляется здесь, и это не лень: `evolve` — чистая
+ * функция от журнала, у неё нет доступа к коэффициентам ruleset (ADR-003), а вычислять их
+ * вторым способом означало бы завести второй источник правды, способный разойтись с журналом
+ * молча. Тот же приём и то же основание, что у `expected_arrival` в `journey.started`.
+ *
+ * Ждущее действие снимается по КЛЮЧУ, восстановленному из самого события: ключ содержит агента,
+ * нужду и момент срабатывания, а момент срабатывания — это `world_time` факта. Совпадений тут
+ * быть не может: два разных пересечения одной нужды одного агента в один и тот же момент — это
+ * одно и то же пересечение.
+ */
+function applyNeedThresholdCrossed(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'need.threshold.crossed' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: need.threshold.crossed ссылается на неизвестного актора ${actorId}`);
+  }
+
+  const { need, next_threshold_at: nextAt, to_level: toLevel } = event.payload;
+  const firedId = needThresholdActionId(actorId, need, event.world_time);
+
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, action] of Object.entries(state.scheduledActions)) {
+    if (id === firedId) continue;
+    remaining[id] = action;
+  }
+
+  if (nextAt !== null) {
+    const next: NeedThresholdAction = {
+      id: needThresholdActionId(actorId, need, nextAt),
+      kind: 'need.threshold',
+      dueAt: nextAt,
+      priority: SCHEDULED_ACTION_PRIORITY['need.threshold'],
+      entityId: actorId,
+      need,
+      toLevel: nextLevelAfter(toLevel),
+    };
+    remaining[next.id] = next;
+  }
+
+  return { ...state, scheduledActions: remaining };
+}
+
+/**
+ * Уровень, до которого дорастёт нужда к следующему порогу.
+ *
+ * Живёт здесь, а не в `needs.ts`, потому что это прочтение ЖУРНАЛА, а не правило: цепочка
+ * порогов строго последовательна, поэтому следующий уровень известен из достигнутого. Событие с
+ * непустым `next_threshold_at` при крайнем уровне — противоречие внутри самого факта, и оно
+ * обязано быть громким: молча оно дало бы действие, которое `decide` затем вечно отвергает.
+ */
+function nextLevelAfter(level: 'normal' | 'warning' | 'critical'): 'warning' | 'critical' {
+  if (level === 'normal') return 'warning';
+  if (level === 'warning') return 'critical';
+  throw new Error(
+    'evolve: need.threshold.crossed достиг крайнего уровня, но обещает следующий порог',
+  );
 }

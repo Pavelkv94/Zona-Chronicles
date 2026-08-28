@@ -102,6 +102,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'snapshot-bundles',
     checksum: 'e43bd83acbb5120911ce97d956c29cba5d2aaaeb05d46440332f4ed499985fb1',
   },
+  {
+    id: '0014',
+    name: 'needs',
+    checksum: 'edc6c09d4a8a13e563bdfde2e6139293bcf4f5dc9e11a6edffacb287524eb2c8',
+  },
 ];
 
 describe('реестр миграций', () => {

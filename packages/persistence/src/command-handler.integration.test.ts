@@ -3,7 +3,7 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { sql } from 'kysely';
-import { RUNTIME_ID_PREFIXES, type Command } from '@zona/contracts';
+import { RUNTIME_ID_PREFIXES, type JourneyStartCommand } from '@zona/contracts';
 import { DerivedIdFactory } from '@zona/domain';
 import {
   createMigratedDatabase,
@@ -25,7 +25,7 @@ import { executeCommand } from './command-handler.ts';
 
 const ids = new DerivedIdFactory('i02a-test');
 
-const command = (overrides: Partial<Command> = {}): Command => ({
+const command = (overrides: Partial<JourneyStartCommand> = {}): JourneyStartCommand => ({
   command_id: ids.next(RUNTIME_ID_PREFIXES.command),
   world_id: FIXTURE_WORLD_ID,
   type: 'journey.start',
@@ -151,7 +151,7 @@ describe('B2/B3/B4 — атомарный старт journey', () => {
     const first = await executeCommand(db, original);
     expect(first.outcome).toBe('accepted');
 
-    const impostor: Command = {
+    const impostor: JourneyStartCommand = {
       ...original,
       actor_id: 'agent:ghost',
       expected_world_version: 999,
@@ -246,6 +246,7 @@ describe('B2/B3/B4 — атомарный старт journey', () => {
       locationId: 'loc:quiet-yard',
       status: 'traveling',
       routeId: FIXTURE_ROUTE_ID,
+      needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
     });
   });
 });

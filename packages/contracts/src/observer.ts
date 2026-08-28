@@ -53,6 +53,7 @@ import {
 } from './schema-primitives.ts';
 import { RUNTIME_ID_PREFIXES } from './identifier.ts';
 import { WORLD_EVENT_TYPES } from './world-event.ts';
+import { NeedKindSchema, NeedLevelSchema, type NeedKind } from './need.ts';
 import {
   type ValidationResult,
   isValidationIssue,
@@ -62,6 +63,22 @@ import {
 
 /** Статус агента, видимый зрителю. Совпадает с доменным — скрывать здесь нечего. */
 export const OBSERVER_AGENT_STATUSES = ['idle', 'traveling'] as const;
+
+/**
+ * Уровни всех нужд агента. Ключи перечислены явно, а не собраны из `NEED_KINDS` в рантайме:
+ * `Static` от собранной на лету схемы выродился бы в индексную сигнатуру, и пропущенный вид
+ * нужды перестал бы ломать компиляцию. `satisfies` возвращает эту проверку — новый вид нужды
+ * обязан появиться здесь, иначе схема не соберётся.
+ */
+const NEED_LEVEL_FIELDS = {
+  hunger: NeedLevelSchema,
+  fatigue: NeedLevelSchema,
+} as const satisfies Readonly<Record<NeedKind, unknown>>;
+
+export const NeedLevelsSchema = Type.Object(NEED_LEVEL_FIELDS, {
+  additionalProperties: false,
+  description: 'Уровень каждой нужды агента (07_MVP_MECHANICS_SPEC §5).',
+});
 
 export const ObserverAgentSchema = Type.Object(
   {
@@ -75,6 +92,15 @@ export const ObserverAgentSchema = Type.Object(
     status: Type.Union(OBSERVER_AGENT_STATUSES.map((value) => Type.Literal(value))),
     /** `null`, пока агент не в пути. */
     route_id: Type.Union([NamespacedIdSchema, Type.Null()]),
+    /**
+     * Уровни нужд, видимые зрителю (I04).
+     *
+     * УРОВЕНЬ, а не значение, и это не упрощение подачи. Значение нужды — производная величина
+     * от мирового времени; чтобы показать его, проекции понадобились бы коэффициенты ruleset,
+     * то есть право ВЫЧИСЛЯТЬ факт, а не отражать его. Уровень же приходит из события
+     * `need.threshold.crossed` — проекция его только запоминает.
+     */
+    needs: NeedLevelsSchema,
   },
   { $id: 'zona:observer-agent/1', additionalProperties: false },
 );
@@ -115,6 +141,9 @@ export const ObserverEventSchema = Type.Object(
     actor_ids: Type.Array(NamespacedIdSchema, { minItems: 1 }),
     location_id: Type.Union([NamespacedIdSchema, Type.Null()]),
     route_id: Type.Union([NamespacedIdSchema, Type.Null()]),
+    /** Нужда и достигнутый уровень; `null` у событий, к нуждам не относящихся (I04). */
+    need: Type.Union([NeedKindSchema, Type.Null()]),
+    need_level: Type.Union([NeedLevelSchema, Type.Null()]),
   },
   { $id: 'zona:observer-event/1', additionalProperties: false },
 );

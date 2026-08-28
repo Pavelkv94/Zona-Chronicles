@@ -15,11 +15,10 @@
 import {
   DeterministicRandomSource,
   FixedClock,
-  FixedRuleset,
   SequentialIdFactory,
   decide,
   evolve,
-  testRulesetVersions,
+  testRuleset,
   type WorldState,
 } from '../../../packages/domain/src/index.ts';
 import {
@@ -45,7 +44,13 @@ const initialState: WorldState = {
   worldTime: '2034-05-17T18:00:00.000Z',
   sequence: 0,
   agents: {
-    'agent:rook': { id: 'agent:rook', locationId: 'loc:quiet-yard', status: 'idle', routeId: null },
+    'agent:rook': {
+      id: 'agent:rook',
+      locationId: 'loc:quiet-yard',
+      status: 'idle',
+      routeId: null,
+      needBaseline: { hunger: '2034-05-17T18:00:00.000Z', fatigue: '2034-05-17T18:00:00.000Z' },
+    },
   },
   routes: {
     'route:yard-to-bridge': {
@@ -76,7 +81,7 @@ const result = decide(initialState, command, {
   // другой результат» нельзя было бы выразить, и тест выродился бы в проверку константы.
   random: new DeterministicRandomSource(seed),
   ids: new SequentialIdFactory(seed),
-  ruleset: new FixedRuleset(testRulesetVersions()),
+  ruleset: testRuleset(),
 });
 
 if (result.kind === 'rejected') {

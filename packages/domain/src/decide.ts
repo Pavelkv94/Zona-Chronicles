@@ -21,8 +21,10 @@ import {
   type Instant,
   type JourneyCompletedEvent,
   type JourneyStartedEvent,
+  type NeedThresholdCrossedEvent,
   type PlanInvalidatedEvent,
 } from '@zona/contracts';
+import { betterThan, needLevelAt, nextThresholdCrossing } from './needs.ts';
 import type { Clock } from './ports/clock.ts';
 import type { IdFactory } from './ports/id-factory.ts';
 import type { RandomSource } from './ports/random-source.ts';
@@ -54,7 +56,8 @@ export interface DecideRejection {
 export type DraftWorldEvent =
   | Omit<JourneyStartedEvent, 'recorded_at'>
   | Omit<JourneyCompletedEvent, 'recorded_at'>
-  | Omit<PlanInvalidatedEvent, 'recorded_at'>;
+  | Omit<PlanInvalidatedEvent, 'recorded_at'>
+  | Omit<NeedThresholdCrossedEvent, 'recorded_at'>;
 
 export type DecideResult =
   | { readonly kind: 'accepted'; readonly events: readonly DraftWorldEvent[] }
@@ -101,6 +104,8 @@ export function decide(state: WorldState, command: Command, context: DecideConte
       return decideJourneyStart(state, command, context);
     case 'journey.complete':
       return decideJourneyComplete(state, command, context);
+    case 'need.threshold.cross':
+      return decideNeedThresholdCross(state, command, context);
     default:
       return assertNeverCommand(command);
   }
@@ -237,6 +242,84 @@ function decideJourneyStart(
     payload: {
       route_id: route.id,
       expected_arrival: toCanonicalIso(expectedArrival),
+    },
+  };
+
+  return { kind: 'accepted', events: [event] };
+}
+
+/**
+ * Пересечение порога нужды (I04).
+ *
+ * Команду формирует расписание, а не человек, и она проходит тем же путём, что `journey.complete`
+ * — у мира один способ измениться.
+ *
+ * Уровень вычисляется ЗАНОВО и сверяется с ожиданием из payload. Это не перестраховка: действие
+ * могло ждать своей очереди, пока агент ел, и тогда запланированное пересечение попросту не
+ * состоялось. Без сверки мир опубликовал бы факт «проголодался» о сытом агенте, и опроверг бы
+ * этот факт только собственным состоянием, которое летопись не читает.
+ */
+function decideNeedThresholdCross(
+  state: WorldState,
+  command: Extract<Command, { type: 'need.threshold.cross' }>,
+  context: DecideContext,
+): DecideResult {
+  const staleness = checkExpectedVersion(state, command);
+  if (staleness !== null) return staleness;
+
+  const agent = state.agents[command.actor_id];
+  if (agent === undefined) {
+    return rejected('actor_not_actionable', `актор ${command.actor_id} неизвестен миру`);
+  }
+
+  const { need, to_level: toLevel } = command.payload;
+  const config = context.ruleset.needs[need];
+  const baseline = agent.needBaseline[need];
+  const worldTime = context.clock.now();
+  const at = toCanonicalIso(worldTime);
+
+  const actual = needLevelAt(baseline, at, config);
+  if (actual !== toLevel) {
+    return rejected(
+      'precondition_failed',
+      `нужда "${need}" актора ${command.actor_id} на момент ${at} имеет уровень "${actual}", ` +
+        `а действие планировалось на "${toLevel}"`,
+    );
+  }
+
+  const fromLevel = betterThan(toLevel);
+  if (fromLevel === null) {
+    return rejected(
+      'precondition_failed',
+      `уровень "${toLevel}" нужды "${need}" не имеет предшествующего: пересечение в него ` +
+        'невозможно, а факт о переходе был бы неверен',
+    );
+  }
+
+  const next = nextThresholdCrossing(baseline, toLevel, config);
+  const versions = context.ruleset.versions;
+
+  const event: Omit<NeedThresholdCrossedEvent, 'recorded_at'> = {
+    event_id: context.ids.next(RUNTIME_ID_PREFIXES.event),
+    world_id: state.worldId,
+    sequence: state.sequence + 1,
+    world_time: at,
+    type: 'need.threshold.crossed',
+    schema_version: versions.schemaVersion,
+    rules_version: versions.rulesVersion,
+    content_version: versions.contentVersion,
+    actor_ids: [command.actor_id],
+    subject_ids: [],
+    location_id: agent.locationId,
+    correlation_id: command.correlation_id,
+    caused_by: command.caused_by_event_id === undefined ? [] : [command.caused_by_event_id],
+    command_id: command.command_id,
+    random_audit: null,
+    payload: {
+      need,
+      from_level: fromLevel,
+      to_level: toLevel,
+      next_threshold_at: next === null ? null : next.at,
     },
   };
 

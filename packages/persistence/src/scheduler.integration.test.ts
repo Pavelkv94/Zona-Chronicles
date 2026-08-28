@@ -86,6 +86,8 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
       locationId: FIXTURE_END_LOCATION_ID,
       status: 'idle',
       routeId: null,
+      // Путь нужды не трогает: агент дошёл, а не поел (I04).
+      needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
     });
     // Расписание опустело, но строка осталась помеченной выполненной (C2).
     expect(Object.keys(state?.scheduledActions ?? {})).toHaveLength(0);

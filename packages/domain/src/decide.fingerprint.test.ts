@@ -7,12 +7,12 @@
  * тихо вернёт результат первой. Этот тест упадёт в тот самый день.
  */
 import { describe, expect, it } from 'vitest';
-import { COMMAND_FINGERPRINT_EXCLUDED_KEYS, type Command } from '@zona/contracts';
+import { COMMAND_FINGERPRINT_EXCLUDED_KEYS, type JourneyStartCommand } from '@zona/contracts';
 import { decide } from './decide.ts';
 import { FixedClock } from './ports/clock.ts';
 import { DerivedIdFactory } from './ports/id-factory.ts';
 import { DeterministicRandomSource } from './ports/random-source.ts';
-import { FixedRuleset, testRulesetVersions } from './ports/ruleset.ts';
+import { testRuleset } from './ports/ruleset.ts';
 import type { WorldState } from './state.ts';
 
 const WORLD_TIME = '2028-04-26T06:00:00.000Z';
@@ -23,7 +23,13 @@ const state = (): WorldState => ({
   worldTime: WORLD_TIME,
   sequence: 0,
   agents: {
-    'agent:rook': { id: 'agent:rook', locationId: 'loc:yard', status: 'idle', routeId: null },
+    'agent:rook': {
+      id: 'agent:rook',
+      locationId: 'loc:yard',
+      status: 'idle',
+      routeId: null,
+      needBaseline: { hunger: WORLD_TIME, fatigue: WORLD_TIME },
+    },
   },
   routes: {
     'route:a': {
@@ -40,10 +46,10 @@ const context = () => ({
   clock: new FixedClock(WORLD_TIME),
   random: new DeterministicRandomSource(1),
   ids: new DerivedIdFactory('world:prototype:1'),
-  ruleset: new FixedRuleset(testRulesetVersions()),
+  ruleset: testRuleset(),
 });
 
-const command = (overrides: Partial<Command> = {}): Command => ({
+const command = (overrides: Partial<JourneyStartCommand> = {}): JourneyStartCommand => ({
   command_id: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
   world_id: 'world:prototype',
   type: 'journey.start',

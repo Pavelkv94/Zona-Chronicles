@@ -33,7 +33,12 @@ import {
   type ObserverProjectionState,
   type ProjectionDatabase,
 } from '@zona/projections';
-import type { ObserverEvent } from '@zona/contracts';
+import {
+  NEED_LEVELS,
+  type NeedLevel,
+  type ObserverAgent,
+  type ObserverEvent,
+} from '@zona/contracts';
 
 /** Сколько событий забирается за один шаг. Догон старого мира идёт пачками, а не одним запросом. */
 const DEFAULT_BATCH_SIZE = 200;
@@ -65,13 +70,8 @@ export interface ProjectionBuilderDeps {
  */
 export interface ProjectionGenesis {
   readonly worldTime: string;
-  readonly agents: readonly {
-    readonly agent_id: string;
-    readonly name: string;
-    readonly location_id: string | null;
-    readonly status: 'idle' | 'traveling';
-    readonly route_id: string | null;
-  }[];
+  /** Форма совпадает с `ObserverAgent`: проекция строится из неё без преобразований. */
+  readonly agents: readonly ObserverAgent[];
 }
 
 const mapNodes = (
@@ -223,6 +223,10 @@ export const genesisFromSnapshot = async (
       location_id: agent.status === 'traveling' ? null : agent.locationId,
       status: agent.status,
       route_id: agent.routeId,
+      // Генезисный мир начинается с сытых и отдохнувших: момент отсчёта нужд равен стартовому
+      // времени мира, поэтому все уровни — `normal`. Вычислять их из снимка проекции нечем и не
+      // нужно: дальше уровень меняют только факты `need.threshold.crossed`.
+      needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
     })),
   };
 };
@@ -269,6 +273,10 @@ const currentFoldState = async (
         location_id: row.location_id,
         status: row.status === 'traveling' ? ('traveling' as const) : ('idle' as const),
         route_id: row.route_id,
+        needs: {
+          hunger: needLevel(row.hunger_level, row.agent_id),
+          fatigue: needLevel(row.fatigue_level, row.agent_id),
+        },
       },
     ]),
   );
@@ -375,4 +383,15 @@ export const rebuildProjection = async (
   }
   deps.logger?.info({ worldId: deps.worldId, applied }, 'projection.rebuilt');
   return { applied, projectionSequence: sequence };
+};
+
+/**
+ * Уровень нужды из строки проекции. Неизвестное значение — громкий сбой: подстановка `normal`
+ * показала бы зрителю спокойного агента вместо голодного и была бы неотличима от нормы.
+ */
+const needLevel = (value: string, agentId: string): NeedLevel => {
+  if ((NEED_LEVELS as readonly string[]).includes(value)) return value as NeedLevel;
+  throw new Error(
+    `projection-builder: у агента ${agentId} неизвестный уровень нужды ${JSON.stringify(value)}`,
+  );
 };

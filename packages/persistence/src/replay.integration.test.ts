@@ -21,7 +21,7 @@ import {
   CANONICAL_TRANSACTION_ISOLATION_LEVEL,
   SNAPSHOT_CHECKSUM_SCOPE_VERSION,
 } from '@zona/contracts';
-import { DerivedIdFactory } from '@zona/domain';
+import { testRulesetVersions, DerivedIdFactory } from '@zona/domain';
 import {
   createMigratedDatabase,
   truncateWorldData,
@@ -47,7 +47,11 @@ const ids = new DerivedIdFactory('i02b-replay');
 const ARRIVAL = '2028-04-26T06:40:00.000Z'; // FIXTURE_WORLD_TIME + 40 минут (FIXTURE_ROUTE_ID)
 
 const bundles = (): Snapshot['bundles'] => ({
-  rules: bundleRefFor('0.1.0', { travel: { base_minutes: 40 } }),
+  // Версия правил берётся из ruleset, а не из литерала: события подписываются ЕЮ, и снимок,
+  // объявляющий другую, честно отвергается стражем «состояние снимка и суффикс посчитаны
+  // разными правилами». Литерал ловил бы не расхождение, а собственную неактуальность —
+  // именно это и произошло при переходе 0.1.0 → 0.2.0 в I04.
+  rules: bundleRefFor(testRulesetVersions().rulesVersion, { travel: { base_minutes: 40 } }),
   content: bundleRefFor('0.1.0', { locations: ['loc:quiet-yard', 'loc:bridge'] }),
   schema: bundleRefFor('1.0.0', { world_event: 'zona:world-event/1' }),
 });

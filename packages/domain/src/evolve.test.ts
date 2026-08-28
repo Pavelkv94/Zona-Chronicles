@@ -1,6 +1,6 @@
 import type { WorldEvent } from '@zona/contracts';
 import { describe, expect, it } from 'vitest';
-import { fixtureWorldState } from './__fixtures__/world.ts';
+import { fixtureWorldState, fixtureNeedBaseline } from './__fixtures__/world.ts';
 import { evolve } from './evolve.ts';
 
 function journeyStartedEvent(overrides: Partial<WorldEvent> = {}): WorldEvent {
@@ -34,6 +34,7 @@ describe('evolve: journey.started', () => {
       locationId: 'loc:quiet-yard',
       status: 'traveling',
       routeId: 'route:yard-to-bridge',
+      needBaseline: fixtureNeedBaseline(),
     });
   });
 
@@ -90,6 +91,7 @@ describe('evolve: journey.completed', () => {
       locationId: 'loc:bridge',
       status: 'idle',
       routeId: null,
+      needBaseline: fixtureNeedBaseline(),
     });
   });
 });
@@ -142,6 +144,7 @@ describe('M7 — снятие действия из расписания по п
           locationId: 'loc:quiet-yard',
           status: 'traveling',
           routeId: 'route:yard-to-bridge',
+          needBaseline: fixtureNeedBaseline(),
         },
       },
       scheduledActions: {
@@ -183,6 +186,7 @@ describe('M7 — снятие действия из расписания по п
           locationId: 'loc:quiet-yard',
           status: 'traveling',
           routeId: 'route:yard-to-bridge',
+          needBaseline: fixtureNeedBaseline(),
         },
       },
       scheduledActions: {
