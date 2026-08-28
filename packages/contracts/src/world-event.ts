@@ -231,14 +231,22 @@ export const JourneyStartedEventSchema = eventVariant('journey.started');
 export const JourneyCompletedEventSchema = eventVariant('journey.completed');
 export const PlanInvalidatedEventSchema = eventVariant('plan.invalidated');
 
+/**
+ * Каталог вариантов, ПОЛНЫЙ по построению.
+ *
+ * `satisfies` здесь несёт всю нагрузку: он требует ключ на каждый тип из `WORLD_EVENT_TYPES` и
+ * при этом сохраняет точные типы значений, без которых `Static` ниже выродился бы в `unknown`.
+ * До этого каталог был обычным `as const`, и пропущенный вариант ничего не ломал.
+ */
 const VARIANT_SCHEMAS = {
   'journey.started': JourneyStartedEventSchema,
   'journey.completed': JourneyCompletedEventSchema,
   'plan.invalidated': PlanInvalidatedEventSchema,
-} as const;
+} as const satisfies Readonly<Record<WorldEventType, unknown>>;
 
 export const WorldEventSchema = Type.Union(
-  [JourneyStartedEventSchema, JourneyCompletedEventSchema, PlanInvalidatedEventSchema],
+  // Порядок вариантов задан каталогом, а не вторым списком: два списка расходятся молча.
+  WORLD_EVENT_TYPES.map((type) => VARIANT_SCHEMAS[type]),
   {
     $id: 'zona:world-event/1',
     description: 'World event envelope v1, дискриминированный по type (§3, §11).',
@@ -253,13 +261,27 @@ export type JourneyCompletedEvent = Static<typeof JourneyCompletedEventSchema>;
 export type PlanInvalidatedEvent = Static<typeof PlanInvalidatedEventSchema>;
 
 /**
- * Закрытый union canonical events v1.
+ * Закрытый union canonical events v1 — ВЫВЕДЕННЫЙ из каталога, а не выписанный рядом с ним.
  *
- * Он объявлен перечислением вариантов, а не `Static<typeof WorldEventSchema>`, потому что
- * именно перечисление даёт компилятору дискриминатор: `switch (event.type)` без одной ветки
- * не сужается до `never`, и `assertNeverWorldEvent` перестаёт компилироваться (A8).
+ * `Static<typeof WorldEventSchema>` не годится: он не даёт компилятору дискриминатор, и
+ * `switch (event.type)` без одной ветки перестал бы сужаться до `never`. Отображение по
+ * `WorldEventType` его даёт — у каждого варианта `type` объявлен литералом, — и при этом union
+ * не может отстать от каталога.
+ *
+ * Раньше здесь стояло перечисление вручную, и обещание A8 из докстринга ниже было пустым.
+ * Измерено пробой Gate A: тип, добавленный в `WORLD_EVENT_TYPES`, в payload-карты и в схему
+ * union, но не в это перечисление, не ломал НИ ОДНОГО потребителя — `pnpm typecheck` давал ноль
+ * ошибок во всём workspace. Новое событие молча выпадало бы из ленты, то есть ровно то, от чего
+ * `assertNeverWorldEvent` и поставлен.
+ *
+ * Незанудная проверка: `WorldEventVariants` — отображение ПО union-у типов, поэтому пропущенный
+ * вариант ломает компиляцию здесь, в каталоге, а не у потребителя, который ни при чём.
  */
-export type WorldEvent = JourneyStartedEvent | JourneyCompletedEvent | PlanInvalidatedEvent;
+type WorldEventVariants = {
+  [Type in WorldEventType]: Static<(typeof VARIANT_SCHEMAS)[Type]>;
+};
+
+export type WorldEvent = WorldEventVariants[WorldEventType];
 
 /**
  * Исчерпывающая проверка типов событий. Аргумент типа `never` означает «сюда невозможно
