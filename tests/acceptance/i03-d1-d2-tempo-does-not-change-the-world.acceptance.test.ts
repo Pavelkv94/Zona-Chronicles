@@ -80,6 +80,31 @@ const canonicalShape = (event: WorldEvent) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Мировой момент выдачи всех команд теста: стартовое время мира прототипа. */
+const ISSUED_AT = '2028-04-26T06:00:00.000Z';
+
+/**
+ * Сравнивать журналы миров с разной скоростью можно только за ОДИНАКОВОЕ МИРОВОЕ время (I04).
+ *
+ * До нужд это было незаметно: события порождались только командами, поэтому быстрый мир за то же
+ * реальное время проживал ровно те же восемь фактов. С нуждами само течение времени рождает
+ * события, и мир при темпе 600 успевает прожить двое суток там, где мир при темпе 6 — два часа.
+ * Лишние события у быстрого мира — не расхождение, а прожитая жизнь.
+ *
+ * Поэтому сравнивается ПРЕФИКС по мировому времени: оба мира прошли одни и те же моменты, и
+ * утверждение «темп не меняет мир» проверяется там, где оно вообще имеет смысл.
+ */
+const upTo = (journal: readonly WorldEvent[], bound: string): readonly WorldEvent[] =>
+  journal.filter((event) => event.world_time <= bound);
+
+/** Последний мировой момент, до которого дошли ОБА сравниваемых мира. */
+const commonBound = (journal: readonly WorldEvent[]): string => {
+  const journeys = journal.filter((event) => event.type === 'journey.completed');
+  const last = journeys.at(-1);
+  if (last === undefined) throw new Error('журнал не содержит ни одного завершённого пути');
+  return last.world_time;
+};
+
 describe('I03 D1/D2 — скорость мира не меняет канонический журнал', () => {
   const created: TestDatabase[] = [];
 
@@ -100,6 +125,12 @@ describe('I03 D1/D2 — скорость мира не меняет канони
         command.route,
         '--command-id',
         command.id,
+        // Момент выдачи команды закреплён ЯВНО (I04). Он стал настоящим входом: мир штампует
+        // внешнюю команду тем временем, до которого дошёл по разрешению темпа, а оно у миров с
+        // разной скоростью разное. Без закрепления два мира разошлись бы ЗАКОННО, и тест
+        // объявил бы нарушением детерминизма то, что им не является.
+        '--at-world-time',
+        ISSUED_AT,
       ]);
       expect(started.exitCode, started.stdout).toBe(0);
     }
@@ -182,16 +213,24 @@ describe('I03 D1/D2 — скорость мира не меняет канони
     const slowJournal = await journalOf(slow);
     const fastJournal = await journalOf(fast);
 
-    expect(slowJournal.length).toBe(COMMANDS.length * 2);
-    expect(fastJournal.map(canonicalShape)).toEqual(slowJournal.map(canonicalShape));
+    const bound = commonBound(slowJournal);
+    const slowPrefix = upTo(slowJournal, bound);
+    const fastPrefix = upTo(fastJournal, bound);
+
+    expect(slowPrefix.length).toBe(COMMANDS.length * 2);
+    expect(fastPrefix.map(canonicalShape)).toEqual(slowPrefix.map(canonicalShape));
   });
 
   it('D1: непрерывный ход даёт тот же журнал, что пошаговый world tick --advance', async () => {
     const liveJournal = await journalOf(slow);
     const stepJournal = await journalOf(stepwise);
 
-    expect(stepJournal.length).toBe(liveJournal.length);
-    expect(stepJournal.map(canonicalShape)).toEqual(liveJournal.map(canonicalShape));
+    const bound = commonBound(liveJournal);
+    const livePrefix = upTo(liveJournal, bound);
+    const stepPrefix = upTo(stepJournal, bound);
+
+    expect(stepPrefix.length).toBe(livePrefix.length);
+    expect(stepPrefix.map(canonicalShape)).toEqual(livePrefix.map(canonicalShape));
   });
 
   it('D2: темп не входит в deterministic_runtime_profile — ни значением, ни ключом', async () => {

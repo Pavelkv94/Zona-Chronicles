@@ -24,6 +24,7 @@ import {
   createDatabase,
   executeCommand,
   initializeWorld,
+  loadObservedWorldTime,
   loadLatestSnapshot,
   loadWorldEvents,
   loadWorldMeta,
@@ -345,13 +346,30 @@ export const runWorldRunCommand = async (
   if (unqualified !== null) return unqualified;
 
   const commandId = flag(args, '--command-id') ?? freshCommandId();
+
+  /**
+   * Момент, в который команда попадает В МИР, — «который час в мире», а не время последнего
+   * события (I04).
+   *
+   * Разница видна только в тишине и стоила отдельного дефекта. Мировое время двигают события,
+   * поэтому между ними оно стоит; горизонт при этом растёт, иначе будущее действие не наступило
+   * бы никогда. Команда, помеченная стоящим временем, получает время прибытия УЖЕ ПОЗАДИ
+   * горизонта и завершается на первом же шаге: сорокаминутный путь занимал 0.7 реальной секунды.
+   *
+   * `--at-world-time` делает момент ЯВНЫМ входом. Он нужен там, где сравнивают журналы миров с
+   * разной скоростью: без него «когда оператор действовал» зависит от темпа, и два мира
+   * расходятся законно, а тест объявил бы это нарушением детерминизма.
+   */
+  const observed = await loadObservedWorldTime(db, state.worldId);
+  const issuedAt = flag(args, '--at-world-time') ?? observed ?? state.worldTime;
+
   const command: Command = {
     command_id: commandId,
     world_id: state.worldId,
     type: 'journey.start',
     schema_version: prototypeRulesetVersions().schemaVersion,
     actor_id: agentId,
-    issued_at_world_time: state.worldTime,
+    issued_at_world_time: issuedAt,
     expected_world_version: state.worldVersion,
     correlation_id: new DerivedIdFactory(`${commandId}:correlation`).next(
       RUNTIME_ID_PREFIXES.correlation,
@@ -359,7 +377,7 @@ export const runWorldRunCommand = async (
     payload: { route_id: routeId },
   };
 
-  const result = await executeCommand(db, command);
+  const result = await executeCommand(db, command, { worldTime: issuedAt });
   const replayed = result.replayed ? ' (повтор: результат прочитан из journal)' : '';
 
   if (result.outcome === 'rejected') {

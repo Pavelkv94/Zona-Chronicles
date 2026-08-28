@@ -13,6 +13,7 @@ import { observerProjectionMigration } from './0011-observer-projection.ts';
 import { worldQualifiedProfileMigration } from './0012-world-qualified-profile.ts';
 import { snapshotBundlesMigration } from './0013-snapshot-bundles.ts';
 import { needsMigration } from './0014-needs.ts';
+import { observedWorldTimeMigration } from './0015-observed-world-time.ts';
 
 export type { Migration } from './types.ts';
 
@@ -40,4 +41,5 @@ export const migrations: readonly Migration[] = [
   worldQualifiedProfileMigration,
   snapshotBundlesMigration,
   needsMigration,
+  observedWorldTimeMigration,
 ];

@@ -34,6 +34,7 @@ export type {
 export {
   initializeWorld,
   loadWorldEvents,
+  loadObservedWorldTime,
   loadWorldMeta,
   loadWorldState,
   loadOutboxEventsAfter,

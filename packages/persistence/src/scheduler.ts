@@ -350,6 +350,25 @@ const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Prom
     );
   }
 
+  /**
+   * Отметить, ДОКУДА мир дошёл по разрешению темпа (миграция 0015).
+   *
+   * Пишется ДО захвата, а не после исполнения, и это важно: горизонт — свойство разрешения, а не
+   * результата. Шаг, не захвативший ничего, всё равно продвигает «который час в мире»; именно
+   * такие шаги и составляют тишину, в которой разрыв копится.
+   *
+   * `greatest` вместо простого присваивания — отметка обязана быть монотонной: два worker-а с
+   * разным темпом или ручной `world tick` без горизонта иначе двигали бы её назад, и внешняя
+   * команда получила бы время из прошлого — ровно тот дефект, ради которого колонка заведена.
+   */
+  await db
+    .updateTable('worlds')
+    .set({
+      observed_world_time: sql<string>`greatest(coalesce(observed_world_time, ''), ${horizon})`,
+    })
+    .where('world_id', '=', options.worldId)
+    .execute();
+
   const claimed = await claimDueActions(db, {
     worldId: options.worldId,
     worldTime: horizon,

@@ -8,6 +8,7 @@
 import {
   NEED_KINDS,
   NEED_LEVELS,
+  compareByCodePoint,
   decodeWorldEvent,
   isValidationFailure,
   requireCanonical,
@@ -677,4 +678,26 @@ const scheduledActionFromRow = (row: {
     need: row.need as NeedKind,
     toLevel: row.to_level as NeedLevel,
   };
+};
+
+/**
+ * «Который час в мире» для того, кто собирается его изменить (I04, миграция 0015).
+ *
+ * Возвращает отметку горизонта, если шаг мира уже был, иначе текущее мировое время. Второе —
+ * честное умолчание, а не догадка: у мира без единого шага горизонт не отличается от времени
+ * последнего события.
+ */
+export const loadObservedWorldTime = async (
+  db: DatabaseConnection,
+  worldId: string,
+): Promise<string | null> => {
+  const row = await db
+    .selectFrom('worlds')
+    .select(['world_time', 'observed_world_time'])
+    .where('world_id', '=', worldId)
+    .executeTakeFirst();
+  if (row === undefined) return null;
+  const observed = row.observed_world_time;
+  if (observed === null || observed === '') return row.world_time;
+  return compareByCodePoint(observed, row.world_time) < 0 ? row.world_time : observed;
 };

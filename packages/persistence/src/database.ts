@@ -48,6 +48,14 @@ export interface WorldsTable {
    * контроля и снимка не имел: писатель обязан отказаться, а не принять молча.
    */
   qualified_runtime_profile: ColumnType<unknown, string | null, string | null>;
+  /**
+   * Докуда мир дошёл по РАЗРЕШЕНИЮ темпа — «который час в мире» (миграция 0015).
+   *
+   * Операционная отметка, не каноническая: в `WorldState`, checksum и replay не входит. Нужна
+   * тому, кто исполняет внешнюю команду в другом процессе: без неё команда штампуется моментом
+   * последнего события, который в тишине уходит далеко в прошлое относительно горизонта.
+   */
+  observed_world_time: ColumnType<string | null, string | null, string | null>;
   created_at: ColumnType<Date, Date, Date>;
 }
 

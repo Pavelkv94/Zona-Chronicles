@@ -41,7 +41,18 @@ const PREVIOUS_RELEASE_WORLD_COLUMNS =
  * поля, добавленного последней миграцией. Использовать здесь `initializeWorld` нельзя — это
  * писатель текущей поставки (см. докстринг файла).
  */
-const writePreviousReleaseWorld = async (db: DatabaseConnection): Promise<void> => {
+const writePreviousReleaseWorld = async (
+  db: DatabaseConnection,
+  /**
+   * КАКУЮ поставку писать. Два теста этого файла эмулируют РАЗНЫЕ рубежи — «весь реестр без
+   * последней миграции» и «состояние до 0010», — и одним списком колонок они не описываются:
+   * миграция 0014 сделала моменты отсчёта нужд обязательными, а до неё таких колонок не было.
+   *
+   * Параметр явный, а не вывод из схемы: писатель, заглядывающий в `information_schema`, — это
+   * писатель ТЕКУЩЕЙ поставки, а тест обязан вести себя как старый.
+   */
+  release: { readonly needBaselines: boolean },
+): Promise<void> => {
   const init = fixtureInitialization();
   const state = init.state;
   await sql`
@@ -67,11 +78,26 @@ const writePreviousReleaseWorld = async (db: DatabaseConnection): Promise<void> 
     `.execute(db);
   }
   for (const agent of Object.values(state.agents)) {
-    await sql`
-      insert into agents (world_id, agent_id, name, location_id, status, route_id)
-      values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
-              ${agent.locationId}, ${agent.status}, ${agent.routeId})
-    `.execute(db);
+    // Моменты отсчёта нужд перечислены здесь потому, что миграция 0014 сделала их NOT NULL без
+    // умолчания (I04). Пока все добавленные колонки были nullable, этот список мог отставать
+    // молча; первая же обязательная колонка это отставание назвала — тест упал на вставке, а не
+    // на сравнении, и это его работа. Список обязан описывать схему поставки N-1, иначе тест
+    // моделирует поставку, которой не существовало.
+    if (release.needBaselines) {
+      await sql`
+        insert into agents (world_id, agent_id, name, location_id, status, route_id,
+                            hunger_baseline, fatigue_baseline)
+        values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
+                ${agent.locationId}, ${agent.status}, ${agent.routeId},
+                ${agent.needBaseline.hunger}, ${agent.needBaseline.fatigue})
+      `.execute(db);
+    } else {
+      await sql`
+        insert into agents (world_id, agent_id, name, location_id, status, route_id)
+        values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
+                ${agent.locationId}, ${agent.status}, ${agent.routeId})
+      `.execute(db);
+    }
   }
 };
 
@@ -100,7 +126,7 @@ describe('N-1 — обновление с предыдущей поставки'
     // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
     // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
     // а не изобретать свой (найдено исполнением при написании теста).
-    await writePreviousReleaseWorld(db);
+    await writePreviousReleaseWorld(db, { needBaselines: true });
 
     const appliedBefore = await db
       .selectFrom('schema_migrations')
@@ -216,7 +242,7 @@ describe('B1 — восстановление позиций PRNG при обн�
     const previous = migrations.slice(0, backfillIndex);
     await runMigrations({ db, migrations: previous, logger: SILENT });
     await ensureApplicationRoles(db, TEST_ROLE_PASSWORD);
-    await writePreviousReleaseWorld(db);
+    await writePreviousReleaseWorld(db, { needBaselines: false });
 
     // Снимок прежней поставки: позиции жили ТОЛЬКО в нём (до 0009 другого дома у них не было).
     const genesisPositions = { 'agent:rook': 1, 'agent:kite': 1 };
