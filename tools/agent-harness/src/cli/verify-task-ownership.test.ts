@@ -169,6 +169,33 @@ describe('verify-task-ownership.ts (real process)', () => {
     expect(result.stderr).toContain('отсутствует');
   });
 
+  /**
+   * Отказ по состоянию мира не притворяется ошибкой вызова.
+   *
+   * Найдено при подготовке ПЕРВОГО прогона CI: `origin/main` стоит на первом коммите, каталога
+   * задач в нём нет, и шаг падал, печатая «Использование: …» — то есть сообщал оператору, что
+   * тот неверно набрал команду. Команда была верной; проверять было нечего. Диагностика,
+   * отправляющая читателя не туда, дороже отсутствующей: по ней чинят не то.
+   *
+   * Код возврата НЕ изменён: fail-closed остаётся fail-closed. Изменена только диагностика, и
+   * различие между двумя видами отказа теперь наблюдаемо.
+   */
+  it('отсутствие каталога в базе — не ошибка вызова: подсказки по аргументам нет', () => {
+    const root = makeRepo();
+    commitFile(root, 'a.txt', 'x\n');
+    const baseSha = git(['rev-parse', 'HEAD'], root);
+
+    const worldState = runCli(root, ['.claude/tasks', baseSha]);
+    expect(worldState.status).toBe(2);
+    expect(worldState.stderr).not.toContain('Использование:');
+    expect(worldState.stderr).toContain('не объявлено ни одной задачи');
+
+    // Контраст: настоящая ошибка вызова подсказку по аргументам ПЕЧАТАЕТ.
+    const misuse = runCli(root, ['.claude/tasks']);
+    expect(misuse.status).toBe(2);
+    expect(misuse.stderr).toContain('Использование:');
+  });
+
   it('каталог задач в git-объекте пуст — понятная ошибка, код 2', () => {
     const root = makeRepo();
     // .claude/tasks существует на диске, но пуст и никогда не коммитился — то есть его нет и в

@@ -38,6 +38,25 @@ const usageAndExit = (message: string): never => {
   process.exit(2);
 };
 
+/**
+ * Отказ по СОСТОЯНИЮ МИРА, а не по аргументам. Код тот же (fail-closed не ослабляется), но
+ * подсказка по аргументам не печатается.
+ *
+ * Разница не косметическая. Первый прогон CI этого репозитория упёрся сюда: `origin/main` стоит
+ * на первом коммите, каталога задач в нём нет, и шаг падал, печатая «Использование: …» — то есть
+ * сообщал оператору, что тот неверно набрал команду, тогда как команда была верной, а нечего было
+ * проверять. Диагностика, отправляющая читателя не туда, дороже отсутствующей: по ней чинят не то.
+ */
+const cannotVerifyAndExit = (message: string): never => {
+  console.error(message);
+  console.error(
+    'Проверить владение относительно этой базы невозможно: в ней не объявлено ни одной задачи. ' +
+      'Это не нарушение и не ошибка вызова. Так выглядит база, предшествующая появлению harness — ' +
+      'например первый коммит репозитория. Вызывающий (CI) обязан различать этот случай сам.',
+  );
+  process.exit(2);
+};
+
 // `?? usageAndExit(...)` вместо `if (x === undefined) usageAndExit(...)`: тип результата берётся
 // из самого выражения (never исключается из объединения), а не из control-flow narrowing после
 // вызова функции — narrowing по звонку в const-хранимую never-функцию в этой версии TS не
@@ -70,7 +89,7 @@ type LoadedTasks = {
 const loadSingleFile = (path: string): LoadedTasks => {
   const blob = readGitBlob(projectRoot, baseSha, path);
   if (blob.kind === 'absent') {
-    return usageAndExit(`${path} отсутствует в git-объекте ${baseSha}.`);
+    return cannotVerifyAndExit(`${path} отсутствует в git-объекте ${baseSha}.`);
   }
   if (blob.kind === 'error') {
     return usageAndExit(`${path} недоступен из git-объекта ${baseSha}: ${blob.reason}`);
@@ -110,7 +129,7 @@ const loadDirectory = (dir: string): LoadedTasks => {
     return usageAndExit(`${dir}: ${result.reason}`);
   }
   if (result.kind === 'absent') {
-    return usageAndExit(`${dir}: в git-объекте ${baseSha} нет ни одного *.json.`);
+    return cannotVerifyAndExit(`${dir}: в git-объекте ${baseSha} нет ни одного *.json.`);
   }
   return { label: dir, tasks: result.tasks, leadPaths: result.leadPaths };
 };
@@ -123,7 +142,9 @@ const loaded: LoadedTasks =
     ? loadSingleFile(normalizedPath)
     : kind === 'tree'
       ? loadDirectory(normalizedPath)
-      : usageAndExit(`${tasksPathArg} отсутствует в git-объекте ${baseSha} (ни файл, ни каталог).`);
+      : cannotVerifyAndExit(
+          `${tasksPathArg} отсутствует в git-объекте ${baseSha} (ни файл, ни каталог).`,
+        );
 
 const git = (args: readonly string[]): string[] =>
   execFileSync('git', [...args], { cwd: projectRoot, encoding: 'utf8' })
