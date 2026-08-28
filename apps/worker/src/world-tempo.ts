@@ -76,9 +76,16 @@ export const PUBLIC_WORLD_TEMPO: WorldTempo = { worldMinutesPerRealSecond: 4 / 6
 const MS_PER_SECOND = 1000;
 
 export interface WorldHorizonInput {
-  /** Мировое время в момент, от которого отсчитывается темп (старт worker-а). */
+  /**
+   * Мировое время ТОЧКИ ОТСЧЁТА темпа.
+   *
+   * Не «старт worker-а»: точка переставляется, пока миру нечего делать, иначе простой копил бы
+   * неизрасходованное время и тратил его залпом на первое появившееся действие (кредит темпа —
+   * см. `createWorldStep`). Кто и когда переставляет точку — решает оболочка; здесь только
+   * арифметика.
+   */
   readonly startWorldTime: string;
-  /** Сколько РЕАЛЬНОГО времени прошло с этого момента. */
+  /** Сколько РЕАЛЬНОГО времени прошло с этой точки. */
   readonly elapsedRealMs: number;
   readonly tempo: WorldTempo;
 }

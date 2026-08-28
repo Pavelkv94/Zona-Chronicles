@@ -155,3 +155,88 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
     expect(result.worldTime).toBe('2028-04-26T06:40:00.000Z');
   });
 });
+
+/**
+ * Сигнал «миру нечего делать» — отдельно от «шаг ничего не захватил».
+ *
+ * Эти два состояния неразличимы по `claimed`, и их совпадение стоило одной отвергнутой починки
+ * кредита темпа: предикат `claimed === 0` останавливает мир насмерть, потому что ждущее, но
+ * ненаступившее действие выглядит для него пустым миром (`apps/worker/src/world-step.ts`).
+ *
+ * Здесь проверяется именно РАЗЛИЧИЕ, а не наличие поля: три состояния мира подряд, и в каждом
+ * `claimed` одинаков либо бесполезен.
+ */
+describe('nextDueAt — миру есть что делать, даже когда шаг пуст', () => {
+  let migrated: MigratedDatabase;
+  let db: DatabaseConnection;
+
+  beforeAll(async () => {
+    migrated = await createMigratedDatabase('scheduler-next-due');
+    db = migrated.db;
+  });
+
+  afterAll(async () => {
+    await migrated.close();
+  });
+
+  afterEach(async () => {
+    await truncateWorldData(db);
+  });
+
+  it('пустой мир, ждущее действие и исполненное действие различимы', async () => {
+    await initializeWorld(db, fixtureInitialization());
+
+    // 1. Миру нечего делать: расписание пусто.
+    const idle = await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' });
+    expect(idle.claimed).toBe(0);
+    expect(idle.nextDueAt).toBeNull();
+
+    // 2. Действие есть, но не наступило. `claimed` тот же ноль — различие только в сроке.
+    await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
+    const waiting = await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' });
+    expect(waiting.claimed).toBe(0);
+    expect(waiting.nextDueAt).toBe('2028-04-26T06:40:00.000Z');
+
+    // 3. Действие исполнено — миру снова нечего делать.
+    const done = await runWorldTick(db, {
+      worldId: FIXTURE_WORLD_ID,
+      owner: 'worker-1',
+      horizon: '2028-04-26T06:40:00.000Z',
+    });
+    expect(done.claimed).toBe(1);
+    expect(done.nextDueAt).toBeNull();
+  });
+
+  it('срок — БЛИЖАЙШИЙ из ждущих, а не любой', async () => {
+    await initializeWorld(db, fixtureInitialization());
+    await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
+    await executeCommand(db, start(FIXTURE_OTHER_AGENT_ID, 1));
+
+    const waiting = await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' });
+    const dueAts = await db
+      .selectFrom('scheduled_actions')
+      .select('due_at')
+      .orderBy('due_at')
+      .execute();
+    expect(dueAts.length).toBeGreaterThan(1);
+    expect(waiting.nextDueAt).toBe(dueAts[0]!.due_at);
+  });
+
+  /**
+   * Отвергнутое действие ждущим НЕ считается. Иначе мир, у которого в расписании навсегда
+   * осталась отвергнутая строка, никогда бы не признавался простаивающим — и кредит темпа
+   * вернулся бы через заднюю дверь, причём только у миров с историей отказа.
+   */
+  it('отвергнутое действие не держит мир занятым', async () => {
+    await initializeWorld(db, fixtureInitialization());
+    await executeCommand(db, start(FIXTURE_AGENT_ID, 0));
+    await db
+      .updateTable('scheduled_actions')
+      .set({ failed_at: new Date(), failure_code: 'probe' })
+      .where('world_id', '=', FIXTURE_WORLD_ID)
+      .execute();
+
+    const result = await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'worker-1' });
+    expect(result.nextDueAt).toBeNull();
+  });
+});

@@ -159,6 +159,19 @@ export interface TickResult {
   readonly claimed: number;
   readonly executed: readonly CommandExecution[];
   readonly worldTime: string;
+  /**
+   * Срок БЛИЖАЙШЕГО ждущего действия после этого шага, `null` — миру нечего делать.
+   *
+   * Отдельное поле, а не следствие `claimed`: шаг захватывает ноль действий и когда расписание
+   * пусто, и когда действие запланировано, но не наступило. Для оболочки, задающей горизонт, это
+   * противоположные состояния — в первом накопленное реальное время обязано пропасть, во втором
+   * обязано копиться, иначе горизонт не дорастёт до срока никогда. Различить их снаружи можно
+   * было только вторым запросом к расписанию, то есть продублировав здешнее знание.
+   *
+   * Отвергнутые и завершённые действия ждущими не считаются: строка, оставшаяся в расписании
+   * после отказа, иначе держала бы мир «занятым» вечно.
+   */
+  readonly nextDueAt: string | null;
 }
 
 /**
@@ -191,6 +204,12 @@ export interface TickResultSkipped {
   readonly worldTime: string;
   /** `true` — мир в этот момент обрабатывал другой worker, и шаг не выполнялся. */
   readonly skipped: true;
+  /**
+   * ВСЕГДА отсутствует: шаг не выполнялся, и о расписании этот результат не знает ничего.
+   * Отдельное «неизвестно» вместо `null` не случайно — `null` означал бы «нечего делать», то
+   * есть утверждение о мире, которого пропущенный шаг не делал.
+   */
+  readonly nextDueAt?: undefined;
 }
 
 /**
@@ -328,7 +347,21 @@ const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Prom
   }
 
   const after = await loadWorldState(db, options.worldId);
-  return { claimed: claimed.length, executed, worldTime: after?.worldTime ?? state.worldTime };
+  const pending = await db
+    .selectFrom('scheduled_actions')
+    .select('due_at')
+    .where('world_id', '=', options.worldId)
+    .where('completed_at', 'is', null)
+    .where('failed_at', 'is', null)
+    .orderBy('due_at')
+    .limit(1)
+    .executeTakeFirst();
+  return {
+    claimed: claimed.length,
+    executed,
+    worldTime: after?.worldTime ?? state.worldTime,
+    nextDueAt: pending?.due_at ?? null,
+  };
 };
 
 /**

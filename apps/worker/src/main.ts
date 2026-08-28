@@ -164,8 +164,9 @@ async function main(): Promise<void> {
 
   const db = createDatabase(parseDatabaseConnectionUrl(config.databaseUrl));
 
-  // Точка отсчёта темпа — мировое время НА МОМЕНТ СТАРТА. Мир, простоявший ночь, продолжается с
-  // того момента, где остановился, а не проматывает пропущенное залпом (см. `world-step.ts`).
+  // Начальная точка отсчёта темпа — мировое время на момент старта: мир, простоявший ночь,
+  // продолжается с того места, где остановился, а не проматывает пропущенное залпом. Дальше
+  // точку ведёт сам шаг, переставляя её, пока миру нечего делать (см. `world-step.ts`).
   const startState = await loadWorldState(db, config.worldId);
   if (startState === null) {
     throw new Error(
@@ -292,7 +293,14 @@ async function main(): Promise<void> {
             }
           }
         }
-        return { claimed: result.claimed, worldTime: result.worldTime };
+        // `nextDueAt` отдаётся шагу как есть, включая `undefined` пропущенного шага: это три
+        // разных состояния мира, и склеивать их здесь значило бы решать за темп (см.
+        // `world-step.ts` — кредит темпа).
+        return {
+          claimed: result.claimed,
+          worldTime: result.worldTime,
+          nextDueAt: result.nextDueAt,
+        };
       },
       logger: {
         info: (fields, msg) => {
