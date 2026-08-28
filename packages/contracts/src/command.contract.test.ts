@@ -55,7 +55,13 @@ describe('command envelope v1 (§2)', () => {
     // scheduler, и оно идёт тем же путём, что внешняя команда (`03_TECHNICAL_DESIGN` §5).
     // Список остаётся точным, а не «хотя бы содержит»: тип команды не должен появляться в
     // контракте без осознанной правки этого теста.
-    expect([...COMMAND_TYPES]).toEqual(['journey.start', 'journey.complete']);
+    expect([...COMMAND_TYPES]).toEqual([
+      'journey.start',
+      'journey.complete',
+      // I04: пересечение порога нужды. Команду формирует расписание, а не человек — тем же
+      // путём, что `journey.complete`, потому что у мира один способ измениться.
+      'need.threshold.cross',
+    ]);
   });
 
   it('объявляет версию схемы envelope', () => {
@@ -322,5 +328,17 @@ describe('journey.complete (I02B)', () => {
   it('неизвестный тип команды отвергается по дискриминатору', () => {
     const result = decodeCommand({ ...COMPLETE, type: 'journey.abandon' });
     expect('errors' in result).toBe(true);
+  });
+});
+
+describe('каталог команд полон по построению (I04)', () => {
+  it('схема union покрывает каталог типов ровно и в том же порядке', () => {
+    // Тот же страж, что у событий, и по той же причине: до I04 каталог вариантов был обычным
+    // `as const`, а union — вторым списком рядом с ним. Пропущенный вариант не ломал ничего:
+    // команда нового типа просто не принималась бы, молча.
+    const variants = (CommandSchema as { anyOf: readonly { $id?: string }[] }).anyOf;
+    expect(variants.map((variant) => variant.$id)).toEqual(
+      COMMAND_TYPES.map((type) => `zona:command/${type}/1`),
+    );
   });
 });

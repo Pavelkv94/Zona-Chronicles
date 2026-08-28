@@ -27,6 +27,16 @@ export {
 } from './instant.ts';
 
 export {
+  type NeedKind,
+  type NeedLevel,
+  NEED_KINDS,
+  NEED_LEVELS,
+  NeedKindSchema,
+  NeedLevelSchema,
+  needLevelRank,
+} from './need.ts';
+
+export {
   CANONICAL_INSTANT_PATTERN,
   addMinutes,
   formatCanonicalInstant,
@@ -129,6 +139,7 @@ export {
   CommandSchema,
   ENVELOPE_SCHEMA_VERSION,
   JourneyStartPayloadSchema,
+  NeedThresholdCrossPayloadSchema,
   commandFingerprintSource,
   decodeCommand,
   encodeCommand,
@@ -139,6 +150,7 @@ export {
   type JourneyCompletedEvent,
   type JourneyStartedEvent,
   type PlanInvalidatedEvent,
+  type NeedThresholdCrossedEvent,
   type RandomAudit,
   type WorldEvent,
   type WorldEventType,
@@ -147,6 +159,8 @@ export {
   JourneyStartedEventSchema,
   JourneyStartedPayloadSchema,
   PlanInvalidatedEventSchema,
+  NeedThresholdCrossedEventSchema,
+  NeedThresholdCrossedPayloadSchema,
   PlanInvalidatedPayloadSchema,
   RandomAuditSchema,
   WORLD_EVENT_ENVELOPE_KEYS,

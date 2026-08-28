@@ -5,13 +5,15 @@
  * гарантирует результат: handler отвечает `accepted(events)` либо typed rejection, и оба
  * результата одинаково сохраняются в command journal ради идемпотентности.
  *
- * §12 прямо запрещает реализовывать схемы будущих slices заранее, поэтому здесь ровно один
- * тип команды — `journey.start`.
+ * §12 прямо запрещает реализовывать схемы будущих slices заранее, поэтому каталог растёт ровно
+ * по одной итерации: `journey.start` (I01), `journey.complete` (I02B), `need.threshold.cross`
+ * (I04).
  */
 import { type Static, Type } from '@sinclair/typebox';
 import { Value } from '@sinclair/typebox/value';
 import { canonicalize, isCanonicalizationError, requireCanonical } from './canonical-json.ts';
 import { RUNTIME_ID_PREFIXES } from './identifier.ts';
+import { NeedKindSchema, NeedLevelSchema } from './need.ts';
 import {
   InstantSchema,
   NamespacedIdSchema,
@@ -41,7 +43,7 @@ export const ENVELOPE_SCHEMA_VERSION = 1;
  * handler»). Отдельная ветка «домен для scheduled actions» дала бы второй способ менять мир —
  * с собственными правилами, собственной идемпотентностью и собственными отказами.
  */
-export const COMMAND_TYPES = ['journey.start', 'journey.complete'] as const;
+export const COMMAND_TYPES = ['journey.start', 'journey.complete', 'need.threshold.cross'] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -154,9 +156,33 @@ export const JourneyCompletePayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `need.threshold.cross`: намерение зафиксировать пересечение порога нужды (I04).
+ *
+ * Команду формирует не человек, а расписание — тем же путём, что `journey.complete`: у мира
+ * один способ измениться, и запланированное пересечение обязано пройти через `decide` со своими
+ * предусловиями, а не менять состояние в обход.
+ *
+ * `to_level` — не приказ, а ОЖИДАНИЕ, собранное в момент планирования. `decide` вычисляет
+ * уровень заново и отвергает команду, если он не совпал: агент мог поесть, пока действие ждало
+ * своей очереди, и тогда запланированное пересечение попросту не состоялось. Без этого поля
+ * различить «порог перейден» и «действие устарело» было бы нечем.
+ */
+export const NeedThresholdCrossPayloadSchema = Type.Object(
+  {
+    need: NeedKindSchema,
+    to_level: NeedLevelSchema,
+  },
+  {
+    additionalProperties: false,
+    description: 'Нужда и ожидаемый уровень; несовпадение уровня — отказ, а не молчаливый пропуск.',
+  },
+);
+
 const COMMAND_PAYLOAD_SCHEMAS = {
   'journey.start': JourneyStartPayloadSchema,
   'journey.complete': JourneyCompletePayloadSchema,
+  'need.threshold.cross': NeedThresholdCrossPayloadSchema,
 } as const;
 
 const commandEnvelopeFields = {
@@ -218,26 +244,46 @@ function commandVariant<T extends CommandType>(type: T) {
 
 export const JourneyStartCommandSchema = commandVariant('journey.start');
 export const JourneyCompleteCommandSchema = commandVariant('journey.complete');
+export const NeedThresholdCrossCommandSchema = commandVariant('need.threshold.cross');
 
+/**
+ * Каталог вариантов, ПОЛНЫЙ по построению — тот же приём и то же основание, что у
+ * `VARIANT_SCHEMAS` событий: `satisfies` требует ключ на каждый тип из `COMMAND_TYPES` и при
+ * этом сохраняет точные типы значений, без которых `Static` выродился бы в `unknown`.
+ *
+ * До I04 каталог был обычным `as const`, и пропущенный вариант ничего не ломал — ровно тот
+ * дефект, который проба Gate A нашла у событий (`world-event.ts`). Здесь он был бы тише: команда
+ * неизвестного типа не выпадает из ленты, она молча не принимается.
+ */
 const COMMAND_VARIANT_SCHEMAS = {
   'journey.start': JourneyStartCommandSchema,
   'journey.complete': JourneyCompleteCommandSchema,
-} as const;
+  'need.threshold.cross': NeedThresholdCrossCommandSchema,
+} as const satisfies Readonly<Record<CommandType, unknown>>;
 
-export const CommandSchema = Type.Union([JourneyStartCommandSchema, JourneyCompleteCommandSchema], {
-  $id: 'zona:command/1',
-  description: 'Command envelope v1, дискриминированный по type (§2, §11).',
-});
+export const CommandSchema = Type.Union(
+  // Порядок вариантов задан каталогом, а не вторым списком: два списка расходятся молча.
+  COMMAND_TYPES.map((type) => COMMAND_VARIANT_SCHEMAS[type]),
+  {
+    $id: 'zona:command/1',
+    description: 'Command envelope v1, дискриминированный по type (§2, §11).',
+  },
+);
 
 export type JourneyStartCommand = Static<typeof JourneyStartCommandSchema>;
 export type JourneyCompleteCommand = Static<typeof JourneyCompleteCommandSchema>;
+export type NeedThresholdCrossCommand = Static<typeof NeedThresholdCrossCommandSchema>;
 
 /**
  * Перечисление вариантов, а не `Static<typeof CommandSchema>` — по тому же доводу, что у
  * `WorldEvent`: `Static` от `Type.Union` «плющит» дискриминированный union, и `payload`
  * перестаёт сужаться по `type`.
  */
-export type Command = JourneyStartCommand | JourneyCompleteCommand;
+type CommandVariants = {
+  [Type in CommandType]: Static<(typeof COMMAND_VARIANT_SCHEMAS)[Type]>;
+};
+
+export type Command = CommandVariants[CommandType];
 
 /**
  * Валидирует и нормализует команду. Возвращает типизированные ошибки, а не бросает: отказ

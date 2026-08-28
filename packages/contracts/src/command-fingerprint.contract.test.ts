@@ -7,10 +7,14 @@ import {
   COMMAND_FINGERPRINT_EXCLUDED_KEYS,
   COMMAND_FINGERPRINT_KEYS,
   commandFingerprintSource,
-  type Command,
+  type JourneyStartCommand,
 } from './command.ts';
 
-const command = (overrides: Partial<Command> = {}): Command => ({
+// Именно `journey.start`, а не `Command`: `Partial<Command>` над дискриминированным union
+// разрешает подменить `type`, не подменив `payload`, и собранный объект перестаёт быть хоть
+// каким-то вариантом команды. Отпечаток проверяется на одном варианте — состав полей у всех
+// вариантов один и тот же, он задан envelope.
+const command = (overrides: Partial<JourneyStartCommand> = {}): JourneyStartCommand => ({
   command_id: 'cmd_01ARZ3NDEKTSV4RRFFQ69G5FAV',
   world_id: 'world:prototype',
   type: 'journey.start',
@@ -57,8 +61,8 @@ describe('состав отпечатка команды', () => {
     ['expected_world_version', { expected_world_version: 7 }],
     ['caused_by_event_id', { caused_by_event_id: 'evt_01ARZ3NDEKTSV4RRFFQ69G5FAV' }],
   ])('семантическое поле %s влияет на отпечаток', (_label, overrides) => {
-    expect(commandFingerprintSource(command(overrides as Partial<Command>))).not.toEqual(
-      commandFingerprintSource(command()),
-    );
+    expect(
+      commandFingerprintSource(command(overrides as Partial<JourneyStartCommand>)),
+    ).not.toEqual(commandFingerprintSource(command()));
   });
 });

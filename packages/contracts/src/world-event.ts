@@ -13,6 +13,7 @@ import { type Static, Type } from '@sinclair/typebox';
 import { requireCanonical } from './canonical-json.ts';
 import { ENVELOPE_SCHEMA_VERSION } from './command.ts';
 import { RUNTIME_ID_PREFIXES } from './identifier.ts';
+import { NeedKindSchema, NeedLevelSchema } from './need.ts';
 import {
   DottedNameSchema,
   DrawCountSchema,
@@ -42,6 +43,7 @@ export const WORLD_EVENT_TYPES = [
   'journey.started',
   'journey.completed',
   'plan.invalidated',
+  'need.threshold.crossed',
 ] as const;
 
 export type WorldEventType = (typeof WORLD_EVENT_TYPES)[number];
@@ -199,10 +201,46 @@ export const PlanInvalidatedPayloadSchema = Type.Object(
   { additionalProperties: false, description: 'План и невыполненное предусловие.' },
 );
 
+/**
+ * `need.threshold.crossed`: нужда агента перешла через порог (I04, §5).
+ *
+ * Значения нужды в payload НЕТ намеренно. Значение — производная величина, вычисляемая из
+ * момента отсчёта и коэффициентов; записанное в факт, оно стало бы измерением, устаревающим в
+ * следующий момент. Фактом является переход, и он описан парой уровней.
+ *
+ * `from_level` не дублирует envelope и не дублирует состояние: он делает факт самодостаточным
+ * для летописи («был спокоен — стал голоден») и задаёт направление перехода без отдельного поля
+ * `direction`, которое пришлось бы держать согласованным с парой уровней.
+ *
+ * `next_threshold_at` — момент СЛЕДУЮЩЕГО пересечения либо `null`, если следующего нет (уровень
+ * крайний). Это предсказание, а не факт, и оно здесь по тому же основанию, что
+ * `expected_arrival` у `journey.started`: расписание выводится из журнала чистой функцией
+ * `evolve`, у которой нет доступа к коэффициентам ruleset. Без этого поля пересимуляция не
+ * смогла бы восстановить расписание, и его пришлось бы держать вторым механизмом, способным
+ * молча разойтись с историей.
+ */
+export const NeedThresholdCrossedPayloadSchema = Type.Object(
+  {
+    need: NeedKindSchema,
+    from_level: NeedLevelSchema,
+    to_level: NeedLevelSchema,
+    next_threshold_at: Type.Union([InstantSchema, Type.Null()], {
+      description: 'Момент следующего пересечения; null — следующего порога нет.',
+    }),
+  },
+  {
+    additionalProperties: false,
+    description:
+      'Переход нужды через порог. Агент — actor_ids, момент перехода — world_time: ' +
+      '§4 запрещает дублировать их в payload.',
+  },
+);
+
 const PAYLOAD_SCHEMAS = {
   'journey.started': JourneyStartedPayloadSchema,
   'journey.completed': JourneyCompletedPayloadSchema,
   'plan.invalidated': PlanInvalidatedPayloadSchema,
+  'need.threshold.crossed': NeedThresholdCrossedPayloadSchema,
 } as const;
 
 /** Моменты внутри payload, которые декодер обязан привести к канонической форме. */
@@ -210,6 +248,9 @@ const PAYLOAD_INSTANT_FIELDS: Readonly<Record<WorldEventType, readonly string[]>
   'journey.started': ['expected_arrival'],
   'journey.completed': [],
   'plan.invalidated': [],
+  // `null` допустим и означает «следующего порога нет»; нормализация обязана его пропускать,
+  // а не пытаться разобрать как момент.
+  'need.threshold.crossed': ['next_threshold_at'],
 };
 
 function eventVariant<T extends WorldEventType>(type: T) {
@@ -230,6 +271,7 @@ function eventVariant<T extends WorldEventType>(type: T) {
 export const JourneyStartedEventSchema = eventVariant('journey.started');
 export const JourneyCompletedEventSchema = eventVariant('journey.completed');
 export const PlanInvalidatedEventSchema = eventVariant('plan.invalidated');
+export const NeedThresholdCrossedEventSchema = eventVariant('need.threshold.crossed');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению.
@@ -242,6 +284,7 @@ const VARIANT_SCHEMAS = {
   'journey.started': JourneyStartedEventSchema,
   'journey.completed': JourneyCompletedEventSchema,
   'plan.invalidated': PlanInvalidatedEventSchema,
+  'need.threshold.crossed': NeedThresholdCrossedEventSchema,
 } as const satisfies Readonly<Record<WorldEventType, unknown>>;
 
 export const WorldEventSchema = Type.Union(
@@ -259,6 +302,7 @@ export type RandomAudit = Static<typeof RandomAuditSchema>;
 export type JourneyStartedEvent = Static<typeof JourneyStartedEventSchema>;
 export type JourneyCompletedEvent = Static<typeof JourneyCompletedEventSchema>;
 export type PlanInvalidatedEvent = Static<typeof PlanInvalidatedEventSchema>;
+export type NeedThresholdCrossedEvent = Static<typeof NeedThresholdCrossedEventSchema>;
 
 /**
  * Закрытый union canonical events v1 — ВЫВЕДЕННЫЙ из каталога, а не выписанный рядом с ним.
@@ -336,6 +380,10 @@ export function decodeWorldEvent(input: unknown): ValidationResult<WorldEvent> {
   }
 
   for (const field of PAYLOAD_INSTANT_FIELDS[type]) {
+    // `null` — законное значение поля-момента там, где схема его допускает («следующего порога
+    // нет»). Нормализовать нечего, и попытка разобрать его как строку дала бы отказ по схеме,
+    // которую значение на самом деле проходит.
+    if (payload[field] === null) continue;
     const result = normalizeInstantField(`/payload/${field}`, payload[field] as string);
     if (isValidationIssue(result)) {
       invariantIssues.push(result);

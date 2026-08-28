@@ -65,6 +65,9 @@ describe('world event envelope v1 (§3)', () => {
       'journey.started',
       'journey.completed',
       'plan.invalidated',
+      // I04: нужда перешла порог. Значение нужды фактом не является — оно вычисляется; фактом
+      // является переход, и он происходит один раз (07_MVP_MECHANICS_SPEC §5, решение I04).
+      'need.threshold.crossed',
     ]);
   });
 
@@ -409,6 +412,8 @@ describe('A8: union пригоден для исчерпывающей пров�
         return 'completed';
       case 'plan.invalidated':
         return 'invalidated';
+      case 'need.threshold.crossed':
+        return 'need-crossed';
       default:
         return assertNeverWorldEvent(event);
     }
@@ -421,8 +426,19 @@ describe('A8: union пригоден для исчерпывающей пров�
       type: 'plan.invalidated',
       payload: { plan_id: 'plan:p1', precondition_type: 'agent.is_on_route' },
     });
+    const crossed = decoded({
+      ...VALID_EVENT,
+      type: 'need.threshold.crossed',
+      payload: {
+        need: 'hunger',
+        from_level: 'normal',
+        to_level: 'warning',
+        next_threshold_at: '2034-05-17T22:00:00.000Z',
+      },
+    });
     expect(withAllBranches(started)).toBe('started');
     expect(withAllBranches(invalidated)).toBe('invalidated');
+    expect(withAllBranches(crossed)).toBe('need-crossed');
   });
 
   it('неисчерпывающий switch падает в runtime, а не возвращает undefined', () => {
@@ -460,5 +476,68 @@ describe('WorldEventSchema пригодна как JSON Schema', () => {
     expect(Value.Check(WorldEventSchema, { ...VALID_EVENT, type: 'journey.completed' })).toBe(
       false,
     );
+  });
+});
+
+describe('need.threshold.crossed (I04)', () => {
+  const crossing = (payload: Record<string, unknown>) => ({
+    ...VALID_EVENT,
+    type: 'need.threshold.crossed',
+    payload,
+  });
+
+  it('момент следующего порога нормализуется к канонической форме', () => {
+    const event = decoded(
+      crossing({
+        need: 'hunger',
+        from_level: 'normal',
+        to_level: 'warning',
+        next_threshold_at: '2034-05-17T23:00:00+01:00',
+      }),
+    );
+    if (event.type !== 'need.threshold.crossed')
+      throw new Error('ожидалось need.threshold.crossed');
+    expect(event.payload.next_threshold_at).toBe('2034-05-17T22:00:00.000Z');
+  });
+
+  it('null означает «следующего порога нет» и проходит нормализацию как значение', () => {
+    // Регресс: нормализатор моментов payload разбирал поле безусловно, поэтому законный `null`
+    // отвергался как невалидный момент — событие, которое схема принимает, декодер отвергал.
+    const event = decoded(
+      crossing({
+        need: 'hunger',
+        from_level: 'warning',
+        to_level: 'critical',
+        next_threshold_at: null,
+      }),
+    );
+    if (event.type !== 'need.threshold.crossed')
+      throw new Error('ожидалось need.threshold.crossed');
+    expect(event.payload.next_threshold_at).toBeNull();
+  });
+
+  it('значение нужды в payload не принимается: факт — переход, а не измерение', () => {
+    const result = decodeWorldEvent(
+      crossing({
+        need: 'hunger',
+        from_level: 'normal',
+        to_level: 'warning',
+        next_threshold_at: null,
+        value: 0.46,
+      }),
+    );
+    expect(isValidationFailure(result)).toBe(true);
+  });
+
+  it('неизвестный вид нужды отвергается словарём, а не свободной строкой', () => {
+    const result = decodeWorldEvent(
+      crossing({
+        need: 'thirst',
+        from_level: 'normal',
+        to_level: 'warning',
+        next_threshold_at: null,
+      }),
+    );
+    expect(isValidationFailure(result)).toBe(true);
   });
 });
