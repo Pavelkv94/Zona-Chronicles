@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_WORLD_TEMPO,
+  DEMO_WORLD_TEMPO,
   PUBLIC_WORLD_TEMPO,
   WORLD_TEMPO_VERSION,
   worldHorizon,
@@ -113,10 +114,18 @@ describe('D2: темп версионирован и отделён от дет�
   it('нормативная публичная скорость названа и отличается от dev-умолчания известным образом', () => {
     // 07_MVP_MECHANICS_SPEC: «1 реальная минута = 4 игровые минуты».
     expect(PUBLIC_WORLD_TEMPO.worldMinutesPerRealSecond * 60).toBeCloseTo(4, 10);
-    // Dev-умолчание быстрее ровно в 15 раз. Число здесь затем, чтобы его изменение было
-    // осознанным изменением ТЕСТА, а не побочным эффектом правки константы.
+    /**
+     * Утверждение УСИЛЕНО 2026-08-29, а не ослаблено: здесь стояло «умолчание быстрее ровно в 15
+     * раз», то есть тест фиксировал РАЗМЕР расхождения кода со спецификацией. Расхождения больше
+     * нет — умолчание равно нормативу, — и тест теперь охраняет совпадение, а не величину
+     * разрыва. Изменение поведения записано в `PLAN.md` §10.3.
+     */
+    expect(DEFAULT_WORLD_TEMPO.worldMinutesPerRealSecond).toBe(
+      PUBLIC_WORLD_TEMPO.worldMinutesPerRealSecond,
+    );
+    // Быстрый темп никуда не делся, но он ЗАЯВЛЯЕТСЯ, а не подразумевается.
     expect(
-      DEFAULT_WORLD_TEMPO.worldMinutesPerRealSecond / PUBLIC_WORLD_TEMPO.worldMinutesPerRealSecond,
+      DEMO_WORLD_TEMPO.worldMinutesPerRealSecond / PUBLIC_WORLD_TEMPO.worldMinutesPerRealSecond,
     ).toBeCloseTo(15, 10);
   });
 

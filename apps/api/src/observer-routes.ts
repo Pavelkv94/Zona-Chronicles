@@ -23,6 +23,7 @@ import {
   ObserverEventSchema,
   ObserverStreamResetSchema,
   ObserverWorldSnapshotSchema,
+  ProjectionSequenceSchema,
   decodeObserverEvent,
   isValidationFailure,
   type ObserverEvent,
@@ -42,10 +43,19 @@ const EventPageQuerySchema = Type.Object(
   { additionalProperties: false },
 );
 
+/**
+ * Ответ страницы ленты. Форма маршрута, но правило поля — из контракта, а не переписанное рядом.
+ *
+ * Здесь стояло `Type.Integer({ minimum: 1 })` — копия `PROJECTION_SEQUENCE_UNIT.min`, сделанная
+ * руками. Копия не ломается, когда расходится с оригиналом: она просто начинает описывать другое.
+ * Замечено при закрытии MAJOR-4 — то же самое поле в замороженной схеме сброса `null` не
+ * допускало, а здесь допускало всегда, и два описания одного поля жили рядом, не зная друг о
+ * друге.
+ */
 const EventPageResponseSchema = Type.Object(
   {
     events: Type.Array(ObserverEventSchema),
-    earliest_available_sequence: Type.Union([Type.Integer({ minimum: 1 }), Type.Null()]),
+    earliest_available_sequence: Type.Union([ProjectionSequenceSchema, Type.Null()]),
   },
   { additionalProperties: false },
 );
@@ -264,11 +274,20 @@ export function registerObserverRoutes(app: FastifyInstance, options: ObserverRo
 
     // Первая же выборка отвечает на вопрос, доступна ли запрошенная позиция (D10).
     const first = await observer.loadEvents(worldId, { after: cursor, limit: MAX_EVENT_PAGE });
-    if (
-      first.earliestAvailableSequence !== null &&
-      cursor > 0 &&
-      cursor + 1 < first.earliestAvailableSequence
-    ) {
+    /**
+     * Отставание клиента — это ДВА случая, а не один, и второй раньше выпадал (MAJOR-4).
+     *
+     * `earliestAvailableSequence === null` означает пустую проекцию: доступного нет вовсе.
+     * Клиент с позицией отстал настолько, что предложить ему нечего, — то есть сброс нужен тем
+     * более. Прежнее условие требовало непустоты и потому молчало именно там, где сказать было
+     * обязательно.
+     *
+     * `cursor > 0` остаётся в обоих случаях: новый зритель на пустом мире не отстал ни от чего
+     * и обязан получить открытый поток, а не требование перечитать снимок, которого ещё нет.
+     */
+    const behindWindow =
+      first.earliestAvailableSequence === null || cursor + 1 < first.earliestAvailableSequence;
+    if (cursor > 0 && behindWindow) {
       // Клиент отстал за пределы окна: между его позицией и первой доступной есть дыра. Молча
       // отдать ленту с этого места значило бы, что зритель не узнает о пропуске.
       // Тип контракта, а не свободный объект: поле, разошедшееся со схемой, обязано ломать

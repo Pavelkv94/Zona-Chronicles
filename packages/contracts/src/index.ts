@@ -110,6 +110,7 @@ export {
   DottedNameSchema,
   InstantSchema,
   NamespacedIdSchema,
+  ProjectionSequenceSchema,
   SEMANTIC_VERSION_SOURCE,
   SemanticVersionSchema,
   SequenceSchema,

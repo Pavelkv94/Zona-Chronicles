@@ -265,6 +265,82 @@ describe('D9/D10: возобновление потока', () => {
   });
 
   /**
+   * MAJOR-4 независимой проверки тестов, закрыт по CR-I03-01 (одобрен владельцем 2026-08-29).
+   *
+   * ПУСТАЯ проекция — не то же самое, что «клиент не отстал». Проекция бывает пустой законно:
+   * её только что пересобрали, или она ещё не дошла до генезиса. Клиент, пришедший с
+   * `Last-Event-ID: 42`, в этот момент отстал НАСТОЛЬКО, что доступного для него нет вовсе, и
+   * это ровно тот случай, ради которого существует `reset_required`.
+   *
+   * До починки условие требовало `earliestAvailableSequence !== null`, поэтому здесь не
+   * срабатывало ничего: поток открывался и молчал. Экран показывал «Поток: подключён» и не
+   * обновлялся, а зритель не мог отличить это от мира, в котором ничего не происходит.
+   *
+   * Убрать проверку на `null` было нельзя без change request: `earliest_available_sequence` был
+   * объявлен `ProjectionSequenceSchema` с `min = 1`, и состояния «доступного нет» в допустимом
+   * множестве не существовало — ни `0`, ни `null` схему не проходили.
+   */
+  it('пустая проекция при last_event_id > 0 даёт reset_required, а не молчащий поток', async () => {
+    const app = server(
+      port({
+        loadEvents: async () =>
+          await Promise.resolve({ events: [], earliestAvailableSequence: null }),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream?last_event_id=42',
+      payloadAsStream: true,
+    });
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      response.stream().on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.stream().on('end', () => resolve());
+    });
+
+    const text = Buffer.concat(chunks).toString('utf8');
+    expect(text).toContain(`event: ${OBSERVER_STREAM_EVENT_NAMES.reset}`);
+    expect(text).toContain('"reason":"reset_required"');
+    // `null`, а не `0`: отсутствие доступного номера — это отсутствие, а не нулевой номер.
+    expect(text).toContain('"earliest_available_sequence":null');
+    expect(text).not.toContain(`event: ${OBSERVER_STREAM_EVENT_NAMES.event}`);
+
+    await app.close();
+  });
+
+  /**
+   * Обратная сторона той же границы: пустая проекция и клиент БЕЗ позиции — это не сброс.
+   * Новый зритель на пустом мире обязан получить открытый поток и ждать первых событий, а не
+   * требование перечитать снимок, которого ещё нет.
+   */
+  it('пустая проекция без last_event_id сбросом не является', async () => {
+    const app = server(
+      port({
+        loadEvents: async () =>
+          await Promise.resolve({ events: [], earliestAvailableSequence: null }),
+      }),
+    );
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/stream',
+      payloadAsStream: true,
+    });
+
+    const chunks: Buffer[] = [];
+    await new Promise<void>((resolve) => {
+      response.stream().on('data', (chunk: Buffer) => chunks.push(chunk));
+      setTimeout(() => response.stream().destroy(), 300);
+      response.stream().on('close', () => resolve());
+    });
+
+    expect(Buffer.concat(chunks).toString('utf8')).not.toContain('"reason":"reset_required"');
+    await app.close();
+  });
+
+  /**
    * ГРАНИЦА D10, а не только явная дыра. Условие сброса — `cursor + 1 < earliest`, и обе его
    * стороны наблюдаемы: сдвиг на единицу в одну сторону даёт ЛОЖНЫЕ сбросы исправным клиентам
    * (лента перезапрашивается на каждом переподключении), в другую — МОЛЧАЛИВУЮ потерю ровно

@@ -151,8 +151,19 @@ export const ObserverWorldSnapshotSchema = Type.Object(
 export const ObserverStreamResetSchema = Type.Object(
   {
     reason: Type.Literal('reset_required'),
-    /** С какой позиции проекция ещё может отдавать события. */
-    earliest_available_sequence: ProjectionSequenceSchema,
+    /**
+     * С какой позиции проекция ещё может отдавать события; `null` — доступного нет ВОВСЕ.
+     *
+     * `null`, а не `0`, и это CR-I03-01 (одобрен владельцем 2026-08-29), а не вкусовщина.
+     * `PROJECTION_SEQUENCE_UNIT.min = 1`, поэтому нуля в допустимом множестве нет; но главное —
+     * тот же номер участвует в курсоре SSE и в снимке, и «нулевой шаг проекции» получил бы два
+     * разных смысла в разных полях. Отсутствие кодируется отсутствием.
+     *
+     * Состояние законное, а не аварийное: проекцию только что пересобрали, либо она ещё не
+     * дошла до генезиса. До этой правки контракт его выразить не мог, и маршрут молчал —
+     * зритель видел подключённый поток без единого кадра (MAJOR-4).
+     */
+    earliest_available_sequence: Type.Union([ProjectionSequenceSchema, Type.Null()]),
   },
   { $id: 'zona:observer-stream-reset/1', additionalProperties: false },
 );
