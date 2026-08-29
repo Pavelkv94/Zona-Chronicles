@@ -2,6 +2,7 @@ import type { WorldEvent } from '@zona/contracts';
 import { describe, expect, it } from 'vitest';
 import { fixtureWorldState, fixtureNeedBaseline } from './__fixtures__/world.ts';
 import { evolve } from './evolve.ts';
+import { SCHEDULED_ACTION_PRIORITY, needThresholdActionId } from './state.ts';
 
 function journeyStartedEvent(overrides: Partial<WorldEvent> = {}): WorldEvent {
   return {
@@ -215,5 +216,74 @@ describe('M7 — снятие действия из расписания по п
     });
 
     expect(Object.keys(next.scheduledActions)).toEqual([]);
+  });
+});
+
+describe('evolve: need.threshold.crossed (I04)', () => {
+  const FIRED_AT = '2028-04-26T13:12:00.000Z';
+  const NEXT_AT = '2028-04-26T18:00:00.000Z';
+
+  const crossing = (nextAt: string | null): WorldEvent =>
+    ({
+      event_id: 'evt_crossed',
+      world_id: 'world:prototype',
+      sequence: 1,
+      world_time: FIRED_AT,
+      recorded_at: '2026-08-29T00:00:00.000Z',
+      type: 'need.threshold.crossed',
+      schema_version: 1,
+      rules_version: '0.2.0',
+      content_version: '0.1.0',
+      actor_ids: ['agent:rook'],
+      subject_ids: [],
+      location_id: 'loc:quiet-yard',
+      correlation_id: 'corr_crossed',
+      caused_by: [],
+      command_id: 'cmd_crossed',
+      random_audit: null,
+      payload: {
+        need: 'fatigue',
+        from_level: 'normal',
+        to_level: 'warning',
+        next_threshold_at: nextAt,
+      },
+    }) as unknown as WorldEvent;
+
+  const stateWithPendingCrossing = () =>
+    fixtureWorldState({
+      scheduledActions: {
+        [needThresholdActionId('agent:rook', 'fatigue', FIRED_AT)]: {
+          id: needThresholdActionId('agent:rook', 'fatigue', FIRED_AT),
+          kind: 'need.threshold',
+          dueAt: FIRED_AT,
+          priority: SCHEDULED_ACTION_PRIORITY['need.threshold'],
+          entityId: 'agent:rook',
+          need: 'fatigue',
+          toLevel: 'warning',
+        },
+      },
+    });
+
+  it('снимает выполненное пересечение и ставит следующее', () => {
+    // Снятие проверяется ЗДЕСЬ, а не только на живом мире: в базе выполненное действие на время
+    // аренды невидимо очереди, поэтому мир тридцать секунд выглядит исправным даже когда
+    // расписание с журналом уже разошлось. Проба мутацией это и показала.
+    const next = evolve(stateWithPendingCrossing(), crossing(NEXT_AT));
+    expect(Object.keys(next.scheduledActions)).toEqual([
+      needThresholdActionId('agent:rook', 'fatigue', NEXT_AT),
+    ]);
+  });
+
+  it('на крайнем уровне следующего действия не появляется: событий больше не будет', () => {
+    const next = evolve(stateWithPendingCrossing(), crossing(null));
+    expect(Object.keys(next.scheduledActions)).toEqual([]);
+  });
+
+  it('момент отсчёта нужды не меняется: агент не поел, он просто дольше не ел', () => {
+    const before = stateWithPendingCrossing();
+    const next = evolve(before, crossing(NEXT_AT));
+    expect(next.agents['agent:rook']?.needBaseline).toStrictEqual(
+      before.agents['agent:rook']?.needBaseline,
+    );
   });
 });
