@@ -52,6 +52,7 @@ export const TRANSACTION_STEPS = [
   'attempt-recorded',
   'event-inserted',
   'schedule-updated',
+  'items-updated',
   'agent-updated',
   'world-updated',
   'outbox-inserted',
@@ -77,6 +78,7 @@ export const ACCEPTED_PATH_STEPS: readonly TransactionStep[] = [
   'world-locked',
   'event-inserted',
   'schedule-updated',
+  'items-updated',
   'agent-updated',
   'world-updated',
   'outbox-inserted',
@@ -492,6 +494,7 @@ export const executeCommand = async (
             route_id: action.kind === 'journey.complete' ? action.routeId : null,
             need: action.kind === 'need.threshold' ? action.need : null,
             to_level: action.kind === 'need.threshold' ? action.toLevel : null,
+            item_id: action.kind === 'agent.eat' ? action.itemId : null,
             lease_owner: null,
             lease_until: null,
             completed_at: null,
@@ -508,6 +511,37 @@ export const executeCommand = async (
           .execute();
       }
       await afterStep('schedule-updated');
+
+      /**
+       * Предметы: сток УДАЛЯЕТ строку, источник вставляет (I04).
+       *
+       * Обе стороны здесь, хотя источник в этой итерации один — генезис, и через команду
+       * предметы пока не появляются. Симметрия не про запас: сток без источника пишется как
+       * «удалить всё, чего не стало», и ровно в этом виде он молча удалил бы предмет,
+       * появившийся по будущему правилу. Пусть лучше обе ветки существуют и обе покрыты сверкой
+       * checksum перечитанного состояния, чем одна ждёт, когда о ней вспомнят.
+       */
+      for (const item of Object.values(nextState.items)) {
+        if (state.items[item.id] !== undefined) continue;
+        await trx
+          .insertInto('items')
+          .values({
+            world_id: command.world_id,
+            item_id: item.id,
+            kind: item.kind,
+            owner_id: item.ownerId,
+          })
+          .execute();
+      }
+      for (const item of Object.values(state.items)) {
+        if (nextState.items[item.id] !== undefined) continue;
+        await trx
+          .deleteFrom('items')
+          .where('world_id', '=', command.world_id)
+          .where('item_id', '=', item.id)
+          .execute();
+      }
+      await afterStep('items-updated');
 
       for (const agent of changedAgents(state, nextState)) {
         await trx

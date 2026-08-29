@@ -48,6 +48,7 @@ export function fixtureWorldState(overrides: Partial<WorldState> = {}): WorldSta
         travelMinutes: 40,
       },
     },
+    items: {},
     scheduledActions: {},
     ...overrides,
   };

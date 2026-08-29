@@ -6,6 +6,7 @@
  * вокруг чистого ядра, а не второе место, где живут правила.
  */
 import {
+  ITEM_KINDS,
   NEED_KINDS,
   NEED_LEVELS,
   compareByCodePoint,
@@ -13,6 +14,7 @@ import {
   isValidationFailure,
   requireCanonical,
   requireChecksum,
+  type ItemKind,
   type NeedKind,
   type NeedLevel,
   type WorldEvent,
@@ -20,6 +22,7 @@ import {
 import { sql } from 'kysely';
 import type {
   AgentState,
+  ItemState,
   RouteDefinition,
   RulesetVersions,
   ScheduledAction,
@@ -157,6 +160,21 @@ export const initializeWorld = async (
         .execute();
     }
 
+    const items = Object.values(state.items);
+    if (items.length > 0) {
+      await trx
+        .insertInto('items')
+        .values(
+          items.map((item) => ({
+            world_id: state.worldId,
+            item_id: item.id,
+            kind: item.kind,
+            owner_id: item.ownerId,
+          })),
+        )
+        .execute();
+    }
+
     /**
      * Расписание генезиса записывается ВМЕСТЕ с миром (I04).
      *
@@ -251,7 +269,7 @@ const readWorldState = async (
     .executeTakeFirst();
   if (world === undefined) return null;
 
-  const [agentRows, routeRows, actionRows] = await Promise.all([
+  const [agentRows, routeRows, itemRows, actionRows] = await Promise.all([
     db
       .selectFrom('agents')
       .selectAll()
@@ -264,6 +282,7 @@ const readWorldState = async (
       .where('world_id', '=', worldId)
       .orderBy('route_id')
       .execute(),
+    db.selectFrom('items').selectAll().where('world_id', '=', worldId).orderBy('item_id').execute(),
     // Каноническим является только НЕЗАВЕРШЁННОЕ расписание: выполненные строки остаются в
     // таблице как история обработки (ACCEPTANCE C2) и в состояние мира не входят.
     db
@@ -296,6 +315,15 @@ const readWorldState = async (
     };
   }
 
+  const items: Record<string, ItemState> = {};
+  for (const row of itemRows) {
+    items[row.item_id] = {
+      id: row.item_id,
+      kind: itemKindFromRow(row.kind, row.item_id),
+      ownerId: row.owner_id,
+    };
+  }
+
   const scheduledActions: Record<string, ScheduledAction> = {};
   for (const row of actionRows) {
     scheduledActions[row.action_id] = scheduledActionFromRow(row);
@@ -308,6 +336,7 @@ const readWorldState = async (
     sequence: requireSafeInteger(world.last_sequence, `worlds.last_sequence(${worldId})`),
     agents,
     routes,
+    items,
     scheduledActions,
   };
 };
@@ -637,13 +666,14 @@ export const loadWorldEvents = async (
  */
 const scheduledActionFromRow = (row: {
   readonly action_id: string;
-  readonly kind: 'journey.complete' | 'need.threshold';
+  readonly kind: 'journey.complete' | 'need.threshold' | 'agent.eat';
   readonly due_at: string;
   readonly priority: number;
   readonly entity_id: string;
   readonly route_id: string | null;
   readonly need: string | null;
   readonly to_level: string | null;
+  readonly item_id: string | null;
 }): ScheduledAction => {
   const base = {
     id: row.action_id,
@@ -657,6 +687,13 @@ const scheduledActionFromRow = (row: {
       throw new Error(`scheduled_actions.${row.action_id}: завершение пути без маршрута`);
     }
     return { ...base, kind: 'journey.complete', routeId: row.route_id };
+  }
+
+  if (row.kind === 'agent.eat') {
+    if (row.item_id === null) {
+      throw new Error(`scheduled_actions.${row.action_id}: приём пищи без предмета`);
+    }
+    return { ...base, kind: 'agent.eat', itemId: row.item_id };
   }
 
   if (row.need === null || row.to_level === null) {
@@ -700,4 +737,12 @@ export const loadObservedWorldTime = async (
   const observed = row.observed_world_time;
   if (observed === null || observed === '') return row.world_time;
   return compareByCodePoint(observed, row.world_time) < 0 ? row.world_time : observed;
+};
+
+/** Вид предмета из строки. Неизвестный вид — громкий сбой, а не молчаливое «наверное, еда». */
+const itemKindFromRow = (value: string, itemId: string): ItemKind => {
+  if ((ITEM_KINDS as readonly string[]).includes(value)) return value as ItemKind;
+  throw new Error(
+    `items.${itemId}: неизвестный вид ${JSON.stringify(value)}; известны ${ITEM_KINDS.join(', ')}`,
+  );
 };

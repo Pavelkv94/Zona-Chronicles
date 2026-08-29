@@ -101,6 +101,17 @@ export const ObserverAgentSchema = Type.Object(
      * `need.threshold.crossed` — проекция его только запоминает.
      */
     needs: NeedLevelsSchema,
+    /**
+     * Сколько съедобного у агента с собой (I04).
+     *
+     * Число, а не список: зрителю нужен ответ на вопрос «есть ли ещё чем поесть», а не опись
+     * инвентаря. Опись — это уже интерфейс управления, которого у наблюдателя нет и не будет
+     * (PR-01), и она выдала бы id предметов, по которым мир ничем не управляется извне.
+     */
+    food_carried: Type.Integer({
+      minimum: 0,
+      description: 'Число съедобных предметов у агента.',
+    }),
   },
   { $id: 'zona:observer-agent/1', additionalProperties: false },
 );

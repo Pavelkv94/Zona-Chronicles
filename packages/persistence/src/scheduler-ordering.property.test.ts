@@ -80,6 +80,7 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
     sequence: 0,
     agents,
     routes,
+    items: {},
     scheduledActions: {},
   };
 };

@@ -148,6 +148,7 @@ describe('M7 — снятие действия из расписания по п
           needBaseline: fixtureNeedBaseline(),
         },
       },
+      items: {},
       scheduledActions: {
         evt_cause: scheduled('evt_cause', 'agent:rook', 'route:yard-to-bridge'),
         evt_other: scheduled('evt_other', 'agent:rook', 'route:yard-to-bridge'),
@@ -190,6 +191,7 @@ describe('M7 — снятие действия из расписания по п
           needBaseline: fixtureNeedBaseline(),
         },
       },
+      items: {},
       scheduledActions: {
         evt_legacy: scheduled('evt_legacy', 'agent:rook', 'route:yard-to-bridge'),
       },
@@ -251,6 +253,7 @@ describe('evolve: need.threshold.crossed (I04)', () => {
 
   const stateWithPendingCrossing = () =>
     fixtureWorldState({
+      items: {},
       scheduledActions: {
         [needThresholdActionId('agent:rook', 'fatigue', FIRED_AT)]: {
           id: needThresholdActionId('agent:rook', 'fatigue', FIRED_AT),

@@ -62,6 +62,8 @@ export interface ProjectionAgentsTable {
   /** Уровень каждой нужды, запомненный из факта `need.threshold.crossed` (миграция 0014). */
   hunger_level: string;
   fatigue_level: string;
+  /** Запас съедобного (миграция 0017). Считается свёрткой по фактам, а не читается из канона. */
+  food_carried: number;
 }
 
 export interface ProjectionEventsTable {

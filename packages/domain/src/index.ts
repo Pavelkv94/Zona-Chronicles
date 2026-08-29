@@ -36,14 +36,16 @@ export {
 
 export type {
   AgentState,
+  AgentEatAction,
   AgentStatus,
+  ItemState,
   JourneyCompleteAction,
   NeedThresholdAction,
   RouteDefinition,
   ScheduledAction,
   WorldState,
 } from './state.ts';
-export { SCHEDULED_ACTION_PRIORITY, needThresholdActionId } from './state.ts';
+export { SCHEDULED_ACTION_PRIORITY, agentEatActionId, needThresholdActionId } from './state.ts';
 
 export type { DecideContext, DecideRejection, DecideResult, DraftWorldEvent } from './decide.ts';
 export { decide } from './decide.ts';

@@ -30,12 +30,17 @@ import {
   createDatabase,
   parseDatabaseConnectionUrl,
 } from '../../packages/persistence/src/database.ts';
+import { loadWorldEvents } from '../../packages/persistence/src/world-repository.ts';
+import type { WorldEvent } from '../../packages/contracts/src/index.ts';
 import { requireAddMinutes, requireInstant } from '../../packages/contracts/src/index.ts';
 import { PROTOTYPE_NEEDS } from '../../packages/domain/src/ports/ruleset.ts';
 import { PROTOTYPE_WORLD } from '../../packages/content/src/index.ts';
 import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
 
 const SEED = 42;
+
+/** Сколько предметов в стартовом мире. Сток единственный, поэтому число обязано только убывать. */
+const INITIAL_ITEM_COUNT = PROTOTYPE_WORLD.items.length;
 
 /** Стартовый момент мира прототипа: от него отсчитываются и нужды, и горизонты этого теста. */
 const WORLD_START = requireInstant(PROTOTYPE_WORLD.initialWorldTime, 'initialWorldTime').iso;
@@ -106,6 +111,16 @@ const overdueActions = async (databaseUrl: string, horizon: string): Promise<rea
   }
 };
 
+/** Канонический журнал мира. Читается напрямую: тест разбирает payload, а не текст для человека. */
+const journalOf = async (databaseUrl: string): Promise<readonly WorldEvent[]> => {
+  const connection = createDatabase(parseDatabaseConnectionUrl(databaseUrl));
+  try {
+    return await loadWorldEvents(connection, 'world:prototype');
+  } finally {
+    await connection.destroy();
+  }
+};
+
 /** Строки ленты `world events` с пересечением порога. Вывод CLI — текст для человека. */
 const crossingLines = (output: string): readonly string[] =>
   output.split('\n').filter((line) => line.includes('need.threshold.crossed'));
@@ -166,37 +181,107 @@ describe('I04 — пересечение порога это факт, а не �
     expect(after).toBe(before);
   });
 
-  it('порог не пропускается: скачок через два порога сразу даёт оба события', () => {
+  it('порог не пропускается и не повторяется: переходы образуют законную цепочку', async () => {
     // Мир, простоявший ночь, обязан пройти пропущенные пороги ПО ОДНОМУ, а не «догнать» их
-    // последним. Иначе летопись потеряла бы переход, который в мире состоялся.
-    const jump = atMinute(
-      Math.max(minutesTo('fatigue', 'critical'), minutesTo('hunger', 'critical')),
-    );
-    tickUntilQuiet(jump, db.url);
-
-    const crossed = crossingLines(cli(['world', 'events'], db.url).stdout);
-    // Четыре пересечения на агента: warning и critical у голода и у усталости.
-    expect(crossed).toHaveLength(agentCount * 4);
-
-    // И каждое — своё: ни один уровень не появляется дважды у одного агента.
-    const seen = new Set(crossed.map((line) => line.trim()));
-    expect(seen.size).toBe(crossed.length);
-  });
-
-  it('дальше пороги кончаются, и в расписании не остаётся ничего просроченного', async () => {
-    const before = crossingLines(cli(['world', 'events'], db.url).stdout).length;
-
-    const far = atMinute(100_000);
+    // последним. Проверяется это ЦЕПОЧКОЙ переходов, а не числом событий: как только агент
+    // начал есть, число перестало быть постоянной величиной — оно зависит от запаса еды, — а
+    // законность цепочки не зависит ни от чего.
+    const far = atMinute(minutesTo('hunger', 'critical') * 4);
     tickUntilQuiet(far, db.url);
 
-    const after = crossingLines(cli(['world', 'events'], db.url).stdout).length;
-    expect(after).toBe(before);
+    const journal = await journalOf(db.url);
+    const byActor = new Map<string, { need: string; from: string; to: string }[]>();
+    for (const event of journal) {
+      if (event.type !== 'need.threshold.crossed') continue;
+      const actor = event.actor_ids[0] ?? '';
+      const list = byActor.get(actor) ?? [];
+      list.push({
+        need: event.payload.need,
+        from: event.payload.from_level,
+        to: event.payload.to_level,
+      });
+      byActor.set(actor, list);
+    }
+    expect(byActor.size).toBe(agentCount);
 
-    // Проверяется не только лента, но и РАСПИСАНИЕ. Если выполненное пересечение не снимать,
-    // новых событий не появится — повтор идемпотентен и вернёт записанный результат, — но
-    // сделанное действие навсегда останется ждущим. По ленте это неотличимо от исправного мира;
-    // по расписанию отличимо сразу.
-    expect(await overdueActions(db.url, far)).toEqual([]);
+    const RANK: Record<string, number> = { normal: 0, warning: 1, critical: 2 };
+    for (const [actor, crossings] of byActor) {
+      for (const need of ['hunger', 'fatigue']) {
+        const chain = crossings.filter((crossing) => crossing.need === need);
+        let level = 'normal';
+        for (const crossing of chain) {
+          // Каждый переход обязан начинаться там, где закончился предыдущий: иначе в летописи
+          // есть шаг, которого мир не совершал, или нет шага, который совершил.
+          expect(`${actor}/${need}: ${crossing.from}`).toBe(`${actor}/${need}: ${level}`);
+          // Ухудшение — ровно на одну ступень; восстановление — сразу в `normal`.
+          const step = RANK[crossing.to]! - RANK[crossing.from]!;
+          expect(step === 1 || crossing.to === 'normal').toBe(true);
+          level = crossing.to;
+        }
+      }
+    }
+  });
+
+  it('голод снимается едой, и еда при этом исчезает из мира ровно по одной', async () => {
+    // Наблюдаемая демонстрация итерации: голод растёт → агент ест → голод падает. Команду «поесть»
+    // подаёт МИР по достигнутому порогу, а не человек: ни одного `world run` в этом тесте нет.
+    const journal = await journalOf(db.url);
+    const meals = journal.filter((event) => event.type === 'agent.ate');
+    expect(meals.length).toBeGreaterThan(0);
+
+    // Съеденное не съедается дважды — ключевое свойство §6 «нельзя потратить дважды».
+    const eaten = meals.map((event) => (event.type === 'agent.ate' ? event.payload.item_id : ''));
+    expect(new Set(eaten).size).toBe(eaten.length);
+
+    // Каждая еда сопровождается переходом голода в `normal` в ТОТ ЖЕ момент мира.
+    for (const meal of meals) {
+      const recovery = journal.find(
+        (event) =>
+          event.type === 'need.threshold.crossed' &&
+          event.payload.need === 'hunger' &&
+          event.payload.to_level === 'normal' &&
+          event.world_time === meal.world_time &&
+          event.actor_ids[0] === meal.actor_ids[0],
+      );
+      expect(recovery, `у ${String(meal.actor_ids[0])} еда без снятия голода`).toBeDefined();
+    }
+
+    // Сток единственный: предметов в мире ровно столько, сколько их было минус съеденные.
+    const connection = createDatabase(parseDatabaseConnectionUrl(db.url));
+    try {
+      const rows = await connection.selectFrom('items').select('item_id').execute();
+      expect(rows.length).toBe(INITIAL_ITEM_COUNT - meals.length);
+    } finally {
+      await connection.destroy();
+    }
+  });
+
+  it('когда еда кончилась, голод остаётся: мир не кормит агента из ниоткуда', async () => {
+    const far = atMinute(200_000);
+    tickUntilQuiet(far, db.url);
+
+    const connection = createDatabase(parseDatabaseConnectionUrl(db.url));
+    try {
+      const rows = await connection.selectFrom('items').select('item_id').execute();
+      expect(rows).toHaveLength(0);
+    } finally {
+      await connection.destroy();
+    }
+
+    const journal = await journalOf(db.url);
+    const lastHunger = journal
+      .filter((event) => event.type === 'need.threshold.crossed' && event.payload.need === 'hunger')
+      .at(-1);
+    expect(lastHunger?.type === 'need.threshold.crossed' && lastHunger.payload.to_level).toBe(
+      'critical',
+    );
+  });
+
+  it('в расписании не остаётся ничего просроченного', async () => {
+    // Если выполненное действие не снимать, новых событий не появится — повтор идемпотентен и
+    // вернёт записанный результат, — но сделанное навсегда останется ждущим. По ленте это
+    // неотличимо от исправного мира; по расписанию отличимо сразу.
+    expect(await overdueActions(db.url, atMinute(200_000))).toEqual([]);
   });
 
   it('пересимуляция журнала даёт то же состояние: расписание нужд выводится из фактов', () => {

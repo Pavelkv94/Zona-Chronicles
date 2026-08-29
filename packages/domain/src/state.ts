@@ -1,4 +1,4 @@
-import type { NeedKind, NeedLevel } from '@zona/contracts';
+import type { ItemKind, NeedKind, NeedLevel } from '@zona/contracts';
 
 /**
  * Внутреннее (canonical) состояние мира — первый slice (§11 `09_EVENT_AND_COMMAND_CONTRACTS`):
@@ -31,6 +31,20 @@ export interface AgentState {
    * несогласованность видна только при сравнении.
    */
   readonly needBaseline: Readonly<Record<NeedKind, string>>;
+}
+
+/**
+ * Предмет мира (I04).
+ *
+ * Владелец РОВНО один и всегда назван: агент. Лежащих на земле предметов в этой итерации нет —
+ * их появление означало бы второй способ владения и второй набор правил передачи, а передачи
+ * ещё нет вовсе. Когда предметы начнут лежать в локациях (I08), поле станет union-ом, и это
+ * заставит разобрать оба случая явно, а не добавит `null`, который потребитель забудет проверить.
+ */
+export interface ItemState {
+  readonly id: string;
+  readonly kind: ItemKind;
+  readonly ownerId: string;
 }
 
 export interface RouteDefinition {
@@ -92,6 +106,18 @@ export interface JourneyCompleteAction extends ScheduledActionBase {
  * ЭВРИСТИКОЙ, верной лишь пока механика одна. Здесь ключ содержит момент срабатывания, поэтому
  * различает даже два пересечения одной нужды у одного агента.
  */
+/**
+ * Съесть предмет по достигнутому порогу голода (I04).
+ *
+ * Это НЕ выбор цели: выбор — I05. Здесь прямое следствие порога, записанное правилом «дошёл до
+ * critical и еда есть — ест». Действие планируется, а не исполняется на месте, по той же
+ * причине, что и всё остальное: у мира один способ измениться, и он проходит через `decide`.
+ */
+export interface AgentEatAction extends ScheduledActionBase {
+  readonly kind: 'agent.eat';
+  readonly itemId: string;
+}
+
 export interface NeedThresholdAction extends ScheduledActionBase {
   readonly kind: 'need.threshold';
   readonly need: NeedKind;
@@ -99,7 +125,12 @@ export interface NeedThresholdAction extends ScheduledActionBase {
   readonly toLevel: NeedLevel;
 }
 
-export type ScheduledAction = JourneyCompleteAction | NeedThresholdAction;
+export type ScheduledAction = JourneyCompleteAction | NeedThresholdAction | AgentEatAction;
+
+/** Детерминированный ключ действия «поесть»: у агента не может быть двух ждущих приёмов пищи. */
+export function agentEatActionId(agentId: string, at: string): string {
+  return `sched:eat:${agentId}:${at}`;
+}
 
 /** Детерминированный ключ действия по нужде. Один источник формата на весь проект. */
 export function needThresholdActionId(agentId: string, need: NeedKind, dueAt: string): string {
@@ -113,6 +144,9 @@ export const SCHEDULED_ACTION_PRIORITY: Readonly<Record<ScheduledAction['kind'],
   // сначала оказывается на месте, и только потом мир замечает, что он голоден. Обратный порядок
   // дал бы летопись, где голод наступает у того, кто ещё в пути.
   'need.threshold': 200,
+  // Есть агент начинает ПОСЛЕ того, как мир заметил его голод: обратный порядок дал бы летопись,
+  // в которой агент поел раньше, чем проголодался.
+  'agent.eat': 300,
 };
 
 export interface WorldState {
@@ -125,6 +159,8 @@ export interface WorldState {
   readonly sequence: number;
   readonly agents: Readonly<Record<string, AgentState>>;
   readonly routes: Readonly<Record<string, RouteDefinition>>;
+  /** Ключ — `id` предмета. Предмет существует, пока он здесь; сток его отсюда убирает. */
+  readonly items: Readonly<Record<string, ItemState>>;
   /** Ключ — `id` действия. Порядок вставки смысла не несёт: `canonicalize` сортирует ключи. */
   readonly scheduledActions: Readonly<Record<string, ScheduledAction>>;
 }

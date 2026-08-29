@@ -50,6 +50,7 @@ const validSnapshot = () => ({
       status: 'idle',
       route_id: null,
       needs: { hunger: 'normal', fatigue: 'warning' },
+      food_carried: 0,
     },
   ],
 });

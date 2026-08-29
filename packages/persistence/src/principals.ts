@@ -54,6 +54,12 @@ export const GRANT_MATRIX: Readonly<Record<RoleName, Readonly<Record<string, rea
       outbox: ['SELECT', 'INSERT', 'UPDATE'],
       // I02B: worker ведёт расписание и пишет снимки; удалять не может ничего.
       scheduled_actions: ['SELECT', 'INSERT', 'UPDATE'],
+      // I04: предметы — единственная каноническая таблица, где DELETE законен и необходим.
+      // Съеденный предмет не помечается, а перестаёт существовать: помеченный всё ещё может
+      // быть выбран вторым действием, и «нельзя потратить дважды» держалось бы на внимательности
+      // читателя, а не на форме данных. История при этом не теряется — она в append-only
+      // журнале, которому DELETE не выдан никому.
+      items: ['SELECT', 'INSERT', 'DELETE'],
       world_snapshots: ['SELECT', 'INSERT'],
     },
     [ROLE_NAMES.projection]: {

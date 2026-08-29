@@ -68,6 +68,9 @@ describe('world event envelope v1 (§3)', () => {
       // I04: нужда перешла порог. Значение нужды фактом не является — оно вычисляется; фактом
       // является переход, и он происходит один раз (07_MVP_MECHANICS_SPEC §5, решение I04).
       'need.threshold.crossed',
+      // I04: предмет съеден (единственный сток предметов итерации) и агент отдохнул.
+      'agent.ate',
+      'agent.rested',
     ]);
   });
 
@@ -414,6 +417,10 @@ describe('A8: union пригоден для исчерпывающей пров�
         return 'invalidated';
       case 'need.threshold.crossed':
         return 'need-crossed';
+      case 'agent.ate':
+        return 'ate';
+      case 'agent.rested':
+        return 'rested';
       default:
         return assertNeverWorldEvent(event);
     }

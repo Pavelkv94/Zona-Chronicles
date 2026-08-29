@@ -112,6 +112,16 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'observed-world-time',
     checksum: 'ee9023bc9eb6568917fcf7a0986112413d539d43cb2dfb06c4cc376f990bcd6e',
   },
+  {
+    id: '0016',
+    name: 'items',
+    checksum: 'a0ebffac38cb989d102550bc4ce6b21438f6f4b125292556b0276bc9f2fd4b27',
+  },
+  {
+    id: '0017',
+    name: 'projection-food',
+    checksum: '7562b33b3a47ab6bf3e05b172d582b2745daeb99e896aeaae87e7cda0d5202ff',
+  },
 ];
 
 describe('реестр миграций', () => {

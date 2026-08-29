@@ -248,6 +248,34 @@ export function applyObserverEvent(
         },
       };
     }
+    case 'agent.ate':
+    case 'agent.rested': {
+      // Уровень нужды сюда не приходит: он меняется отдельным `need.threshold.crossed`, и это
+      // не дублируется. А вот запас еды меняет именно этот факт — он и есть сток.
+      const actorId = singleActor(event);
+      const agent = base.agents[actorId];
+      const nextAgents =
+        agent === undefined || event.type !== 'agent.ate'
+          ? base.agents
+          : {
+              ...base.agents,
+              [actorId]: { ...agent, food_carried: Math.max(0, agent.food_carried - 1) },
+            };
+      return {
+        state: { ...base, agents: nextAgents },
+        emitted: {
+          projection_sequence: projectionSequence,
+          event_id: event.event_id,
+          world_time: event.world_time,
+          type: event.type,
+          actor_ids: [...event.actor_ids],
+          location_id: event.location_id ?? null,
+          route_id: null,
+          need: null,
+          need_level: null,
+        },
+      };
+    }
     default: {
       // Исчерпывающий union (A8): новый тип события обязан ломать компиляцию здесь, а не
       // молча выпадать из ленты.

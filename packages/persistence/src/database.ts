@@ -87,6 +87,17 @@ export interface AgentsTable {
 }
 
 /** Append-only журнал фактов. Права на `update`/`delete` не выдаются никому (миграция 0003). */
+/**
+ * Предметы мира (миграция 0016). Строка существует, пока предмет существует: сток его удаляет,
+ * а история остаётся в журнале.
+ */
+export interface ItemsTable {
+  world_id: string;
+  item_id: string;
+  kind: string;
+  owner_id: string;
+}
+
 export interface WorldEventsTable {
   event_id: string;
   world_id: string;
@@ -158,7 +169,7 @@ export interface OutboxTable {
 export interface ScheduledActionsTable {
   world_id: string;
   action_id: string;
-  kind: 'journey.complete' | 'need.threshold';
+  kind: 'journey.complete' | 'need.threshold' | 'agent.eat';
   due_at: string;
   priority: number;
   entity_id: string;
@@ -167,6 +178,8 @@ export interface ScheduledActionsTable {
   /** Вид нужды и ожидаемый уровень; заполнены только у `need.threshold` (0014). */
   need: ColumnType<string | null, string | null, string | null>;
   to_level: ColumnType<string | null, string | null, string | null>;
+  /** Предмет запланированного приёма пищи; заполнен только у `agent.eat` (0016). */
+  item_id: ColumnType<string | null, string | null, string | null>;
   lease_owner: ColumnType<string | null, string | null, string | null>;
   lease_until: ColumnType<Date | null, Date | null, Date | null>;
   completed_at: ColumnType<Date | null, Date | null, Date | null>;
@@ -205,6 +218,7 @@ export interface Database {
   locations: LocationsTable;
   routes: RoutesTable;
   agents: AgentsTable;
+  items: ItemsTable;
   world_events: WorldEventsTable;
   command_results: CommandResultsTable;
   command_attempt_rejections: CommandAttemptRejectionsTable;

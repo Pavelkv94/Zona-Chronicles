@@ -13,7 +13,10 @@
 import { type WorldEvent, assertNeverWorldEvent } from '@zona/contracts';
 import {
   SCHEDULED_ACTION_PRIORITY,
+  agentEatActionId,
   needThresholdActionId,
+  type AgentEatAction,
+  type ItemState,
   type NeedThresholdAction,
   type ScheduledAction,
   type WorldState,
@@ -39,6 +42,10 @@ export function evolve(state: WorldState, event: WorldEvent): WorldState {
       return applyJourneyCompleted(bumped, event);
     case 'need.threshold.crossed':
       return applyNeedThresholdCrossed(bumped, event);
+    case 'agent.ate':
+      return applyAgentAte(bumped, event);
+    case 'agent.rested':
+      return applyAgentRested(bumped, event);
     case 'plan.invalidated':
       // Планы и потребности агентов — вне scope I01 (§5 плана итерации); envelope уже
       // заморожен (§11), поэтому ветка обязана существовать уже сейчас (A8), даже без
@@ -176,11 +183,37 @@ function applyNeedThresholdCrossed(
   const { need, next_threshold_at: nextAt, to_level: toLevel } = event.payload;
   const firedId = needThresholdActionId(actorId, need, event.world_time);
 
+  /**
+   * Снимается НЕ только сработавшее пересечение, но и любое другое ждущее по этой же нужде.
+   *
+   * Инвариант, который здесь поддерживается: у агента по одной нужде не больше одного ждущего
+   * пересечения. Он нужен обоим направлениям перехода. При ухудшении лишних действий и не
+   * бывает; при восстановлении — бывают всегда: агент, отдохнувший на уровне `warning`, оставил
+   * бы ждать пересечение в `critical`, посчитанное от СТАРОГО момента отсчёта. Оно сработало бы
+   * позже, `decide` отверг бы его как устаревшее, и мир записал бы отказ на действие, которое
+   * никто не планировал исполнять.
+   *
+   * Это не «совпадение полей» из M7: там пара «агент + маршрут» была эвристикой, верной лишь
+   * пока механика одна. Здесь снимается ровно то, что заменяется, и заменяется ровно то, что
+   * снято, — инвариант проверяется тестом, а не подразумевается.
+   */
   const remaining: Record<string, ScheduledAction> = {};
   for (const [id, action] of Object.entries(state.scheduledActions)) {
     if (id === firedId) continue;
+    if (action.kind === 'need.threshold' && action.entityId === actorId && action.need === need) {
+      continue;
+    }
     remaining[id] = action;
   }
+
+  const withEating = scheduleEatingIfStarving(
+    state,
+    remaining,
+    actorId,
+    need,
+    toLevel,
+    event.world_time,
+  );
 
   if (nextAt !== null) {
     const next: NeedThresholdAction = {
@@ -192,10 +225,10 @@ function applyNeedThresholdCrossed(
       need,
       toLevel: nextLevelAfter(toLevel),
     };
-    remaining[next.id] = next;
+    withEating[next.id] = next;
   }
 
-  return { ...state, scheduledActions: remaining };
+  return { ...state, scheduledActions: withEating };
 }
 
 /**
@@ -212,4 +245,122 @@ function nextLevelAfter(level: 'normal' | 'warning' | 'critical'): 'warning' | '
   throw new Error(
     'evolve: need.threshold.crossed достиг крайнего уровня, но обещает следующий порог',
   );
+}
+
+/**
+ * Правило «дошёл до предела голода и еда есть — ест» (I04, PLAN §2).
+ *
+ * Это НЕ выбор цели и не интеллект: выбор — I05. Здесь прямое следствие порога, и оно живёт в
+ * `evolve`, потому что является планированием, а планирование в этом проекте выводится из
+ * журнала чистой функцией — иначе пересимуляция восстанавливала бы мир без запланированной еды.
+ *
+ * Предмет выбирается ДЕТЕРМИНИРОВАННО — первый по возрастанию id среди съедобного, что есть у
+ * агента. Любой другой выбор («самый свежий», «случайный») потребовал бы либо данных, которых у
+ * предмета нет, либо розыгрыша, а розыгрыш в `evolve` запрещён: она применяет записанные факты,
+ * а не бросает кости заново (см. заголовок `replay.ts`).
+ */
+function scheduleEatingIfStarving(
+  state: WorldState,
+  scheduled: Record<string, ScheduledAction>,
+  actorId: string,
+  need: 'hunger' | 'fatigue',
+  toLevel: 'normal' | 'warning' | 'critical',
+  at: string,
+): Record<string, ScheduledAction> {
+  if (need !== 'hunger' || toLevel !== 'critical') return scheduled;
+
+  const food = Object.values(state.items)
+    .filter((item) => item.ownerId === actorId && item.kind === 'food')
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const chosen = food[0];
+  if (chosen === undefined) return scheduled;
+
+  const action: AgentEatAction = {
+    id: agentEatActionId(actorId, at),
+    kind: 'agent.eat',
+    dueAt: at,
+    priority: SCHEDULED_ACTION_PRIORITY['agent.eat'],
+    entityId: actorId,
+    itemId: chosen.id,
+  };
+  return { ...scheduled, [action.id]: action };
+}
+
+/**
+ * Съеденный предмет исчезает из мира (I04).
+ *
+ * Сток выражен УДАЛЕНИЕМ из состояния, а не флагом «съеден»: предмет, помеченный съеденным, всё
+ * ещё существует и всё ещё может быть выбран вторым действием. Свойство «нельзя потратить
+ * дважды» тогда держалось бы на дисциплине каждого потребителя, а не на форме состояния.
+ *
+ * Момент отсчёта голода переставляется на время события — с этого мгновения голод считается
+ * заново.
+ */
+function applyAgentAte(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'agent.ate' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: agent.ate ссылается на неизвестного актора ${actorId}`);
+  }
+  const item = state.items[event.payload.item_id];
+  if (item === undefined) {
+    // Событие уже записано; отсутствие предмета здесь означает, что тот же предмет съеден
+    // дважды, — нарушение причинности, а не ожидаемый исход. Громкий сбой вместо тихой порчи.
+    throw new Error(
+      `evolve: agent.ate ссылается на несуществующий предмет ${event.payload.item_id}`,
+    );
+  }
+
+  const remainingItems: Record<string, ItemState> = {};
+  for (const [id, other] of Object.entries(state.items)) {
+    if (id === item.id) continue;
+    remainingItems[id] = other;
+  }
+
+  // Запланированный приём пищи выполнен и уходит из расписания — по тому же ключу, по которому
+  // был поставлен, восстановленному из момента события.
+  const remainingActions: Record<string, ScheduledAction> = {};
+  const firedId = agentEatActionId(actorId, event.world_time);
+  for (const [id, action] of Object.entries(state.scheduledActions)) {
+    if (id === firedId) continue;
+    remainingActions[id] = action;
+  }
+
+  return {
+    ...state,
+    items: remainingItems,
+    scheduledActions: remainingActions,
+    agents: {
+      ...state.agents,
+      [actorId]: {
+        ...agent,
+        needBaseline: { ...agent.needBaseline, hunger: event.world_time },
+      },
+    },
+  };
+}
+
+/** Отдых переставляет момент отсчёта усталости. Предметов и расписания он не касается. */
+function applyAgentRested(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'agent.rested' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: agent.rested ссылается на неизвестного актора ${actorId}`);
+  }
+  return {
+    ...state,
+    agents: {
+      ...state.agents,
+      [actorId]: {
+        ...agent,
+        needBaseline: { ...agent.needBaseline, fatigue: event.world_time },
+      },
+    },
+  };
 }

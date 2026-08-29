@@ -39,6 +39,7 @@ const state = (): WorldState => ({
       travelMinutes: 40,
     },
   },
+  items: {},
   scheduledActions: {},
 });
 

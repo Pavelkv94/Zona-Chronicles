@@ -116,6 +116,8 @@ type GenesisShape = {
       }
     >
   >;
+  /** Предметы генезиса: из них берётся стартовый запас еды на карточке (I04). */
+  readonly items: Readonly<Record<string, { readonly ownerId: string; readonly kind: string }>>;
 };
 
 /**
@@ -135,7 +137,7 @@ const requireGenesisShape = (value: unknown, worldId: string): GenesisShape => {
   };
 
   if (typeof value !== 'object' || value === null) return fail('не объект');
-  const candidate = value as { worldTime?: unknown; agents?: unknown };
+  const candidate = value as { worldTime?: unknown; agents?: unknown; items?: unknown };
   if (typeof candidate.worldTime !== 'string') return fail('worldTime не строка');
   if (typeof candidate.agents !== 'object' || candidate.agents === null) {
     return fail('agents не объект');
@@ -151,6 +153,17 @@ const requireGenesisShape = (value: unknown, worldId: string): GenesisShape => {
     if (shape.status !== 'idle' && shape.status !== 'traveling') {
       return fail(`агент ${agentId}: неизвестный status ${String(shape.status)}`);
     }
+  }
+
+  if (typeof candidate.items !== 'object' || candidate.items === null) {
+    // Мир без предметов — законное состояние (все съедены), мир БЕЗ ПОЛЯ — снимок другой формы.
+    return fail('items не объект');
+  }
+  for (const [itemId, item] of Object.entries(candidate.items as Record<string, unknown>)) {
+    if (typeof item !== 'object' || item === null) return fail(`предмет ${itemId} не объект`);
+    const shape = item as { ownerId?: unknown; kind?: unknown };
+    if (typeof shape.ownerId !== 'string') return fail(`предмет ${itemId}: ownerId не строка`);
+    if (typeof shape.kind !== 'string') return fail(`предмет ${itemId}: kind не строка`);
   }
 
   return value as GenesisShape;
@@ -227,6 +240,11 @@ export const genesisFromSnapshot = async (
       // времени мира, поэтому все уровни — `normal`. Вычислять их из снимка проекции нечем и не
       // нужно: дальше уровень меняют только факты `need.threshold.crossed`.
       needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
+      // Запас берётся из ГЕНЕЗИСНОГО состояния, а не считается по журналу: предметы появляются
+      // при создании мира, и в журнале этого факта нет — он есть только в снимке.
+      food_carried: Object.values(state.items).filter(
+        (item) => item.ownerId === agent.id && item.kind === 'food',
+      ).length,
     })),
   };
 };
@@ -277,6 +295,7 @@ const currentFoldState = async (
           hunger: needLevel(row.hunger_level, row.agent_id),
           fatigue: needLevel(row.fatigue_level, row.agent_id),
         },
+        food_carried: row.food_carried,
       },
     ]),
   );

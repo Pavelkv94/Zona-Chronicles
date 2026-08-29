@@ -44,6 +44,8 @@ export const WORLD_EVENT_TYPES = [
   'journey.completed',
   'plan.invalidated',
   'need.threshold.crossed',
+  'agent.ate',
+  'agent.rested',
 ] as const;
 
 export type WorldEventType = (typeof WORLD_EVENT_TYPES)[number];
@@ -236,11 +238,43 @@ export const NeedThresholdCrossedPayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `agent.ate`: агент съел предмет, и предмет перестал существовать (I04).
+ *
+ * Это СТОК: единственный способ, которым предмет уходит из мира в этой итерации. Поэтому факт
+ * называет предмет — без него «в мире стало на одну банку меньше» было бы утверждением без
+ * подлежащего, и conservation проверялась бы сравнением количеств, а не разбором истории.
+ *
+ * Уровня нужды здесь НЕТ: восстановление выражается отдельным `need.threshold.crossed`, тем же
+ * фактом, что и ухудшение. Иначе у перехода было бы два разных представления в зависимости от
+ * направления, и потребителю пришлось бы уметь оба.
+ */
+export const AgentAtePayloadSchema = Type.Object(
+  {
+    item_id: NamespacedIdSchema,
+  },
+  {
+    additionalProperties: false,
+    description: 'Съеденный предмет. Едок — actor_ids, место — location_id (§4).',
+  },
+);
+
+/** `agent.rested`: агент отдохнул; усталость отсчитывается заново с `world_time` (I04). */
+export const AgentRestedPayloadSchema = Type.Object(
+  {},
+  {
+    additionalProperties: false,
+    description: 'Отдых не имеет собственных полей: кто и когда — уже в envelope.',
+  },
+);
+
 const PAYLOAD_SCHEMAS = {
   'journey.started': JourneyStartedPayloadSchema,
   'journey.completed': JourneyCompletedPayloadSchema,
   'plan.invalidated': PlanInvalidatedPayloadSchema,
   'need.threshold.crossed': NeedThresholdCrossedPayloadSchema,
+  'agent.ate': AgentAtePayloadSchema,
+  'agent.rested': AgentRestedPayloadSchema,
 } as const;
 
 /** Моменты внутри payload, которые декодер обязан привести к канонической форме. */
@@ -251,6 +285,8 @@ const PAYLOAD_INSTANT_FIELDS: Readonly<Record<WorldEventType, readonly string[]>
   // `null` допустим и означает «следующего порога нет»; нормализация обязана его пропускать,
   // а не пытаться разобрать как момент.
   'need.threshold.crossed': ['next_threshold_at'],
+  'agent.ate': [],
+  'agent.rested': [],
 };
 
 function eventVariant<T extends WorldEventType>(type: T) {
@@ -272,6 +308,8 @@ export const JourneyStartedEventSchema = eventVariant('journey.started');
 export const JourneyCompletedEventSchema = eventVariant('journey.completed');
 export const PlanInvalidatedEventSchema = eventVariant('plan.invalidated');
 export const NeedThresholdCrossedEventSchema = eventVariant('need.threshold.crossed');
+export const AgentAteEventSchema = eventVariant('agent.ate');
+export const AgentRestedEventSchema = eventVariant('agent.rested');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению.
@@ -285,6 +323,8 @@ const VARIANT_SCHEMAS = {
   'journey.completed': JourneyCompletedEventSchema,
   'plan.invalidated': PlanInvalidatedEventSchema,
   'need.threshold.crossed': NeedThresholdCrossedEventSchema,
+  'agent.ate': AgentAteEventSchema,
+  'agent.rested': AgentRestedEventSchema,
 } as const satisfies Readonly<Record<WorldEventType, unknown>>;
 
 export const WorldEventSchema = Type.Union(
@@ -303,6 +343,8 @@ export type JourneyStartedEvent = Static<typeof JourneyStartedEventSchema>;
 export type JourneyCompletedEvent = Static<typeof JourneyCompletedEventSchema>;
 export type PlanInvalidatedEvent = Static<typeof PlanInvalidatedEventSchema>;
 export type NeedThresholdCrossedEvent = Static<typeof NeedThresholdCrossedEventSchema>;
+export type AgentAteEvent = Static<typeof AgentAteEventSchema>;
+export type AgentRestedEvent = Static<typeof AgentRestedEventSchema>;
 
 /**
  * Закрытый union canonical events v1 — ВЫВЕДЕННЫЙ из каталога, а не выписанный рядом с ним.

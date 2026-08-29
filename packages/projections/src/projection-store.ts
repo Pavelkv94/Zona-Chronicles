@@ -109,6 +109,7 @@ export const loadObserverSnapshot = async (
           hunger: needLevelFromRow(row.hunger_level, row.agent_id, 'hunger'),
           fatigue: needLevelFromRow(row.fatigue_level, row.agent_id, 'fatigue'),
         },
+        food_carried: row.food_carried,
       })),
     };
   });
@@ -214,6 +215,7 @@ export const saveProjectionStep = async (
           route_id: agent.route_id,
           hunger_level: agent.needs.hunger,
           fatigue_level: agent.needs.fatigue,
+          food_carried: agent.food_carried,
         })
         .where('world_id', '=', state.worldId)
         .where('agent_id', '=', agent.agent_id)
@@ -287,6 +289,7 @@ export const initializeProjection = async (
             route_id: agent.route_id,
             hunger_level: agent.needs.hunger,
             fatigue_level: agent.needs.fatigue,
+            food_carried: agent.food_carried,
           })),
         )
         .execute();

@@ -41,6 +41,7 @@ import {
   needThresholdActionId,
   nextThresholdCrossing,
   type AgentState,
+  type ItemState,
   type NeedThresholdAction,
   type RouteDefinition as DomainRouteDefinition,
   type Ruleset,
@@ -65,6 +66,11 @@ export interface GeneratorContent {
     readonly travelMinutes: number;
   }[];
   readonly agents: readonly { readonly id: string }[];
+  readonly items: readonly {
+    readonly id: string;
+    readonly kind: 'food';
+    readonly ownerId: string;
+  }[];
 }
 
 /** Версии, описывающие сам алгоритм для deterministic runtime profile (§9). */
@@ -158,6 +164,19 @@ function seedAgents(content: GeneratorContent, seed: number, worldTime: string):
   }
 
   return { agents, prngStreamPositions };
+}
+
+/**
+ * Предметы стартового мира. Владелец берётся из контента и НЕ проверяется на существование
+ * здесь: генератор не знает правил мира, а несуществующий владелец упрётся во внешний ключ
+ * `items -> agents` при записи — то есть в проверку, которую нельзя обойти забывчивостью.
+ */
+function buildItems(content: GeneratorContent): Readonly<Record<string, ItemState>> {
+  const items: Record<string, ItemState> = {};
+  for (const item of content.items) {
+    items[item.id] = { id: item.id, kind: item.kind, ownerId: item.ownerId };
+  }
+  return items;
 }
 
 function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainRouteDefinition>> {
@@ -259,6 +278,7 @@ export function seedWorld(
     sequence: 0,
     agents,
     routes,
+    items: buildItems(content),
     // Расписание свежего мира НЕ пусто, и это исключение названо явно.
     //
     // Общее правило прежнее: расписание выводится из событий (`evolve`). Нужды его нарушают в

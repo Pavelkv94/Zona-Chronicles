@@ -47,6 +47,11 @@ export interface ClaimedNeedThresholdAction extends ClaimedActionBase {
   readonly toLevel: NeedLevel;
 }
 
+export interface ClaimedAgentEatAction extends ClaimedActionBase {
+  readonly kind: 'agent.eat';
+  readonly itemId: string;
+}
+
 /**
  * Захваченное действие — РАЗМЕЧЕННЫЙ union, а не запись с необязательными полями.
  *
@@ -56,7 +61,8 @@ export interface ClaimedNeedThresholdAction extends ClaimedActionBase {
  * строки SQL здесь пишется РУКОЙ и `returning` его не проверяет. Разметка возвращает проверку:
  * ветка без своего вида не компилируется.
  */
-export type ClaimedAction = ClaimedJourneyCompleteAction | ClaimedNeedThresholdAction;
+export type ClaimedAction =
+  ClaimedJourneyCompleteAction | ClaimedNeedThresholdAction | ClaimedAgentEatAction;
 
 export interface ClaimOptions {
   readonly worldId: string;
@@ -118,6 +124,7 @@ export const claimDueActions = async (
     route_id: string | null;
     need: string | null;
     to_level: string | null;
+    item_id: string | null;
   }>`
     update scheduled_actions target
        set lease_owner = ${options.owner}, lease_until = ${leaseUntil}
@@ -135,7 +142,8 @@ export const claimDueActions = async (
       ) as picked
      where target.world_id = picked.world_id and target.action_id = picked.action_id
     returning target.action_id, target.kind, target.due_at, target.priority,
-              target.entity_id, target.route_id, target.need, target.to_level
+              target.entity_id, target.route_id, target.need, target.to_level,
+              target.item_id
   `.execute(db);
 
   // `returning` не гарантирует порядок; он восстанавливается тем же ключом, что и в запросе,
@@ -168,6 +176,7 @@ const claimedActionFromRow = (row: {
   readonly route_id: string | null;
   readonly need: string | null;
   readonly to_level: string | null;
+  readonly item_id: string | null;
 }): ClaimedAction => {
   const base = {
     actionId: row.action_id,
@@ -181,6 +190,13 @@ const claimedActionFromRow = (row: {
       throw new Error(`scheduler: действие ${row.action_id} завершает путь без маршрута`);
     }
     return { ...base, kind: 'journey.complete', routeId: row.route_id };
+  }
+
+  if (row.kind === 'agent.eat') {
+    if (row.item_id === null) {
+      throw new Error(`scheduler: действие ${row.action_id} — приём пищи без предмета`);
+    }
+    return { ...base, kind: 'agent.eat', itemId: row.item_id };
   }
 
   if (row.kind === 'need.threshold') {
@@ -506,6 +522,12 @@ export const commandFor = (
         ...envelope,
         type: 'need.threshold.cross',
         payload: { need: action.need, to_level: action.toLevel },
+      };
+    case 'agent.eat':
+      return {
+        ...envelope,
+        type: 'agent.eat',
+        payload: { item_id: action.itemId },
       };
     default:
       return assertNeverAction(action);

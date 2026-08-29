@@ -61,6 +61,7 @@ const GENESIS = {
       status: 'idle' as const,
       route_id: null,
       needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
+      food_carried: 0,
     },
     {
       agent_id: FIXTURE_OTHER_AGENT_ID,
@@ -69,6 +70,7 @@ const GENESIS = {
       status: 'idle' as const,
       route_id: null,
       needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
+      food_carried: 0,
     },
   ],
 };

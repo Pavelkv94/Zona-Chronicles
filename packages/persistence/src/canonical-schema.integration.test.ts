@@ -40,6 +40,9 @@ describe('B1 — канонические таблицы I02A', () => {
         'agents',
         'command_attempt_rejections',
         'command_results',
+        // I04: предметы мира. Каноническая таблица — единственная, где DELETE законен: сток
+        // удаляет предмет, а не помечает его.
+        'items',
         'locations',
         'outbox',
         // I03: таблицы observer projection. Они не канонические — их содержимое выводится из

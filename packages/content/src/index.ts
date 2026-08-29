@@ -39,6 +39,21 @@ export interface RouteDefinition {
   readonly travelMinutes: number;
 }
 
+/**
+ * Предмет стартового мира (I04).
+ *
+ * Владелец назван прямо в данных: инвентарь это контент, а не результат розыгрыша. Разный seed
+ * меняет, ГДЕ агенты стоят, но не то, что у них с собой, — иначе «в этом мире голод наступил
+ * раньше» означало бы и «и еды оказалось меньше», и два независимых эффекта было бы не
+ * разделить при разборе прогона.
+ */
+export interface ItemDefinition {
+  readonly id: string;
+  /** Совпадает по форме с `ItemKind` контрактов; content не имеет права их импортировать. */
+  readonly kind: 'food';
+  readonly ownerId: string;
+}
+
 export interface WorldDefinition {
   readonly worldId: string;
   /**
@@ -51,13 +66,17 @@ export interface WorldDefinition {
   readonly locations: readonly LocationDefinition[];
   readonly routes: readonly RouteDefinition[];
   readonly agents: readonly AgentDefinition[];
+  readonly items: readonly ItemDefinition[];
 }
 
 /**
  * Версия этого content bundle (§7/§9 контракта: "версии без checksum недостаточно" — версия
  * здесь, checksum считает `apps/cli` от фактического содержимого при сборке snapshot).
  */
-export const CONTENT_VERSION = '0.2.0';
+// 0.3.0 — I04: у мира появились предметы. Версия контента входит в bundle снимка вместе с
+// checksum его СОДЕРЖИМОГО, поэтому расширение мира при прежней версии сделало бы два разных
+// мира неразличимыми по имени контента.
+export const CONTENT_VERSION = '0.3.0';
 
 /**
  * Версии, которыми подписывается каждое событие мира прототипа.
@@ -151,5 +170,20 @@ export const PROTOTYPE_WORLD: WorldDefinition = {
     { id: 'agent:kite', name: 'Коршун' },
     { id: 'agent:finch', name: 'Зяблик' },
     { id: 'agent:swift', name: 'Стриж' },
+  ],
+  /**
+   * По два пайка на человека — ровно столько, чтобы демонстрация показала ОБА исхода: голод,
+   * снятый едой, и голод, который снять уже нечем. Один паёк не показал бы повторения цикла,
+   * а запас на неделю не показал бы исчерпания вовсе.
+   */
+  items: [
+    { id: 'item:ration-rook-1', kind: 'food', ownerId: 'agent:rook' },
+    { id: 'item:ration-rook-2', kind: 'food', ownerId: 'agent:rook' },
+    { id: 'item:ration-kite-1', kind: 'food', ownerId: 'agent:kite' },
+    { id: 'item:ration-kite-2', kind: 'food', ownerId: 'agent:kite' },
+    { id: 'item:ration-finch-1', kind: 'food', ownerId: 'agent:finch' },
+    { id: 'item:ration-finch-2', kind: 'food', ownerId: 'agent:finch' },
+    { id: 'item:ration-swift-1', kind: 'food', ownerId: 'agent:swift' },
+    { id: 'item:ration-swift-2', kind: 'food', ownerId: 'agent:swift' },
   ],
 };

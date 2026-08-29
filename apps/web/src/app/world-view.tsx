@@ -20,7 +20,13 @@
  * существует (D4). Открытая вкладка, десять вкладок или ноль — журнал одинаков (D3).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { NeedKind, NeedLevel, ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
+import type {
+  NeedKind,
+  NeedLevel,
+  ObserverAgent,
+  ObserverEvent,
+  ObserverWorldSnapshot,
+} from '@zona/contracts';
 import { OBSERVER_STREAM_EVENT_NAMES } from '@zona/contracts';
 import { fetchEvents, fetchSnapshot } from './observer-client.ts';
 
@@ -32,6 +38,8 @@ const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
   'journey.completed': 'дошёл',
   'plan.invalidated': 'план отменён',
   'need.threshold.crossed': 'изменилось состояние',
+  'agent.ate': 'поел',
+  'agent.rested': 'отдохнул',
 };
 
 /**
@@ -59,6 +67,20 @@ const describe = (event: ObserverEvent): string => {
     return `${who}: ${NEED_LEVEL_LABELS[event.need][event.need_level]}${where}`;
   }
   return `${who} ${EVENT_LABELS[event.type]}${where}`;
+};
+
+/**
+ * Состояние агента одной строкой: что с ним не так и есть ли чем это поправить.
+ *
+ * `normal` не показывается: «Грач сыт и бодр» — это отсутствие новости, и на карте, где стоят
+ * четыре человека, такие строки скрыли бы единственную важную. Показывается только отклонение.
+ */
+const agentCondition = (agent: ObserverAgent): string => {
+  const troubles = (['hunger', 'fatigue'] as const)
+    .filter((need) => agent.needs[need] !== 'normal')
+    .map((need) => NEED_LEVEL_LABELS[need][agent.needs[need]]);
+  const food = agent.food_carried === 0 ? 'еды нет' : `еды: ${String(agent.food_carried)}`;
+  return troubles.length === 0 ? food : `${troubles.join(', ')} · ${food}`;
 };
 
 const worldClock = (iso: string): string => iso.replace('T', ' ').replace('.000Z', '');
@@ -187,7 +209,7 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
             <div className="node-agents">
               {agentsAt(node.location_id).map((agent) => (
                 <span className="agent" key={agent.agent_id}>
-                  {agent.name}
+                  {agent.name} <span className="agent-condition">{agentCondition(agent)}</span>
                 </span>
               ))}
               {agentsAt(node.location_id).length === 0 && <span className="node-desc">пусто</span>}
@@ -201,7 +223,8 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
             <div className="node-agents">
               {traveling.map((agent) => (
                 <span className="agent agent-traveling" key={agent.agent_id}>
-                  {agent.name} → {agent.route_id}
+                  {agent.name} → {agent.route_id}{' '}
+                  <span className="agent-condition">{agentCondition(agent)}</span>
                 </span>
               ))}
             </div>

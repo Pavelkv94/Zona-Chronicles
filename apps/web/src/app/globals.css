@@ -101,6 +101,12 @@ body {
   font-size: 13px;
 }
 
+/* Состояние агента — приглушённее имени: имя ищут глазами, состояние читают следом. */
+.agent-condition {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .agent-traveling {
   border-color: var(--travel);
   color: var(--travel);

@@ -41,6 +41,7 @@ const snapshot = (): ObserverWorldSnapshot => ({
       status: 'idle',
       route_id: null,
       needs: { hunger: 'normal', fatigue: 'normal' },
+      food_carried: 0,
     },
   ],
 });

@@ -14,6 +14,8 @@ import { worldQualifiedProfileMigration } from './0012-world-qualified-profile.t
 import { snapshotBundlesMigration } from './0013-snapshot-bundles.ts';
 import { needsMigration } from './0014-needs.ts';
 import { observedWorldTimeMigration } from './0015-observed-world-time.ts';
+import { itemsMigration } from './0016-items.ts';
+import { projectionFoodMigration } from './0017-projection-food.ts';
 
 export type { Migration } from './types.ts';
 
@@ -42,4 +44,6 @@ export const migrations: readonly Migration[] = [
   snapshotBundlesMigration,
   needsMigration,
   observedWorldTimeMigration,
+  itemsMigration,
+  projectionFoodMigration,
 ];

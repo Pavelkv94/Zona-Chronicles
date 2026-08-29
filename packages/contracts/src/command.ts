@@ -43,7 +43,13 @@ export const ENVELOPE_SCHEMA_VERSION = 1;
  * handler»). Отдельная ветка «домен для scheduled actions» дала бы второй способ менять мир —
  * с собственными правилами, собственной идемпотентностью и собственными отказами.
  */
-export const COMMAND_TYPES = ['journey.start', 'journey.complete', 'need.threshold.cross'] as const;
+export const COMMAND_TYPES = [
+  'journey.start',
+  'journey.complete',
+  'need.threshold.cross',
+  'agent.eat',
+  'agent.rest',
+] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
 
@@ -179,10 +185,40 @@ export const NeedThresholdCrossPayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `agent.eat`: намерение съесть КОНКРЕТНЫЙ предмет (I04).
+ *
+ * Предмет назван явно, а не выбирается миром по ходу исполнения. Иначе две команды, поданные
+ * одновременно, съели бы один и тот же предмет дважды или разные предметы в зависимости от
+ * порядка — то есть «нельзя потратить дважды» стало бы вопросом везения, а не правила.
+ */
+export const AgentEatPayloadSchema = Type.Object(
+  {
+    item_id: NamespacedIdSchema,
+  },
+  {
+    additionalProperties: false,
+    description: 'Съедаемый предмет. Принадлежность проверяется против состояния актора.',
+  },
+);
+
+/**
+ * `agent.rest`: намерение отдохнуть (I04).
+ *
+ * Payload пуст, и это не заготовка: отдыхают от усталости, а усталость у агента одна. Место
+ * отдыха — там, где агент находится (`location_id` события), длительность — правила тела (I07).
+ */
+export const AgentRestPayloadSchema = Type.Object(
+  {},
+  { additionalProperties: false, description: 'Отдых не требует параметров: усталость одна.' },
+);
+
 const COMMAND_PAYLOAD_SCHEMAS = {
   'journey.start': JourneyStartPayloadSchema,
   'journey.complete': JourneyCompletePayloadSchema,
   'need.threshold.cross': NeedThresholdCrossPayloadSchema,
+  'agent.eat': AgentEatPayloadSchema,
+  'agent.rest': AgentRestPayloadSchema,
 } as const;
 
 const commandEnvelopeFields = {
@@ -245,6 +281,8 @@ function commandVariant<T extends CommandType>(type: T) {
 export const JourneyStartCommandSchema = commandVariant('journey.start');
 export const JourneyCompleteCommandSchema = commandVariant('journey.complete');
 export const NeedThresholdCrossCommandSchema = commandVariant('need.threshold.cross');
+export const AgentEatCommandSchema = commandVariant('agent.eat');
+export const AgentRestCommandSchema = commandVariant('agent.rest');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению — тот же приём и то же основание, что у
@@ -259,6 +297,8 @@ const COMMAND_VARIANT_SCHEMAS = {
   'journey.start': JourneyStartCommandSchema,
   'journey.complete': JourneyCompleteCommandSchema,
   'need.threshold.cross': NeedThresholdCrossCommandSchema,
+  'agent.eat': AgentEatCommandSchema,
+  'agent.rest': AgentRestCommandSchema,
 } as const satisfies Readonly<Record<CommandType, unknown>>;
 
 export const CommandSchema = Type.Union(
@@ -273,6 +313,8 @@ export const CommandSchema = Type.Union(
 export type JourneyStartCommand = Static<typeof JourneyStartCommandSchema>;
 export type JourneyCompleteCommand = Static<typeof JourneyCompleteCommandSchema>;
 export type NeedThresholdCrossCommand = Static<typeof NeedThresholdCrossCommandSchema>;
+export type AgentEatCommand = Static<typeof AgentEatCommandSchema>;
+export type AgentRestCommand = Static<typeof AgentRestCommandSchema>;
 
 /**
  * Перечисление вариантов, а не `Static<typeof CommandSchema>` — по тому же доводу, что у

@@ -26,6 +26,8 @@ export {
   compareInstants,
 } from './instant.ts';
 
+export { type ItemKind, ITEM_KINDS, ItemKindSchema } from './item.ts';
+
 export {
   type NeedKind,
   type NeedLevel,
@@ -134,6 +136,8 @@ export {
   type JourneyCompleteCommand,
   type JourneyStartCommand,
   type NeedThresholdCrossCommand,
+  type AgentEatCommand,
+  type AgentRestCommand,
   COMMAND_ENVELOPE_KEYS,
   COMMAND_FINGERPRINT_EXCLUDED_KEYS,
   COMMAND_FINGERPRINT_KEYS,
@@ -144,6 +148,8 @@ export {
   ENVELOPE_SCHEMA_VERSION,
   JourneyStartPayloadSchema,
   NeedThresholdCrossPayloadSchema,
+  AgentEatPayloadSchema,
+  AgentRestPayloadSchema,
   commandFingerprintSource,
   decodeCommand,
   encodeCommand,
@@ -155,6 +161,8 @@ export {
   type JourneyStartedEvent,
   type PlanInvalidatedEvent,
   type NeedThresholdCrossedEvent,
+  type AgentAteEvent,
+  type AgentRestedEvent,
   type RandomAudit,
   type WorldEvent,
   type WorldEventType,
@@ -165,6 +173,8 @@ export {
   PlanInvalidatedEventSchema,
   NeedThresholdCrossedEventSchema,
   NeedThresholdCrossedPayloadSchema,
+  AgentAtePayloadSchema,
+  AgentRestedPayloadSchema,
   PlanInvalidatedPayloadSchema,
   RandomAuditSchema,
   WORLD_EVENT_ENVELOPE_KEYS,
