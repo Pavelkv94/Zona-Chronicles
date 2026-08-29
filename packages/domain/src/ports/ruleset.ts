@@ -30,6 +30,14 @@ export interface Ruleset {
   readonly versions: RulesetVersions;
   /** Коэффициенты нужд §5: скорость роста и пороги. Ключ — вид нужды. */
   readonly needs: Readonly<Record<NeedKind, NeedConfig>>;
+  /**
+   * Сколько мировых минут занимает полный отдых (I05).
+   *
+   * Живёт рядом с нуждами, но НЕ внутри `NeedConfig`: это цена ДЕЙСТВИЯ, а не свойство нужды.
+   * Разница станет видна, когда появится второй способ снять усталость — например, короткий
+   * привал: у него будет своя цена при тех же порогах усталости.
+   */
+  readonly restMinutes: number;
 }
 
 /**
@@ -38,7 +46,7 @@ export interface Ruleset {
  * надеждой — content не имеет права импортировать domain, поэтому общего литерала быть не может,
  * а расхождение двух литералов уже стоило проекту неработающего worker-а (m13 аудита I03).
  */
-export const RULES_VERSION = '0.2.0';
+export const RULES_VERSION = '0.3.0';
 
 /**
  * Коэффициенты нужд прототипа.
@@ -48,6 +56,15 @@ export const RULES_VERSION = '0.2.0';
  * Числа — стартовая конфигурация (§«числовые коэффициенты являются стартовыми конфигурациями»),
  * и менять их можно только вместе с `RULES_VERSION`.
  */
+/**
+ * Восемь мировых часов на полный отдых.
+ *
+ * Число выбрано так, чтобы отдых был ЗАМЕТНО дороже еды и выбор между ними имел содержание:
+ * еда мгновенна, отдых занимает треть суток. При усталости, растущей за 16 часов, это значит,
+ * что отдыхать приходится примерно половину времени бодрствования.
+ */
+export const PROTOTYPE_REST_MINUTES = 480;
+
 export const PROTOTYPE_NEEDS: Readonly<Record<NeedKind, NeedConfig>> = {
   hunger: requireValidNeedConfig(
     { minutesToFull: 1440, warningAtPermille: 450, criticalAtPermille: 750 },
@@ -62,10 +79,21 @@ export const PROTOTYPE_NEEDS: Readonly<Record<NeedKind, NeedConfig>> = {
 export class FixedRuleset implements Ruleset {
   readonly versions: RulesetVersions;
   readonly needs: Readonly<Record<NeedKind, NeedConfig>>;
+  readonly restMinutes: number;
 
-  constructor(versions: RulesetVersions, needs: Readonly<Record<NeedKind, NeedConfig>>) {
+  constructor(
+    versions: RulesetVersions,
+    needs: Readonly<Record<NeedKind, NeedConfig>>,
+    restMinutes: number,
+  ) {
+    if (!Number.isSafeInteger(restMinutes) || restMinutes <= 0) {
+      throw new Error(
+        `ruleset: restMinutes обязан быть положительным целым числом минут, получено ${String(restMinutes)}`,
+      );
+    }
     this.versions = versions;
     this.needs = needs;
+    this.restMinutes = restMinutes;
   }
 }
 
@@ -81,7 +109,7 @@ export function rulesetFor(versions: RulesetVersions): Ruleset {
         `${RULES_VERSION}; коэффициенты чужой версии неизвестны и не подставляются молча`,
     );
   }
-  return new FixedRuleset(versions, PROTOTYPE_NEEDS);
+  return new FixedRuleset(versions, PROTOTYPE_NEEDS, PROTOTYPE_REST_MINUTES);
 }
 
 /** Версии для тестов и dev-фикстур: текущая версия правил и первая версия контента. */
@@ -91,5 +119,5 @@ export function testRulesetVersions(): RulesetVersions {
 
 /** Ruleset для тестов и dev-фикстур. */
 export function testRuleset(): Ruleset {
-  return new FixedRuleset(testRulesetVersions(), PROTOTYPE_NEEDS);
+  return new FixedRuleset(testRulesetVersions(), PROTOTYPE_NEEDS, PROTOTYPE_REST_MINUTES);
 }

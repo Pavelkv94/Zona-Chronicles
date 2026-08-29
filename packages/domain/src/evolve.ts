@@ -18,6 +18,7 @@ import {
   type AgentEatAction,
   type ItemState,
   type NeedThresholdAction,
+  type RestCompleteAction,
   type ScheduledAction,
   type WorldState,
 } from './state.ts';
@@ -46,6 +47,8 @@ export function evolve(state: WorldState, event: WorldEvent): WorldState {
       return applyAgentAte(bumped, event);
     case 'agent.rested':
       return applyAgentRested(bumped, event);
+    case 'rest.started':
+      return applyRestStarted(bumped, event);
     case 'plan.invalidated':
       // Планы и потребности агентов — вне scope I01 (§5 плана итерации); envelope уже
       // заморожен (§11), поэтому ветка обязана существовать уже сейчас (A8), даже без
@@ -343,7 +346,41 @@ function applyAgentAte(
   };
 }
 
-/** Отдых переставляет момент отсчёта усталости. Предметов и расписания он не касается. */
+/**
+ * Агент лёг отдыхать: становится занят, и завершение отдыха попадает в расписание (I05).
+ *
+ * Момент конца берётся ИЗ СОБЫТИЯ по тому же основанию, что `expected_arrival` у пути: `evolve`
+ * не знает коэффициентов ruleset, а второй способ его вычислить стал бы вторым источником правды.
+ */
+function applyRestStarted(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'rest.started' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: rest.started ссылается на неизвестного актора ${actorId}`);
+  }
+  const action: RestCompleteAction = {
+    id: event.event_id,
+    kind: 'rest.complete',
+    dueAt: event.payload.expected_end,
+    priority: SCHEDULED_ACTION_PRIORITY['rest.complete'],
+    entityId: actorId,
+  };
+  return {
+    ...state,
+    agents: { ...state.agents, [actorId]: { ...agent, status: 'resting' } },
+    scheduledActions: { ...state.scheduledActions, [action.id]: action },
+  };
+}
+
+/**
+ * Отдых закончился: агент свободен, усталость отсчитывается заново (I05).
+ *
+ * Выполненное действие снимается по `caused_by` — тем же способом, что у завершения пути (M7):
+ * связь идёт от факта к его причине, а не от совпадения полей.
+ */
 function applyAgentRested(
   state: WorldState,
   event: Extract<WorldEvent, { type: 'agent.rested' }>,
@@ -353,12 +390,22 @@ function applyAgentRested(
   if (agent === undefined) {
     throw new Error(`evolve: agent.rested ссылается на неизвестного актора ${actorId}`);
   }
+
+  const causedByIds = new Set(event.caused_by);
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, action] of Object.entries(state.scheduledActions)) {
+    if (causedByIds.has(id)) continue;
+    remaining[id] = action;
+  }
+
   return {
     ...state,
+    scheduledActions: remaining,
     agents: {
       ...state.agents,
       [actorId]: {
         ...agent,
+        status: 'idle',
         needBaseline: { ...agent.needBaseline, fatigue: event.world_time },
       },
     },

@@ -122,6 +122,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'projection-food',
     checksum: '7562b33b3a47ab6bf3e05b172d582b2745daeb99e896aeaae87e7cda0d5202ff',
   },
+  {
+    id: '0018',
+    name: 'resting',
+    checksum: '532d9a001048a352e6dd6854d0d7be05022e5c2c87cc52b6f435e8d5506e352b',
+  },
 ];
 
 describe('реестр миграций', () => {

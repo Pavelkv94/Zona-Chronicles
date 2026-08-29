@@ -28,6 +28,7 @@ import {
   type AgentRestedEvent,
   type NeedThresholdCrossedEvent,
   type PlanInvalidatedEvent,
+  type RestStartedEvent,
 } from '@zona/contracts';
 import { betterThan, needLevelAt, nextThresholdCrossing } from './needs.ts';
 import type { Clock } from './ports/clock.ts';
@@ -74,7 +75,8 @@ export type DraftWorldEvent =
   | Omit<PlanInvalidatedEvent, 'recorded_at'>
   | Omit<NeedThresholdCrossedEvent, 'recorded_at'>
   | Omit<AgentAteEvent, 'recorded_at'>
-  | Omit<AgentRestedEvent, 'recorded_at'>;
+  | Omit<AgentRestedEvent, 'recorded_at'>
+  | Omit<RestStartedEvent, 'recorded_at'>;
 
 export type DecideResult =
   | { readonly kind: 'accepted'; readonly events: readonly DraftWorldEvent[] }
@@ -127,6 +129,8 @@ export function decide(state: WorldState, command: Command, context: DecideConte
       return decideAgentEat(state, command, context);
     case 'agent.rest':
       return decideAgentRest(state, command, context);
+    case 'rest.complete':
+      return decideRestComplete(state, command, context);
     default:
       return assertNeverCommand(command);
   }
@@ -487,14 +491,15 @@ function decideAgentEat(
 }
 
 /**
- * Отдохнуть (I04).
+ * Лечь отдыхать (I04 → I05).
  *
- * Отдых мгновенен, и это НАЗВАННОЕ упрощение, а не модель: длительность сна и его прерывание —
- * правила тела, то есть I07. Здесь важно другое — что усталость снимается фактом, записанным в
- * журнал, а не молчаливым обнулением поля.
+ * В I04 отдых был мгновенным, и это было названо упрощением. Здесь упрощение снято: команда
+ * НАЧИНАЕТ отдых, а снимает усталость отдельный факт `agent.rested`, до которого надо дожить.
+ * Форма та же, что у пути, и по той же причине: занятость агента обязана быть состоянием мира,
+ * иначе её нечем прервать и незачем оценивать при выборе цели.
  *
- * В пути отдыхать нельзя: агент, отдыхающий на маршруте, — это уже сцена с местом и временем,
- * а сцен в этой итерации нет.
+ * В пути отдыхать нельзя, и отдыхать во время отдыха тоже: оба случая — попытка начать второе
+ * занятие, не закончив первое.
  */
 function decideAgentRest(
   state: WorldState,
@@ -511,7 +516,49 @@ function decideAgentRest(
   if (agent.status !== 'idle') {
     return rejected(
       'precondition_failed',
-      `актор ${command.actor_id} в статусе "${agent.status}": отдыхать в пути нельзя`,
+      `актор ${command.actor_id} в статусе "${agent.status}": начать отдых можно только свободному`,
+    );
+  }
+
+  const worldTime = context.clock.now();
+  const at = toCanonicalIso(worldTime);
+  const expectedEnd = requireAddMinutes(
+    worldTime,
+    context.ruleset.restMinutes,
+    'restMinutes ruleset',
+  );
+
+  const started: Omit<RestStartedEvent, 'recorded_at'> = {
+    ...draftEnvelope(state, command, context, at, agent.locationId, 0),
+    type: 'rest.started',
+    payload: { expected_end: toCanonicalIso(expectedEnd) },
+  };
+
+  return { kind: 'accepted', events: [started] };
+}
+
+/**
+ * Отдых закончился (I05).
+ *
+ * Команду формирует расписание. Отказ здесь — нормальный исход, а не сбой: отдых мог быть
+ * прерван, пока действие ждало очереди, и тогда завершать нечего.
+ */
+function decideRestComplete(
+  state: WorldState,
+  command: Extract<Command, { type: 'rest.complete' }>,
+  context: DecideContext,
+): DecideResult {
+  const staleness = checkExpectedVersion(state, command);
+  if (staleness !== null) return staleness;
+
+  const agent = state.agents[command.actor_id];
+  if (agent === undefined) {
+    return rejected('actor_not_actionable', `актор ${command.actor_id} неизвестен миру`);
+  }
+  if (agent.status !== 'resting') {
+    return rejected(
+      'precondition_failed',
+      `актор ${command.actor_id} не отдыхает (статус "${agent.status}"): завершать нечего`,
     );
   }
 

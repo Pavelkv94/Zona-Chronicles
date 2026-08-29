@@ -49,6 +49,7 @@ export const COMMAND_TYPES = [
   'need.threshold.cross',
   'agent.eat',
   'agent.rest',
+  'rest.complete',
 ] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
@@ -213,12 +214,25 @@ export const AgentRestPayloadSchema = Type.Object(
   { additionalProperties: false, description: 'Отдых не требует параметров: усталость одна.' },
 );
 
+/**
+ * `rest.complete`: намерение завершить начатый отдых (I05).
+ *
+ * Payload пуст по той же причине, что у `agent.rest`: отдых у агента один, и какой именно
+ * завершается, вопроса не вызывает. Команду формирует расписание — тем же путём, что
+ * `journey.complete`.
+ */
+export const RestCompletePayloadSchema = Type.Object(
+  {},
+  { additionalProperties: false, description: 'Завершение отдыха не требует параметров.' },
+);
+
 const COMMAND_PAYLOAD_SCHEMAS = {
   'journey.start': JourneyStartPayloadSchema,
   'journey.complete': JourneyCompletePayloadSchema,
   'need.threshold.cross': NeedThresholdCrossPayloadSchema,
   'agent.eat': AgentEatPayloadSchema,
   'agent.rest': AgentRestPayloadSchema,
+  'rest.complete': RestCompletePayloadSchema,
 } as const;
 
 const commandEnvelopeFields = {
@@ -283,6 +297,7 @@ export const JourneyCompleteCommandSchema = commandVariant('journey.complete');
 export const NeedThresholdCrossCommandSchema = commandVariant('need.threshold.cross');
 export const AgentEatCommandSchema = commandVariant('agent.eat');
 export const AgentRestCommandSchema = commandVariant('agent.rest');
+export const RestCompleteCommandSchema = commandVariant('rest.complete');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению — тот же приём и то же основание, что у
@@ -299,6 +314,7 @@ const COMMAND_VARIANT_SCHEMAS = {
   'need.threshold.cross': NeedThresholdCrossCommandSchema,
   'agent.eat': AgentEatCommandSchema,
   'agent.rest': AgentRestCommandSchema,
+  'rest.complete': RestCompleteCommandSchema,
 } as const satisfies Readonly<Record<CommandType, unknown>>;
 
 export const CommandSchema = Type.Union(
@@ -315,6 +331,7 @@ export type JourneyCompleteCommand = Static<typeof JourneyCompleteCommandSchema>
 export type NeedThresholdCrossCommand = Static<typeof NeedThresholdCrossCommandSchema>;
 export type AgentEatCommand = Static<typeof AgentEatCommandSchema>;
 export type AgentRestCommand = Static<typeof AgentRestCommandSchema>;
+export type RestCompleteCommand = Static<typeof RestCompleteCommandSchema>;
 
 /**
  * Перечисление вариантов, а не `Static<typeof CommandSchema>` — по тому же доводу, что у

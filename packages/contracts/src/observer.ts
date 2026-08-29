@@ -62,7 +62,7 @@ import {
 } from './validation.ts';
 
 /** Статус агента, видимый зрителю. Совпадает с доменным — скрывать здесь нечего. */
-export const OBSERVER_AGENT_STATUSES = ['idle', 'traveling'] as const;
+export const OBSERVER_AGENT_STATUSES = ['idle', 'traveling', 'resting'] as const;
 
 /**
  * Уровни всех нужд агента. Ключи перечислены явно, а не собраны из `NEED_KINDS` в рантайме:

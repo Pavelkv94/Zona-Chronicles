@@ -17,6 +17,7 @@ export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
 export {
   FixedRuleset,
   PROTOTYPE_NEEDS,
+  PROTOTYPE_REST_MINUTES,
   RULES_VERSION,
   rulesetFor,
   testRuleset,
@@ -40,6 +41,7 @@ export type {
   AgentStatus,
   ItemState,
   JourneyCompleteAction,
+  RestCompleteAction,
   NeedThresholdAction,
   RouteDefinition,
   ScheduledAction,

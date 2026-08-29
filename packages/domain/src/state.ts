@@ -14,7 +14,12 @@ import type { ItemKind, NeedKind, NeedLevel } from '@zona/contracts';
  * не влияет на checksum, потому что `canonicalize` сортирует ключи по кодовым точкам (SIM-01).
  */
 
-export type AgentStatus = 'idle' | 'traveling';
+/**
+ * Что агент делает прямо сейчас. `resting` добавлен в I05: отдых занял мировое время, и агент
+ * во время него ЗАНЯТ — значит, состояние обязано быть наблюдаемым, иначе «отдыхает» ничем не
+ * отличалось бы от «стоит без дела», и прервать его было бы нечего.
+ */
+export type AgentStatus = 'idle' | 'traveling' | 'resting';
 
 export interface AgentState {
   readonly id: string;
@@ -118,6 +123,11 @@ export interface AgentEatAction extends ScheduledActionBase {
   readonly itemId: string;
 }
 
+/** Завершение начатого отдыха (I05). `id` равен `event_id` события `rest.started`. */
+export interface RestCompleteAction extends ScheduledActionBase {
+  readonly kind: 'rest.complete';
+}
+
 export interface NeedThresholdAction extends ScheduledActionBase {
   readonly kind: 'need.threshold';
   readonly need: NeedKind;
@@ -125,7 +135,8 @@ export interface NeedThresholdAction extends ScheduledActionBase {
   readonly toLevel: NeedLevel;
 }
 
-export type ScheduledAction = JourneyCompleteAction | NeedThresholdAction | AgentEatAction;
+export type ScheduledAction =
+  JourneyCompleteAction | NeedThresholdAction | AgentEatAction | RestCompleteAction;
 
 /** Детерминированный ключ действия «поесть»: у агента не может быть двух ждущих приёмов пищи. */
 export function agentEatActionId(agentId: string, at: string): string {
@@ -147,6 +158,10 @@ export const SCHEDULED_ACTION_PRIORITY: Readonly<Record<ScheduledAction['kind'],
   // Есть агент начинает ПОСЛЕ того, как мир заметил его голод: обратный порядок дал бы летопись,
   // в которой агент поел раньше, чем проголодался.
   'agent.eat': 300,
+  // Отдых заканчивается ПЕРВЫМ при равном сроке: агент сначала встаёт, и только потом мир
+  // замечает его нужды. Обратный порядок дал бы летопись, где спящий проголодался и тут же
+  // проснулся, — переставленную местами причину и следствие.
+  'rest.complete': 50,
 };
 
 export interface WorldState {

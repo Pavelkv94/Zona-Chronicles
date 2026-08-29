@@ -79,7 +79,7 @@ export interface AgentsTable {
   agent_id: string;
   name: string;
   location_id: string;
-  status: 'idle' | 'traveling';
+  status: 'idle' | 'traveling' | 'resting';
   route_id: string | null;
   /** Моменты мирового времени, с которых отсчитываются нужды (миграция 0014). */
   hunger_baseline: string;
@@ -169,7 +169,7 @@ export interface OutboxTable {
 export interface ScheduledActionsTable {
   world_id: string;
   action_id: string;
-  kind: 'journey.complete' | 'need.threshold' | 'agent.eat';
+  kind: 'journey.complete' | 'need.threshold' | 'agent.eat' | 'rest.complete';
   due_at: string;
   priority: number;
   entity_id: string;

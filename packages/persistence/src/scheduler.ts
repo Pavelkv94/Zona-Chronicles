@@ -52,6 +52,10 @@ export interface ClaimedAgentEatAction extends ClaimedActionBase {
   readonly itemId: string;
 }
 
+export interface ClaimedRestCompleteAction extends ClaimedActionBase {
+  readonly kind: 'rest.complete';
+}
+
 /**
  * Захваченное действие — РАЗМЕЧЕННЫЙ union, а не запись с необязательными полями.
  *
@@ -62,7 +66,10 @@ export interface ClaimedAgentEatAction extends ClaimedActionBase {
  * ветка без своего вида не компилируется.
  */
 export type ClaimedAction =
-  ClaimedJourneyCompleteAction | ClaimedNeedThresholdAction | ClaimedAgentEatAction;
+  | ClaimedJourneyCompleteAction
+  | ClaimedNeedThresholdAction
+  | ClaimedAgentEatAction
+  | ClaimedRestCompleteAction;
 
 export interface ClaimOptions {
   readonly worldId: string;
@@ -190,6 +197,10 @@ const claimedActionFromRow = (row: {
       throw new Error(`scheduler: действие ${row.action_id} завершает путь без маршрута`);
     }
     return { ...base, kind: 'journey.complete', routeId: row.route_id };
+  }
+
+  if (row.kind === 'rest.complete') {
+    return { ...base, kind: 'rest.complete' };
   }
 
   if (row.kind === 'agent.eat') {
@@ -528,6 +539,15 @@ export const commandFor = (
         ...envelope,
         type: 'agent.eat',
         payload: { item_id: action.itemId },
+      };
+    case 'rest.complete':
+      return {
+        ...envelope,
+        type: 'rest.complete',
+        // `action_id` завершения отдыха равен `event_id` события `rest.started`, поэтому
+        // причинность выражается прямо — как у завершения пути.
+        caused_by_event_id: action.actionId,
+        payload: {},
       };
     default:
       return assertNeverAction(action);

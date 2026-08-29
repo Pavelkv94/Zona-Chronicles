@@ -71,6 +71,8 @@ describe('world event envelope v1 (§3)', () => {
       // I04: предмет съеден (единственный сток предметов итерации) и агент отдохнул.
       'agent.ate',
       'agent.rested',
+      // I05: отдых занял мировое время, поэтому у него появилось начало как отдельный факт.
+      'rest.started',
     ]);
   });
 
@@ -421,6 +423,8 @@ describe('A8: union пригоден для исчерпывающей пров�
         return 'ate';
       case 'agent.rested':
         return 'rested';
+      case 'rest.started':
+        return 'rest-started';
       default:
         return assertNeverWorldEvent(event);
     }

@@ -248,6 +248,7 @@ export function applyObserverEvent(
         },
       };
     }
+    case 'rest.started':
     case 'agent.ate':
     case 'agent.rested': {
       // Уровень нужды сюда не приходит: он меняется отдельным `need.threshold.crossed`, и это
@@ -255,11 +256,21 @@ export function applyObserverEvent(
       const actorId = singleActor(event);
       const agent = base.agents[actorId];
       const nextAgents =
-        agent === undefined || event.type !== 'agent.ate'
+        agent === undefined
           ? base.agents
           : {
               ...base.agents,
-              [actorId]: { ...agent, food_carried: Math.max(0, agent.food_carried - 1) },
+              [actorId]: {
+                ...agent,
+                // Сток запаса — только `agent.ate`.
+                food_carried:
+                  event.type === 'agent.ate'
+                    ? Math.max(0, agent.food_carried - 1)
+                    : agent.food_carried,
+                // Занятость: лёг отдыхать — занят, встал — свободен. Путь сюда не относится, у
+                // него свои ветки выше.
+                status: event.type === 'rest.started' ? 'resting' : agent.status,
+              },
             };
       return {
         state: { ...base, agents: nextAgents },

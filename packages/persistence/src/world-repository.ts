@@ -666,7 +666,7 @@ export const loadWorldEvents = async (
  */
 const scheduledActionFromRow = (row: {
   readonly action_id: string;
-  readonly kind: 'journey.complete' | 'need.threshold' | 'agent.eat';
+  readonly kind: 'journey.complete' | 'need.threshold' | 'agent.eat' | 'rest.complete';
   readonly due_at: string;
   readonly priority: number;
   readonly entity_id: string;
@@ -687,6 +687,10 @@ const scheduledActionFromRow = (row: {
       throw new Error(`scheduled_actions.${row.action_id}: завершение пути без маршрута`);
     }
     return { ...base, kind: 'journey.complete', routeId: row.route_id };
+  }
+
+  if (row.kind === 'rest.complete') {
+    return { ...base, kind: 'rest.complete' };
   }
 
   if (row.kind === 'agent.eat') {

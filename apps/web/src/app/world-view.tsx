@@ -40,6 +40,7 @@ const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
   'need.threshold.crossed': 'изменилось состояние',
   'agent.ate': 'поел',
   'agent.rested': 'отдохнул',
+  'rest.started': 'лёг отдыхать',
 };
 
 /**

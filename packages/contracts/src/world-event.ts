@@ -46,6 +46,7 @@ export const WORLD_EVENT_TYPES = [
   'need.threshold.crossed',
   'agent.ate',
   'agent.rested',
+  'rest.started',
 ] as const;
 
 export type WorldEventType = (typeof WORLD_EVENT_TYPES)[number];
@@ -268,6 +269,28 @@ export const AgentRestedPayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `rest.started`: агент лёг отдыхать (I05).
+ *
+ * Отдых перестал быть мгновенным, и у него появилась та же форма, что у пути: начало — факт,
+ * конец — отдельный факт, а между ними агент занят и его состояние можно прервать. Мгновенный
+ * отдых из I04 был названным упрощением; здесь оно снято, потому что без цены отдыха выбор
+ * между «поесть» и «отдохнуть» вырождается в сравнение одного числа.
+ *
+ * `expected_end` — предсказание, а не факт, и оно здесь по тому же основанию, что
+ * `expected_arrival` у `journey.started`: расписание выводит чистая `evolve`, у которой нет
+ * коэффициентов ruleset.
+ */
+export const RestStartedPayloadSchema = Type.Object(
+  {
+    expected_end: InstantSchema,
+  },
+  {
+    additionalProperties: false,
+    description: 'Ожидаемый момент конца отдыха. Отдыхающий — actor_ids, место — location_id.',
+  },
+);
+
 const PAYLOAD_SCHEMAS = {
   'journey.started': JourneyStartedPayloadSchema,
   'journey.completed': JourneyCompletedPayloadSchema,
@@ -275,6 +298,7 @@ const PAYLOAD_SCHEMAS = {
   'need.threshold.crossed': NeedThresholdCrossedPayloadSchema,
   'agent.ate': AgentAtePayloadSchema,
   'agent.rested': AgentRestedPayloadSchema,
+  'rest.started': RestStartedPayloadSchema,
 } as const;
 
 /** Моменты внутри payload, которые декодер обязан привести к канонической форме. */
@@ -287,6 +311,7 @@ const PAYLOAD_INSTANT_FIELDS: Readonly<Record<WorldEventType, readonly string[]>
   'need.threshold.crossed': ['next_threshold_at'],
   'agent.ate': [],
   'agent.rested': [],
+  'rest.started': ['expected_end'],
 };
 
 function eventVariant<T extends WorldEventType>(type: T) {
@@ -310,6 +335,7 @@ export const PlanInvalidatedEventSchema = eventVariant('plan.invalidated');
 export const NeedThresholdCrossedEventSchema = eventVariant('need.threshold.crossed');
 export const AgentAteEventSchema = eventVariant('agent.ate');
 export const AgentRestedEventSchema = eventVariant('agent.rested');
+export const RestStartedEventSchema = eventVariant('rest.started');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению.
@@ -325,6 +351,7 @@ const VARIANT_SCHEMAS = {
   'need.threshold.crossed': NeedThresholdCrossedEventSchema,
   'agent.ate': AgentAteEventSchema,
   'agent.rested': AgentRestedEventSchema,
+  'rest.started': RestStartedEventSchema,
 } as const satisfies Readonly<Record<WorldEventType, unknown>>;
 
 export const WorldEventSchema = Type.Union(
@@ -345,6 +372,7 @@ export type PlanInvalidatedEvent = Static<typeof PlanInvalidatedEventSchema>;
 export type NeedThresholdCrossedEvent = Static<typeof NeedThresholdCrossedEventSchema>;
 export type AgentAteEvent = Static<typeof AgentAteEventSchema>;
 export type AgentRestedEvent = Static<typeof AgentRestedEventSchema>;
+export type RestStartedEvent = Static<typeof RestStartedEventSchema>;
 
 /**
  * Закрытый union canonical events v1 — ВЫВЕДЕННЫЙ из каталога, а не выписанный рядом с ним.
