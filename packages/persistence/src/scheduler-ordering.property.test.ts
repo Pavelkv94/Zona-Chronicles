@@ -47,6 +47,8 @@ import { initializeWorld, loadWorldEvents, loadWorldState } from './world-reposi
 const WORLD = 'world:fixture';
 const T0 = '2028-04-26T06:00:00.000Z';
 const HORIZON = '2028-04-26T12:00:00.000Z';
+/** Момент прибытия при travelMinutes = 15 от T0: он же срок действий по нуждам в смешанном тесте. */
+const ARRIVAL = '2028-04-26T06:15:00.000Z';
 const ids = new DerivedIdFactory('i02b-ordering');
 
 /** Имена намеренно таковы, что алфавитный порядок ОБРАТЕН порядку вставки. */
@@ -232,6 +234,91 @@ describe('C12/C4 — монотонность времени и стабильн
       batchSize: 2,
     });
     expect(claimed.map((a) => a.entityId)).toEqual([agentId(3), agentId(2)]);
+  }, 300_000);
+
+  it('I04: размер батча не меняет порядок и когда в расписании РАЗНЫЕ виды действий', async () => {
+    // Существующие проверки C4 гоняют одно семейство действий, поэтому «порядок задан ключом»
+    // они доказывают только для него. Нужды добавили второй вид с другим приоритетом — и
+    // приоритет входит в ключ захвата ВТОРЫМ полем, сразу после срока. Проверяется, что
+    // смешанное расписание разбирается тем же ключом и не зависит от того, сколько строк взято
+    // за раз.
+    await truncateWorldData(db);
+    await initializeWorld(db, {
+      seed: 1,
+      state: buildState([15, 15, 15, 15]),
+      versions: testRulesetVersions(),
+      prngStreamPositions: {},
+      content: {
+        locations: [
+          { id: 'loc:a', name: 'A', description: 'A' },
+          { id: 'loc:b', name: 'B', description: 'B' },
+        ],
+        agentNames: Object.fromEntries([0, 1, 2, 3].map((i) => [agentId(i), `Z${String(i)}`])),
+      },
+    });
+    for (const index of [0, 1, 2, 3]) {
+      await executeCommand(db, start(index, index));
+    }
+
+    // Действия по нуждам с ТЕМ ЖЕ сроком, что и прибытия: только так проверяется, что их
+    // разводит приоритет, а не удача.
+    for (const index of [0, 1, 2, 3]) {
+      await db
+        .insertInto('scheduled_actions')
+        .values({
+          world_id: WORLD,
+          action_id: `sched:need:${agentId(index)}:hunger:${ARRIVAL}`,
+          kind: 'need.threshold',
+          due_at: ARRIVAL,
+          priority: 200,
+          entity_id: agentId(index),
+          route_id: null,
+          need: 'hunger',
+          to_level: 'warning',
+          item_id: null,
+          lease_owner: null,
+          lease_until: null,
+          completed_at: null,
+        })
+        .execute();
+    }
+
+    const claimAll = async (batchSize: number, owner: string): Promise<readonly string[]> => {
+      const order: string[] = [];
+      for (let step = 0; step < 20; step += 1) {
+        const claimed = await claimDueActions(db, {
+          worldId: WORLD,
+          worldTime: HORIZON,
+          owner,
+          // Аренда ДЕРЖИТСЯ: захваченная строка не должна вернуться в следующий вызов, иначе
+          // цикл с `batchSize: 1` восемь раз захватит одну и ту же первую строку. Так и вышло
+          // при первой редакции теста — нулевая аренда дала «порядок» из восьми одинаковых id.
+          leaseMs: 60_000,
+          batchSize,
+        });
+        if (claimed.length === 0) break;
+        order.push(...claimed.map((action) => action.actionId));
+        if (order.length >= 8) break;
+      }
+      return order;
+    };
+
+    /** Снимает аренды между проходами: второй проход обязан видеть то же, что первый. */
+    const releaseLeases = async (): Promise<void> => {
+      await db
+        .updateTable('scheduled_actions')
+        .set({ lease_owner: null, lease_until: null })
+        .where('world_id', '=', WORLD)
+        .execute();
+    };
+
+    const byOne = await claimAll(1, 'mixed-one');
+    await releaseLeases();
+    const byAll = await claimAll(32, 'mixed-all');
+    expect(byOne).toHaveLength(8);
+    expect(byAll).toEqual(byOne);
+    // Прибытия идут раньше пересечений при равном сроке: приоритет 100 против 200.
+    expect(byOne.slice(0, 4).every((id) => !id.startsWith('sched:need:'))).toBe(true);
   }, 300_000);
 
   it('C4: ВОЗВРАЩАЕМЫЙ порядок отсортирован ключом, а не порядком returning', async () => {
