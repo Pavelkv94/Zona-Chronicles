@@ -61,7 +61,9 @@ const GENESIS = {
       status: 'idle' as const,
       route_id: null,
       needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
-      food_carried: 0,
+      // Генезисный запас: два пайка. Пересборка обязана прийти к тому же числу, что и
+      // инкрементальная сборка, свернув тот же факт стока.
+      food_carried: 2,
     },
     {
       agent_id: FIXTURE_OTHER_AGENT_ID,
@@ -74,6 +76,30 @@ const GENESIS = {
     },
   ],
 };
+
+/**
+ * Пайки у первого агента (I04).
+ *
+ * Заведены ЗДЕСЬ, а не в общей фикстуре: D7 сверяет проекцию побайтово, и без предметов обе
+ * стороны сравнения дают запас `0` — то есть проверка проходит, ничего не проверяя. Запас,
+ * который считается свёрткой по фактам, обязан пережить пересборку, и только на непустом запасе
+ * это утверждение вообще имеет содержание.
+ */
+const FIXTURE_ITEMS = {
+  'item:ration-1': { id: 'item:ration-1', kind: 'food' as const, ownerId: FIXTURE_AGENT_ID },
+  'item:ration-2': { id: 'item:ration-2', kind: 'food' as const, ownerId: FIXTURE_AGENT_ID },
+};
+
+const eat = (agentId: string, itemId: string): Command => ({
+  command_id: ids.next(RUNTIME_ID_PREFIXES.command),
+  world_id: FIXTURE_WORLD_ID,
+  type: 'agent.eat',
+  schema_version: 1,
+  actor_id: agentId,
+  issued_at_world_time: FIXTURE_WORLD_TIME,
+  correlation_id: ids.next(RUNTIME_ID_PREFIXES.correlation),
+  payload: { item_id: itemId },
+});
 
 const startJourney = (agentId: string, expectedVersion: number): Command => ({
   command_id: ids.next(RUNTIME_ID_PREFIXES.command),
@@ -104,7 +130,11 @@ describe('D6/D7 — сборка observer projection', () => {
     canonical = migrated.db;
     projection = createProjectionDatabase(parseProjectionDatabaseUrl(migrated.testDb.url));
 
-    await initializeWorld(canonical, fixtureInitialization());
+    const init = fixtureInitialization();
+    await initializeWorld(canonical, {
+      ...init,
+      state: { ...init.state, items: FIXTURE_ITEMS },
+    });
     expect((await executeCommand(canonical, startJourney(FIXTURE_AGENT_ID, 0))).outcome).toBe(
       'accepted',
     );
@@ -117,6 +147,11 @@ describe('D6/D7 — сборка observer projection', () => {
       horizon: ARRIVAL,
     });
     expect(tick.claimed).toBe(2);
+
+    // Один паёк съеден: в журнале появляется факт стока, и запас на карточке обязан стать 1.
+    expect((await executeCommand(canonical, eat(FIXTURE_AGENT_ID, 'item:ration-1'))).outcome).toBe(
+      'accepted',
+    );
 
     // Проекция создаётся в ГЕНЕЗИСЕ, как это делает `world init`: иначе лента начиналась бы
     // пустой, а пересборка сворачивала бы ноль событий и D7 выполнялся бы тождественно.
@@ -176,6 +211,20 @@ describe('D6/D7 — сборка observer projection', () => {
         expect(agent.location_id).toBe(canonicalAgent!.locationId);
       }
     }
+  });
+
+  it('I04: запас еды на карточке считается свёрткой фактов, а не переписывается из канона', async () => {
+    // Число проверяется ЗДЕСЬ, а не в D7: D7 сверяет пересборку с инкрементальной сборкой, и
+    // ошибка, одинаковая с обеих сторон, его проходит. Утверждение «запас верен» требует
+    // отдельного наблюдения — два пайка минус один съеденный.
+    await runProjectionStep(deps());
+    const snapshot = await loadObserverSnapshot(projection, FIXTURE_WORLD_ID);
+    const eater = snapshot?.agents.find((agent) => agent.agent_id === FIXTURE_AGENT_ID);
+    expect(eater?.food_carried).toBe(1);
+
+    // И у того, кто не ел, запас не изменился — сток относится к предмету, а не к миру целиком.
+    const other = snapshot?.agents.find((agent) => agent.agent_id === FIXTURE_OTHER_AGENT_ID);
+    expect(other?.food_carried).toBe(0);
   });
 
   /**
