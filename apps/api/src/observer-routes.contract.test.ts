@@ -42,6 +42,7 @@ const snapshot = (): ObserverWorldSnapshot => ({
       route_id: null,
       needs: { hunger: 'normal', fatigue: 'normal' },
       food_carried: 0,
+      goal: 'idle' as const,
     },
   ],
 });
@@ -56,6 +57,7 @@ const feedEvent = (sequence: number): ObserverEvent => ({
   route_id: 'route:yard-to-bridge',
   need: null,
   need_level: null,
+  goal: null,
 });
 
 const port = (overrides: Partial<ObserverPort> = {}): ObserverPort => ({

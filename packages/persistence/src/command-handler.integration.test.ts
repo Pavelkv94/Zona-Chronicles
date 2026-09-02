@@ -247,6 +247,9 @@ describe('B2/B3/B4 — атомарный старт journey', () => {
       status: 'traveling',
       routeId: FIXTURE_ROUTE_ID,
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
+      // Вышедший в путь занят: цель у него по-прежнему праздная, потому что путь этого среза
+      // целью не является — маршруты выбирает оператор, а не агент (I05 §6, out of scope).
+      goal: 'idle',
     });
   });
 });

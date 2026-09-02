@@ -137,9 +137,16 @@ describe('I05 — отдых занимает мировое время', () => 
     // успел устать до `warning`, отдых снял усталость, и мир тут же запланировал следующее
     // пересечение от нового момента отсчёта. Проверять «ноль действий» значило бы требовать
     // мира, который перестал жить.
+    // Второе действие — РЕШЕНИЕ: отдохнувший агент свободен, и мир даёт ему выбрать, что
+    // делать дальше (I05-B). Перечислены оба явно: список, из которого одно вычеркнули бы
+    // фильтром, скрыл бы и лишнее действие, которого здесь быть не должно.
     const scheduled = Object.values(state?.scheduledActions ?? {});
-    expect(scheduled.map((action) => action.kind)).toEqual(['need.threshold']);
-    expect(scheduled[0]?.dueAt).toBe(
+    expect(scheduled.map((action) => action.kind).sort()).toEqual([
+      'agent.decide',
+      'need.threshold',
+    ]);
+    const nextCrossing = scheduled.find((action) => action.kind === 'need.threshold');
+    expect(nextCrossing?.dueAt).toBe(
       requireAddMinutes(requireInstant(REST_END, 'REST_END'), 432, 'следующий порог усталости').iso,
     );
   });

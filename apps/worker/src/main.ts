@@ -47,6 +47,9 @@ import { createWorker, type ClockPort, type SleepPort } from './worker.ts';
  */
 const POLL_INTERVAL_MS = 1000;
 
+/** Потолок числа шагов очереди в одном шаге worker-а. Страховка, а не часть семантики. */
+const MAX_TICK_STEPS = 100_000;
+
 /**
  * Начальная расстановка агентов из генезисного снимка. Отказ громкий: мир, созданный до I03,
  * снимка не имеет, и собирать проекцию не из чего — придумывать историю сборщик не имеет права.
@@ -256,11 +259,31 @@ async function main(): Promise<void> {
       realNowMs: () => clock.now(),
       tempo: { worldMinutesPerRealSecond: config.worldMinutesPerRealSecond },
       tick: async ({ horizon }) => {
-        const result = await runWorldTick(db, {
+        /**
+         * Шаг worker-а доводит мир ДО ВЫДАННОГО ГОРИЗОНТА, а не делает один шаг очереди.
+         *
+         * Шаг планировщика обрабатывает ровно один момент мира — так требует последовательность
+         * летописи: пока момент не исчерпан, время не уходит вперёд, иначе действие, назначенное
+         * на этот момент, исполняется в следующем. Но «сколько мира разрешено пройти» решает
+         * ТЕМП, и его решение выражено горизонтом; останавливаться раньше значило бы, что мир
+         * идёт медленнее выданного разрешения по причине, к темпу отношения не имеющей.
+         *
+         * Тот же цикл и по той же причине живёт в `world tick` CLI.
+         */
+        let result = await runWorldTick(db, {
           worldId: config.worldId,
           owner: workerOwner,
           horizon,
         });
+        let claimedTotal = result.claimed;
+        for (let step = 0; step < MAX_TICK_STEPS && result.claimed > 0; step += 1) {
+          result = await runWorldTick(db, {
+            worldId: config.worldId,
+            owner: workerOwner,
+            horizon,
+          });
+          claimedTotal += result.claimed;
+        }
         // Проекция догоняется ПОСЛЕ шага мира, в том же цикле. Отдельный процесс дал бы вторую
         // точку отказа и вторую задержку между фактом и его видимостью, а выигрыша не дал бы:
         // писатель проекции всё равно один.
@@ -297,7 +320,7 @@ async function main(): Promise<void> {
         // разных состояния мира, и склеивать их здесь значило бы решать за темп (см.
         // `world-step.ts` — кредит темпа).
         return {
-          claimed: result.claimed,
+          claimed: claimedTotal,
           worldTime: result.worldTime,
           nextDueAt: result.nextDueAt,
         };

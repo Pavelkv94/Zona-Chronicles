@@ -13,9 +13,14 @@
 import { type WorldEvent, assertNeverWorldEvent } from '@zona/contracts';
 import {
   SCHEDULED_ACTION_PRIORITY,
+  agentDecideActionId,
   agentEatActionId,
+  agentRestActionId,
+  isAgentFree,
   needThresholdActionId,
+  type AgentDecideAction,
   type AgentEatAction,
+  type AgentRestAction,
   type ItemState,
   type NeedThresholdAction,
   type RestCompleteAction,
@@ -49,6 +54,8 @@ export function evolve(state: WorldState, event: WorldEvent): WorldState {
       return applyAgentRested(bumped, event);
     case 'rest.started':
       return applyRestStarted(bumped, event);
+    case 'goal.chosen':
+      return applyGoalChosen(bumped, event);
     case 'plan.invalidated':
       // Планы и потребности агентов — вне scope I01 (§5 плана итерации); envelope уже
       // заморожен (§11), поэтому ветка обязана существовать уже сейчас (A8), даже без
@@ -147,14 +154,18 @@ function applyJourneyCompleted(
     }),
   );
 
-  return {
-    ...state,
-    agents: {
-      ...state.agents,
-      [actorId]: { ...agent, status: 'idle', routeId: null, locationId: route.toLocationId },
+  return withDecisionScheduled(
+    {
+      ...state,
+      agents: {
+        ...state.agents,
+        [actorId]: { ...agent, status: 'idle', routeId: null, locationId: route.toLocationId },
+      },
+      scheduledActions: remaining,
     },
-    scheduledActions: remaining,
-  };
+    actorId,
+    event,
+  );
 }
 
 /**
@@ -209,15 +220,6 @@ function applyNeedThresholdCrossed(
     remaining[id] = action;
   }
 
-  const withEating = scheduleEatingIfStarving(
-    state,
-    remaining,
-    actorId,
-    need,
-    toLevel,
-    event.world_time,
-  );
-
   if (nextAt !== null) {
     const next: NeedThresholdAction = {
       id: needThresholdActionId(actorId, need, nextAt),
@@ -228,10 +230,15 @@ function applyNeedThresholdCrossed(
       need,
       toLevel: nextLevelAfter(toLevel),
     };
-    withEating[next.id] = next;
+    remaining[next.id] = next;
   }
 
-  return { ...state, scheduledActions: withEating };
+  // Изменившаяся нужда — повод принять решение, и повод возникает у ЛЮБОГО перехода, включая
+  // восстановление: агент, переставший быть голодным, мог до этого выбрать «поесть» и теперь
+  // свободен для другого. Решение планируется только свободному — занятый доводит начатое до
+  // конца, а прерывание плана по чрезвычайной нужде вводится вместе со своим событием
+  // `plan.invalidated` (следующий срез).
+  return withDecisionScheduled({ ...state, scheduledActions: remaining }, actorId, event);
 }
 
 /**
@@ -248,45 +255,6 @@ function nextLevelAfter(level: 'normal' | 'warning' | 'critical'): 'warning' | '
   throw new Error(
     'evolve: need.threshold.crossed достиг крайнего уровня, но обещает следующий порог',
   );
-}
-
-/**
- * Правило «дошёл до предела голода и еда есть — ест» (I04, PLAN §2).
- *
- * Это НЕ выбор цели и не интеллект: выбор — I05. Здесь прямое следствие порога, и оно живёт в
- * `evolve`, потому что является планированием, а планирование в этом проекте выводится из
- * журнала чистой функцией — иначе пересимуляция восстанавливала бы мир без запланированной еды.
- *
- * Предмет выбирается ДЕТЕРМИНИРОВАННО — первый по возрастанию id среди съедобного, что есть у
- * агента. Любой другой выбор («самый свежий», «случайный») потребовал бы либо данных, которых у
- * предмета нет, либо розыгрыша, а розыгрыш в `evolve` запрещён: она применяет записанные факты,
- * а не бросает кости заново (см. заголовок `replay.ts`).
- */
-function scheduleEatingIfStarving(
-  state: WorldState,
-  scheduled: Record<string, ScheduledAction>,
-  actorId: string,
-  need: 'hunger' | 'fatigue',
-  toLevel: 'normal' | 'warning' | 'critical',
-  at: string,
-): Record<string, ScheduledAction> {
-  if (need !== 'hunger' || toLevel !== 'critical') return scheduled;
-
-  const food = Object.values(state.items)
-    .filter((item) => item.ownerId === actorId && item.kind === 'food')
-    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-  const chosen = food[0];
-  if (chosen === undefined) return scheduled;
-
-  const action: AgentEatAction = {
-    id: agentEatActionId(actorId, at),
-    kind: 'agent.eat',
-    dueAt: at,
-    priority: SCHEDULED_ACTION_PRIORITY['agent.eat'],
-    entityId: actorId,
-    itemId: chosen.id,
-  };
-  return { ...scheduled, [action.id]: action };
 }
 
 /**
@@ -323,27 +291,39 @@ function applyAgentAte(
     remainingItems[id] = other;
   }
 
-  // Запланированный приём пищи выполнен и уходит из расписания — по тому же ключу, по которому
-  // был поставлен, восстановленному из момента события.
+  // Выполненный шаг уходит из расписания. Снимается он по ПРИЗНАКУ ДЕЙСТВИЯ — тот же агент,
+  // тот же предмет, — а не по восстановленному ключу: ключ выводится из `event_id` факта,
+  // назначившего шаг, а команда, выведенная из расписания, id своей причины не несёт (см.
+  // `commandFor` в scheduler-е). Совпадений здесь быть не может: съесть один предмет дважды
+  // нельзя, и второго ждущего действия с этим предметом не существует.
   const remainingActions: Record<string, ScheduledAction> = {};
-  const firedId = agentEatActionId(actorId, event.world_time);
   for (const [id, action] of Object.entries(state.scheduledActions)) {
-    if (id === firedId) continue;
+    if (action.kind === 'agent.eat' && action.entityId === actorId && action.itemId === item.id) {
+      continue;
+    }
     remainingActions[id] = action;
   }
 
-  return {
-    ...state,
-    items: remainingItems,
-    scheduledActions: remainingActions,
-    agents: {
-      ...state.agents,
-      [actorId]: {
-        ...agent,
-        needBaseline: { ...agent.needBaseline, hunger: event.world_time },
+  return withDecisionScheduled(
+    {
+      ...state,
+      items: remainingItems,
+      scheduledActions: remainingActions,
+      agents: {
+        ...state.agents,
+        [actorId]: {
+          ...agent,
+          // Цель достигнута и потому снята: агент не «передумал», он доел. Держать цель дальше
+          // значило бы утверждать намерение, которого у него больше нет, и новое решение
+          // считалось бы сменой цели там, где менять нечего.
+          goal: 'idle',
+          needBaseline: { ...agent.needBaseline, hunger: event.world_time },
+        },
       },
     },
-  };
+    actorId,
+    event,
+  );
 }
 
 /**
@@ -368,10 +348,18 @@ function applyRestStarted(
     priority: SCHEDULED_ACTION_PRIORITY['rest.complete'],
     entityId: actorId,
   };
+  // Шаг «лечь отдыхать» исполнен и уходит: он снимается по признаку действия, как и приём
+  // пищи, — у агента не бывает двух ждущих укладываний.
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, other] of Object.entries(state.scheduledActions)) {
+    if (other.kind === 'agent.rest' && other.entityId === actorId) continue;
+    remaining[id] = other;
+  }
+  remaining[action.id] = action;
   return {
     ...state,
     agents: { ...state.agents, [actorId]: { ...agent, status: 'resting' } },
-    scheduledActions: { ...state.scheduledActions, [action.id]: action },
+    scheduledActions: remaining,
   };
 }
 
@@ -398,16 +386,152 @@ function applyAgentRested(
     remaining[id] = action;
   }
 
-  return {
-    ...state,
-    scheduledActions: remaining,
-    agents: {
-      ...state.agents,
-      [actorId]: {
-        ...agent,
-        status: 'idle',
-        needBaseline: { ...agent.needBaseline, fatigue: event.world_time },
+  return withDecisionScheduled(
+    {
+      ...state,
+      scheduledActions: remaining,
+      agents: {
+        ...state.agents,
+        [actorId]: {
+          ...agent,
+          status: 'idle',
+          // Цель достигнута — см. тот же довод у `agent.ate`.
+          goal: 'idle',
+          needBaseline: { ...agent.needBaseline, fatigue: event.world_time },
+        },
       },
     },
+    actorId,
+    event,
+  );
+}
+
+/**
+ * Агент выбрал цель — и цель немедленно превращается в ШАГ (I05, §6).
+ *
+ * Шаг ставится здесь, а не исполняется на месте, по общему правилу: у мира один способ
+ * измениться, и он проходит через `decide`. План этого среза длиной ровно в один шаг, потому
+ * что шагов длиннее пока не из чего строить: «дойти до еды» требует источника предметов (I08),
+ * «помочь» — отношений (I09). Обещать план на 3–6 шагов и наполнять его пустыми звеньями было
+ * бы хуже, чем честно поставить один.
+ *
+ * Ждущие решения того же агента снимаются ВСЕ. Инвариант: у агента не больше одного ждущего
+ * решения. Он нужен потому, что решение, назначенное по факту, могло быть назначено дважды —
+ * двумя фактами одного момента, — и второе принималось бы по ситуации, которую первое уже
+ * учло. Тот же приём и то же основание, что у пересечений порога.
+ */
+function applyGoalChosen(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'goal.chosen' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: goal.chosen ссылается на неизвестного актора ${actorId}`);
+  }
+
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, action] of Object.entries(state.scheduledActions)) {
+    if (action.kind === 'agent.decide' && action.entityId === actorId) continue;
+    remaining[id] = action;
+  }
+
+  const step = stepFor(state, actorId, event);
+  if (step !== null) remaining[step.id] = step;
+
+  return {
+    ...state,
+    agents: { ...state.agents, [actorId]: { ...agent, goal: event.payload.goal } },
+    scheduledActions: remaining,
   };
+}
+
+/**
+ * Первый (и пока единственный) шаг выбранной цели.
+ *
+ * `idle` шага не имеет — это и есть его смысл: агент ничего не делает и ждёт следующего факта.
+ * Пустой план здесь законный исход, а не пропущенная ветка (§4.3 плана итерации).
+ */
+function stepFor(
+  state: WorldState,
+  actorId: string,
+  event: Extract<WorldEvent, { type: 'goal.chosen' }>,
+): AgentEatAction | AgentRestAction | null {
+  if (event.payload.goal === 'rest') {
+    return {
+      id: agentRestActionId(event.event_id),
+      kind: 'agent.rest',
+      dueAt: event.world_time,
+      priority: SCHEDULED_ACTION_PRIORITY['agent.rest'],
+      entityId: actorId,
+    };
+  }
+  if (event.payload.goal !== 'eat') return null;
+
+  /**
+   * Предмет выбирается ДЕТЕРМИНИРОВАННО — первый по возрастанию id среди съедобного, что есть
+   * у агента. Любой другой выбор («самый свежий», «случайный») потребовал бы либо данных,
+   * которых у предмета нет, либо розыгрыша, а розыгрыш в `evolve` запрещён: она применяет
+   * записанные факты, а не бросает кости заново (см. заголовок `replay.ts`).
+   */
+  const food = Object.values(state.items)
+    .filter((item) => item.ownerId === actorId && item.kind === 'food')
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  const chosen = food[0];
+  if (chosen === undefined) {
+    // Исполнимость проверена при отборе кандидатов (`goals.ts`), поэтому сюда попасть нельзя.
+    // Отказ громкий: молчаливое «шага не будет» оставило бы агента с целью, которую никто не
+    // исполнит, и он замер бы навсегда — то есть ровно тем способом, от которого §4.3 плана
+    // защищает отбор.
+    throw new Error(
+      `evolve: goal.chosen выбрал "eat" для ${actorId}, но съедобного у него нет: ` +
+        'исполнимость цели проверяется при отборе кандидатов и разойтись с состоянием не может',
+    );
+  }
+  return {
+    id: agentEatActionId(event.event_id),
+    kind: 'agent.eat',
+    dueAt: event.world_time,
+    priority: SCHEDULED_ACTION_PRIORITY['agent.eat'],
+    entityId: actorId,
+    itemId: chosen.id,
+  };
+}
+
+/**
+ * Назначить агенту решение, если факт оставил его СВОБОДНЫМ (§4.2 плана I05).
+ *
+ * Периодического опроса в мире нет: агент решает, когда для него что-то изменилось. Триггером
+ * всегда является факт — прибытие, приём пищи, конец отдыха, переход нужды, — и между фактами
+ * решений не происходит, потому что решать не о чем. «Каждые N минут пересчитать цели» — это
+ * pulse под другим именем, со всей ценой, из-за которой §5 спецификации переписывался в I04.
+ *
+ * `goal.chosen` в список триггеров НЕ входит, и это не забывчивость: решение, порождающее новое
+ * решение, дало бы мир, крутящийся на месте. Выбор — итог рассмотрения ситуации; рассматривать
+ * ту же ситуацию второй раз нечего.
+ */
+function withDecisionScheduled(
+  state: WorldState,
+  actorId: string,
+  event: { readonly event_id: string; readonly world_time: string },
+): WorldState {
+  const agent = state.agents[actorId];
+  if (agent === undefined || !isAgentFree(agent)) return state;
+
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, action] of Object.entries(state.scheduledActions)) {
+    if (action.kind === 'agent.decide' && action.entityId === actorId) continue;
+    remaining[id] = action;
+  }
+
+  const decision: AgentDecideAction = {
+    id: agentDecideActionId(event.event_id),
+    kind: 'agent.decide',
+    dueAt: event.world_time,
+    priority: SCHEDULED_ACTION_PRIORITY['agent.decide'],
+    entityId: actorId,
+  };
+  remaining[decision.id] = decision;
+
+  return { ...state, scheduledActions: remaining };
 }

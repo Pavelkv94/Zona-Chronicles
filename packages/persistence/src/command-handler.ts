@@ -269,7 +269,9 @@ const changedAgents = (before: WorldState, after: WorldState): readonly AgentSta
       // здесь ручное — именно поэтому за ним стоит guard, сверяющий checksum перечитанного
       // состояния: забытое поле роняет команду, а не тихо теряется.
       previous.needBaseline.hunger !== agent.needBaseline.hunger ||
-      previous.needBaseline.fatigue !== agent.needBaseline.fatigue
+      previous.needBaseline.fatigue !== agent.needBaseline.fatigue ||
+      // Цель меняется решением и снимается достигнутым шагом (I05).
+      previous.goal !== agent.goal
     );
   });
 
@@ -552,6 +554,7 @@ export const executeCommand = async (
             route_id: agent.routeId,
             hunger_baseline: agent.needBaseline.hunger,
             fatigue_baseline: agent.needBaseline.fatigue,
+            goal: agent.goal,
           })
           .where('world_id', '=', command.world_id)
           .where('agent_id', '=', agent.id)

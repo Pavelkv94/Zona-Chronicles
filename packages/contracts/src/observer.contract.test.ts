@@ -51,6 +51,7 @@ const validSnapshot = () => ({
       route_id: null,
       needs: { hunger: 'normal', fatigue: 'warning' },
       food_carried: 0,
+      goal: 'idle',
     },
   ],
 });
@@ -65,6 +66,7 @@ const validEvent = () => ({
   route_id: 'route:yard-to-bridge',
   need: null,
   need_level: null,
+  goal: null,
 });
 
 describe('observer: публичный ответ не несёт канонических и скрытых полей', () => {

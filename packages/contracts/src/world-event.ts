@@ -14,6 +14,7 @@ import { requireCanonical } from './canonical-json.ts';
 import { ENVELOPE_SCHEMA_VERSION } from './command.ts';
 import { RUNTIME_ID_PREFIXES } from './identifier.ts';
 import { NeedKindSchema, NeedLevelSchema } from './need.ts';
+import { DecisionTraceSchema, GoalKindSchema } from './goal.ts';
 import {
   DottedNameSchema,
   DrawCountSchema,
@@ -47,6 +48,7 @@ export const WORLD_EVENT_TYPES = [
   'agent.ate',
   'agent.rested',
   'rest.started',
+  'goal.chosen',
 ] as const;
 
 export type WorldEventType = (typeof WORLD_EVENT_TYPES)[number];
@@ -291,6 +293,34 @@ export const RestStartedPayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `goal.chosen`: агент выбрал цель (I05, §6).
+ *
+ * Публикуется, когда решение ИЗМЕНИЛО МИР: у агента появилась новая цель либо прежняя цель
+ * получила новый исполнимый шаг. Решение, не изменившее ничего, фактом не является и в журнал
+ * не попадает — иначе лента наполнилась бы записями «подумал и остался при своём», а летопись
+ * перестала бы быть перечнем произошедшего.
+ *
+ * `previous_goal` делает факт самодостаточным для летописи («был празден — решил поесть») по
+ * тому же основанию, что `from_level` у пересечения порога: без него направление перехода
+ * пришлось бы восстанавливать из состояния, которого лента не читает.
+ *
+ * `trace` — разбор оценок (§6). Он канонический, но НЕ публичный: observer-контракт его не
+ * содержит, и это требование §7 `03_TECHNICAL_DESIGN`, а не осторожность. Зритель видит факт
+ * «решил поесть», а расследование читает журнал.
+ */
+export const GoalChosenPayloadSchema = Type.Object(
+  {
+    goal: GoalKindSchema,
+    previous_goal: GoalKindSchema,
+    trace: DecisionTraceSchema,
+  },
+  {
+    additionalProperties: false,
+    description: 'Выбранная цель, прежняя цель и разбор оценок. Решающий — actor_ids (§4).',
+  },
+);
+
 const PAYLOAD_SCHEMAS = {
   'journey.started': JourneyStartedPayloadSchema,
   'journey.completed': JourneyCompletedPayloadSchema,
@@ -299,6 +329,7 @@ const PAYLOAD_SCHEMAS = {
   'agent.ate': AgentAtePayloadSchema,
   'agent.rested': AgentRestedPayloadSchema,
   'rest.started': RestStartedPayloadSchema,
+  'goal.chosen': GoalChosenPayloadSchema,
 } as const;
 
 /** Моменты внутри payload, которые декодер обязан привести к канонической форме. */
@@ -312,6 +343,7 @@ const PAYLOAD_INSTANT_FIELDS: Readonly<Record<WorldEventType, readonly string[]>
   'agent.ate': [],
   'agent.rested': [],
   'rest.started': ['expected_end'],
+  'goal.chosen': [],
 };
 
 function eventVariant<T extends WorldEventType>(type: T) {
@@ -336,6 +368,7 @@ export const NeedThresholdCrossedEventSchema = eventVariant('need.threshold.cros
 export const AgentAteEventSchema = eventVariant('agent.ate');
 export const AgentRestedEventSchema = eventVariant('agent.rested');
 export const RestStartedEventSchema = eventVariant('rest.started');
+export const GoalChosenEventSchema = eventVariant('goal.chosen');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению.
@@ -352,6 +385,7 @@ const VARIANT_SCHEMAS = {
   'agent.ate': AgentAteEventSchema,
   'agent.rested': AgentRestedEventSchema,
   'rest.started': RestStartedEventSchema,
+  'goal.chosen': GoalChosenEventSchema,
 } as const satisfies Readonly<Record<WorldEventType, unknown>>;
 
 export const WorldEventSchema = Type.Union(
@@ -373,6 +407,7 @@ export type NeedThresholdCrossedEvent = Static<typeof NeedThresholdCrossedEventS
 export type AgentAteEvent = Static<typeof AgentAteEventSchema>;
 export type AgentRestedEvent = Static<typeof AgentRestedEventSchema>;
 export type RestStartedEvent = Static<typeof RestStartedEventSchema>;
+export type GoalChosenEvent = Static<typeof GoalChosenEventSchema>;
 
 /**
  * Закрытый union canonical events v1 — ВЫВЕДЕННЫЙ из каталога, а не выписанный рядом с ним.

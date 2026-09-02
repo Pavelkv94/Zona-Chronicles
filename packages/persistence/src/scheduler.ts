@@ -56,6 +56,16 @@ export interface ClaimedRestCompleteAction extends ClaimedActionBase {
   readonly kind: 'rest.complete';
 }
 
+/** Решение агента (I05). Своих полей не несёт: кандидаты выводятся из состояния мира. */
+export interface ClaimedAgentDecideAction extends ClaimedActionBase {
+  readonly kind: 'agent.decide';
+}
+
+/** Шаг «лечь отдыхать» (I05). Своих полей не несёт: отдых у агента один. */
+export interface ClaimedAgentRestAction extends ClaimedActionBase {
+  readonly kind: 'agent.rest';
+}
+
 /**
  * Захваченное действие — РАЗМЕЧЕННЫЙ union, а не запись с необязательными полями.
  *
@@ -69,7 +79,9 @@ export type ClaimedAction =
   | ClaimedJourneyCompleteAction
   | ClaimedNeedThresholdAction
   | ClaimedAgentEatAction
-  | ClaimedRestCompleteAction;
+  | ClaimedRestCompleteAction
+  | ClaimedAgentDecideAction
+  | ClaimedAgentRestAction;
 
 export interface ClaimOptions {
   readonly worldId: string;
@@ -85,6 +97,25 @@ export interface ClaimOptions {
 
 export const DEFAULT_LEASE_MS = 30_000;
 export const DEFAULT_BATCH_SIZE = 32;
+
+/** Ближайший наступивший срок среди ждущих действий; `null` — в пределах горизонта их нет. */
+const earliestPendingDueAt = async (
+  db: DatabaseConnection,
+  worldId: string,
+  horizon: string,
+): Promise<string | null> => {
+  const row = await db
+    .selectFrom('scheduled_actions')
+    .select('due_at')
+    .where('world_id', '=', worldId)
+    .where('completed_at', 'is', null)
+    .where('failed_at', 'is', null)
+    .where('due_at', '<=', horizon)
+    .orderBy('due_at')
+    .limit(1)
+    .executeTakeFirst();
+  return row?.due_at ?? null;
+};
 
 /**
  * Захватывает ближайшие доступные действия в СТАБИЛЬНОМ порядке (C4).
@@ -201,6 +232,14 @@ const claimedActionFromRow = (row: {
 
   if (row.kind === 'rest.complete') {
     return { ...base, kind: 'rest.complete' };
+  }
+
+  if (row.kind === 'agent.decide') {
+    return { ...base, kind: 'agent.decide' };
+  }
+
+  if (row.kind === 'agent.rest') {
+    return { ...base, kind: 'agent.rest' };
   }
 
   if (row.kind === 'agent.eat') {
@@ -396,19 +435,59 @@ const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Prom
     .where('world_id', '=', options.worldId)
     .execute();
 
-  const claimed = await claimDueActions(db, {
-    worldId: options.worldId,
-    worldTime: horizon,
-    owner: options.owner,
-    leaseMs: options.leaseMs ?? DEFAULT_LEASE_MS,
-    batchSize: options.batchSize ?? DEFAULT_BATCH_SIZE,
-    ...(options.now === undefined ? {} : { now: options.now }),
-  });
-
   const meta = await loadWorldMeta(db, options.worldId);
   if (meta === null) throw new Error(`scheduler: мир ${options.worldId} не существует`);
 
   const executed: CommandExecution[] = [];
+  /**
+   * Момент, в который исполняется действие: его срок ЛИБО текущее время мира, если действие
+   * опоздало.
+   *
+   * Опоздание — не сбой, а свойство модели. Мировое время монотонно и ГЛОБАЛЬНО: его двигают
+   * действия всех агентов сразу. Действие, назначенное фактом, получает момент этого факта, а
+   * пока оно ждёт своей очереди, мир уходит вперёд на действиях СОСЕДЕЙ. К моменту захвата его
+   * срок оказывается в прошлом — и попытка исполнить его «в свой срок» была бы попыткой
+   * отмотать мир назад.
+   *
+   * Найдено property-тестом C12 на пяти агентах с разными сроками, как только решение начало
+   * планироваться по факту прибытия: `2028-04-26T06:30:00.000Z -> 2028-04-26T06:10:00.000Z`.
+   * До этого дефект существовал (приём пищи планируется тем же способом с I04), но ни одна
+   * проба не сводила в одном мире опоздавшее действие и ушедшее вперёд время.
+   *
+   * Исполнить опоздавшее действие СЕЙЧАС — единственный вариант, не подделывающий историю:
+   * отбросить его значило бы потерять факт, а сдвинуть время назад — переписать журнал.
+   */
+  let worldNow = state.worldTime;
+
+  /**
+   * Такт обрабатывает РОВНО ОДИН момент мира — ближайший наступивший, — а не всё, что успело
+   * наступить до горизонта.
+   *
+   * Разница видна только когда действие ПОРОЖДАЕТ действие на тот же момент, и потому долго
+   * оставалась незамеченной. Пачка «всё до горизонта» содержит и `13:12`, и `00:00` следующих
+   * суток; действие, назначенное при обработке `13:12`, в неё уже не попадает и ждёт следующего
+   * такта — а мир к тому времени уже в `00:00`. Получалась летопись, в которой агент решил
+   * поесть в 16:48, а поел через семь часов, ничего в промежутке не делая.
+   *
+   * Измерено на прогоне с горизонтом в двое суток: `goal.chosen:eat 16:48`, `agent.ate 00:00`.
+   *
+   * С момента-за-такт мировое время не уходит вперёд, пока момент не исчерпан, и результат
+   * перестаёт зависеть от того, насколько крупными шагами оператор двигает горизонт. Это и есть
+   * дискретно-событийная семантика ADR-004: время двигают события, а не размер пачки. Довести
+   * мир до горизонта — работа вызывающего, который и так крутит такты до пустого.
+   */
+  const moment = await earliestPendingDueAt(db, options.worldId, horizon);
+  const claimed =
+    moment === null
+      ? []
+      : await claimDueActions(db, {
+          worldId: options.worldId,
+          worldTime: moment,
+          owner: options.owner,
+          leaseMs: options.leaseMs ?? DEFAULT_LEASE_MS,
+          batchSize: options.batchSize ?? DEFAULT_BATCH_SIZE,
+          ...(options.now === undefined ? {} : { now: options.now }),
+        });
   for (const action of claimed) {
     // M2 аудита: аренда бралась один раз на всю пачку, а действия исполняются последовательно
     // отдельными транзакциями. При `batchSize` 32 и аренде 30 секунд она истекает на середине,
@@ -442,11 +521,15 @@ const tickUnderLock = async (db: DatabaseConnection, options: TickOptions): Prom
       worldId: options.worldId,
       schemaVersion: meta.versions.schemaVersion,
     });
+    const at = compareByCodePoint(action.dueAt, worldNow) < 0 ? worldNow : action.dueAt;
     const outcome = await executeCommand(db, command, {
-      worldTime: action.dueAt,
+      worldTime: at,
       ...(options.now === undefined ? {} : { now: options.now }),
     });
     executed.push(outcome);
+    // Время двигает только ПРИНЯТАЯ команда: отвергнутая событий не порождает, а мировое время
+    // — это время последнего факта.
+    if (outcome.outcome === 'accepted') worldNow = at;
 
     if (outcome.outcome === 'rejected') {
       // Доменный отказ на запланированном действии — нормальный исход (действие могло
@@ -549,6 +632,14 @@ export const commandFor = (
         caused_by_event_id: action.actionId,
         payload: {},
       };
+    case 'agent.decide':
+      // `caused_by_event_id` НЕ ставится: `action_id` решения выводится из `event_id` факта,
+      // назначившего решение, но синтаксически им не является (`sched:decide:<event_id>`), а
+      // подсовывать в поле причинности строку, не являющуюся id события, значило бы записать
+      // ссылку, которая никуда не ведёт.
+      return { ...envelope, type: 'agent.decide', payload: {} };
+    case 'agent.rest':
+      return { ...envelope, type: 'agent.rest', payload: {} };
     default:
       return assertNeverAction(action);
   }

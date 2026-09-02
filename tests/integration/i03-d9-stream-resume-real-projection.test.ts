@@ -79,6 +79,7 @@ const baseState = (): ObserverProjectionState =>
         route_id: null,
         needs: { hunger: 'normal', fatigue: 'normal' },
         food_carried: 0,
+        goal: 'idle' as const,
       },
     ],
   });
@@ -98,6 +99,7 @@ const feedEntry = (seq: number): ObserverEvent => ({
   route_id: 'route:a-b',
   need: null,
   need_level: null,
+  goal: null,
 });
 
 describe('D9 — переподключение не теряет событий, появившихся во время разрыва', () => {

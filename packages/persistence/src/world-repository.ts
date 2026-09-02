@@ -155,6 +155,7 @@ export const initializeWorld = async (
             route_id: agent.routeId,
             hunger_baseline: agent.needBaseline.hunger,
             fatigue_baseline: agent.needBaseline.fatigue,
+            goal: agent.goal,
           })),
         )
         .execute();
@@ -302,6 +303,7 @@ const readWorldState = async (
       status: row.status,
       routeId: row.route_id,
       needBaseline: { hunger: row.hunger_baseline, fatigue: row.fatigue_baseline },
+      goal: row.goal,
     };
   }
 
@@ -666,7 +668,13 @@ export const loadWorldEvents = async (
  */
 const scheduledActionFromRow = (row: {
   readonly action_id: string;
-  readonly kind: 'journey.complete' | 'need.threshold' | 'agent.eat' | 'rest.complete';
+  readonly kind:
+    | 'journey.complete'
+    | 'need.threshold'
+    | 'agent.eat'
+    | 'rest.complete'
+    | 'agent.decide'
+    | 'agent.rest';
   readonly due_at: string;
   readonly priority: number;
   readonly entity_id: string;
@@ -691,6 +699,14 @@ const scheduledActionFromRow = (row: {
 
   if (row.kind === 'rest.complete') {
     return { ...base, kind: 'rest.complete' };
+  }
+
+  if (row.kind === 'agent.decide') {
+    return { ...base, kind: 'agent.decide' };
+  }
+
+  if (row.kind === 'agent.rest') {
+    return { ...base, kind: 'agent.rest' };
   }
 
   if (row.kind === 'agent.eat') {

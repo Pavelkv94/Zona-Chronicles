@@ -54,6 +54,7 @@ import {
 import { RUNTIME_ID_PREFIXES } from './identifier.ts';
 import { WORLD_EVENT_TYPES } from './world-event.ts';
 import { NeedKindSchema, NeedLevelSchema, type NeedKind } from './need.ts';
+import { GoalKindSchema } from './goal.ts';
 import {
   type ValidationResult,
   isValidationIssue,
@@ -112,6 +113,16 @@ export const ObserverAgentSchema = Type.Object(
       minimum: 0,
       description: 'Число съедобных предметов у агента.',
     }),
+    /**
+     * Что агент решил делать (I05).
+     *
+     * ЦЕЛЬ, а не разбор оценок. Разбор (`decision trace`) остаётся в каноническом журнале: §7
+     * `03_TECHNICAL_DESIGN` прямо запрещает публичному snapshot отдавать decision trace, и это
+     * не осторожность, а ADR-005 — зритель видит, что агент решил, а не как он считал. Показать
+     * таблицу оценок значило бы превратить внутренность движка в интерфейс, который потом
+     * нельзя изменить, не сломав зрителя.
+     */
+    goal: GoalKindSchema,
   },
   { $id: 'zona:observer-agent/1', additionalProperties: false },
 );
@@ -155,6 +166,8 @@ export const ObserverEventSchema = Type.Object(
     /** Нужда и достигнутый уровень; `null` у событий, к нуждам не относящихся (I04). */
     need: Type.Union([NeedKindSchema, Type.Null()]),
     need_level: Type.Union([NeedLevelSchema, Type.Null()]),
+    /** Выбранная цель; `null` у событий, к выбору не относящихся (I05). Разбора оценок нет. */
+    goal: Type.Union([GoalKindSchema, Type.Null()]),
   },
   { $id: 'zona:observer-event/1', additionalProperties: false },
 );

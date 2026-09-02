@@ -127,6 +127,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'resting',
     checksum: '532d9a001048a352e6dd6854d0d7be05022e5c2c87cc52b6f435e8d5506e352b',
   },
+  {
+    id: '0019',
+    name: 'goals',
+    checksum: '9ae5b50b250e40f6b90b2678ef828dd770782bce963d0c3b05c87584b6a30ea3',
+  },
 ];
 
 describe('реестр миграций', () => {

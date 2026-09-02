@@ -67,6 +67,7 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
       status: 'idle',
       routeId: null,
       needBaseline: { hunger: T0, fatigue: T0 },
+      goal: 'idle',
     };
     mutableRoutes[`route:${String(index)}`] = {
       id: `route:${String(index)}`,
@@ -130,8 +131,21 @@ const runScenario = async (
     expect(result.outcome).toBe('accepted');
   }
 
+  /**
+   * Мир крутится, ПОКА ему есть что делать, а не заранее отмеренное число раундов.
+   *
+   * Прежняя редакция отводила `агентов + 2` раунда, и этого хватало ровно пока на один путь
+   * приходилось одно действие. С I05-B прибытие порождает ещё и решение, и при `batchSize` 1
+   * счётчик обрывал прогон на середине — а тест сравнивал ПОРЯДОК завершений, поэтому обрыв
+   * читался как «порядок разошёлся», то есть указывал не туда, где причина.
+   *
+   * Потолок остаётся, но он страховка от зацикливания, а не часть утверждения: выход по нему
+   * — это провал теста, а не тихо укороченный прогон.
+   */
   const worldTimes: string[] = [];
-  for (let round = 0; round < travelMinutes.length + 2; round += 1) {
+  const maxRounds = travelMinutes.length * 8 + 8;
+  let idle = false;
+  for (let round = 0; round < maxRounds; round += 1) {
     const tick = await runWorldTick(db, {
       worldId: WORLD,
       owner: `w-${String(round)}`,
@@ -139,8 +153,12 @@ const runScenario = async (
       batchSize,
     });
     worldTimes.push(tick.worldTime);
-    if (tick.claimed === 0) break;
+    if (tick.claimed === 0) {
+      idle = true;
+      break;
+    }
   }
+  expect(idle).toBe(true);
 
   const events = await loadWorldEvents(db, WORLD);
   return {

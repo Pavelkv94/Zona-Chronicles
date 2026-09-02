@@ -94,14 +94,20 @@ describe('отвергнутое запланированное действие
     // Главное утверждение: очередь ПУСТА. Ни одно действие не осталось вечно ожидающим.
     expect(pending).toEqual([]);
     // Отказ виден и назван, а не растворился в успешных тиках.
-    expect(failed).toHaveLength(1);
-    expect(failed[0]?.failure_code).toBeTruthy();
-    expect(failed[0]?.lease_owner).toBeNull();
+    const staleFailure = failed.filter((a) => a.kind === 'journey.complete');
+    expect(staleFailure).toHaveLength(1);
+    expect(staleFailure[0]?.failure_code).toBeTruthy();
+    expect(staleFailure[0]?.lease_owner).toBeNull();
+
+    // Отказ ровно один, и он тот самый. Проверяется СОСТАВ, а не количество: мир после I05-B
+    // сам назначает агентам решения, и «отказов ровно столько, сколько названо» — это и есть
+    // утверждение о том, что очередь не крутится на собственных исходах.
+    expect(failed.map((a) => a.kind)).toEqual(['journey.complete']);
 
     // Честно: агент остался в пути. Мир не знает, чего хотел оператор, и чинить сам не вправе —
     // но и делать вид, что всё в порядке, больше не может.
     const state = await loadWorldState(db, FIXTURE_WORLD_ID);
-    expect(state?.agents[failed[0]!.entity_id]?.status).toBe('traveling');
+    expect(state?.agents[staleFailure[0]!.entity_id]?.status).toBe('traveling');
   });
 
   it('отвергнутое действие исключено из захвата, а не просто помечено', async () => {

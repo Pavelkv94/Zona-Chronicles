@@ -36,6 +36,7 @@ describe('evolve: journey.started', () => {
       status: 'traveling',
       routeId: 'route:yard-to-bridge',
       needBaseline: fixtureNeedBaseline(),
+      goal: 'idle',
     });
   });
 
@@ -93,6 +94,7 @@ describe('evolve: journey.completed', () => {
       status: 'idle',
       routeId: null,
       needBaseline: fixtureNeedBaseline(),
+      goal: 'idle',
     });
   });
 });
@@ -146,6 +148,7 @@ describe('M7 — снятие действия из расписания по п
           status: 'traveling',
           routeId: 'route:yard-to-bridge',
           needBaseline: fixtureNeedBaseline(),
+          goal: 'idle',
         },
       },
       items: {},
@@ -175,7 +178,12 @@ describe('M7 — снятие действия из расписания по п
       payload: { route_id: 'route:yard-to-bridge' },
     });
 
-    expect(Object.keys(next.scheduledActions)).toEqual(['evt_other']);
+    // Прибывший агент СВОБОДЕН, и мир немедленно назначает ему решение (I05): без этого он
+    // дошёл бы и замер навсегда. Ключ решения выводится из `event_id` факта-причины.
+    expect(Object.keys(next.scheduledActions).sort()).toEqual([
+      'evt_other',
+      'sched:decide:evt_done',
+    ]);
   });
 
   it('событие без caused_by применяется по-старому: журнал невосполним', () => {
@@ -189,6 +197,7 @@ describe('M7 — снятие действия из расписания по п
           status: 'traveling',
           routeId: 'route:yard-to-bridge',
           needBaseline: fixtureNeedBaseline(),
+          goal: 'idle',
         },
       },
       items: {},
@@ -217,7 +226,8 @@ describe('M7 — снятие действия из расписания по п
       payload: { route_id: 'route:yard-to-bridge' },
     });
 
-    expect(Object.keys(next.scheduledActions)).toEqual([]);
+    // Старое действие снято по прежнему признаку; новое — назначенное прибывшему решение.
+    expect(Object.keys(next.scheduledActions)).toEqual(['sched:decide:evt_done']);
   });
 });
 
@@ -272,14 +282,19 @@ describe('evolve: need.threshold.crossed (I04)', () => {
     // аренды невидимо очереди, поэтому мир тридцать секунд выглядит исправным даже когда
     // расписание с журналом уже разошлось. Проба мутацией это и показала.
     const next = evolve(stateWithPendingCrossing(), crossing(NEXT_AT));
-    expect(Object.keys(next.scheduledActions)).toEqual([
-      needThresholdActionId('agent:rook', 'fatigue', NEXT_AT),
-    ]);
+    // Второе действие — решение: изменившаяся нужда это повод выбрать цель, а агент свободен
+    // (I05). Оно перечислено ЯВНО, а не отфильтровано из сравнения: фильтр скрыл бы и лишнее
+    // действие, которого здесь быть не должно.
+    expect(Object.keys(next.scheduledActions).sort()).toEqual(
+      [needThresholdActionId('agent:rook', 'fatigue', NEXT_AT), 'sched:decide:evt_crossed'].sort(),
+    );
   });
 
   it('на крайнем уровне следующего действия не появляется: событий больше не будет', () => {
     const next = evolve(stateWithPendingCrossing(), crossing(null));
-    expect(Object.keys(next.scheduledActions)).toEqual([]);
+    // Пересечений больше не будет, но решение назначено: голод дошёл до предела, и это ровно
+    // тот момент, когда агенту есть о чём подумать.
+    expect(Object.keys(next.scheduledActions)).toEqual(['sched:decide:evt_crossed']);
   });
 
   it('момент отсчёта нужды не меняется: агент не поел, он просто дольше не ел', () => {

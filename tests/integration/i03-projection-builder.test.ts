@@ -64,6 +64,7 @@ const GENESIS = {
       // Генезисный запас: два пайка. Пересборка обязана прийти к тому же числу, что и
       // инкрементальная сборка, свернув тот же факт стока.
       food_carried: 2,
+      goal: 'idle' as const,
     },
     {
       agent_id: FIXTURE_OTHER_AGENT_ID,
@@ -73,6 +74,7 @@ const GENESIS = {
       route_id: null,
       needs: { hunger: 'normal' as const, fatigue: 'normal' as const },
       food_carried: 0,
+      goal: 'idle' as const,
     },
   ],
 };

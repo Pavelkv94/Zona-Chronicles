@@ -158,6 +158,9 @@ function seedAgents(content: GeneratorContent, seed: number, worldTime: string):
         NeedKind,
         string
       >,
+      // Решений свежий мир ещё не принимал. Праздность здесь — не умолчание «на всякий случай»,
+      // а тот же исход, который дал бы первый вызов выбора для спокойного тела.
+      goal: 'idle',
     };
     // `drawIndex` внутри потока начинается с 0 (RandomDraw); позиция после одного draw — 1.
     prngStreamPositions[streamKey] = draw.drawIndex + 1;

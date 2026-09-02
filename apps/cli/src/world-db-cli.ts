@@ -44,6 +44,7 @@ import {
   writeSnapshot,
   applyGrants,
   ensureApplicationRoles,
+  type CommandExecution,
   type DatabaseConnection,
   type Logger,
 } from '@zona/persistence';
@@ -57,6 +58,9 @@ import {
 } from './world.ts';
 
 const SILENT_LOGGER: Logger = { info: () => {}, warn: () => {}, error: () => {} };
+
+/** Потолок числа шагов очереди в одном `world tick`. Страховка, а не часть семантики. */
+const MAX_TICK_STEPS = 100_000;
 
 const flag = (args: readonly string[], name: string): string | undefined => {
   const index = args.indexOf(name);
@@ -505,11 +509,48 @@ export const runWorldTickCommand = async (
     return { stdout: `world tick: ${horizonResult.message}\n`, exitCode: 2 };
   }
 
-  const result = await runWorldTick(db, {
-    worldId: state.worldId,
-    owner: tickOwner(),
-    ...(horizonResult.horizon === undefined ? {} : { horizon: horizonResult.horizon }),
-  });
+  /**
+   * `world tick` доводит мир ДО ГОРИЗОНТА, а не делает один шаг очереди.
+   *
+   * Шаг планировщика обрабатывает ровно один момент мира — так требует дискретно-событийная
+   * семантика: пока момент не исчерпан, время не уходит вперёд, иначе действие, назначенное на
+   * этот момент, исполняется в следующем и летопись перестаёт быть последовательной.
+   *
+   * Но «довести мир до X» — это работа RUNNER-а, а не примитива очереди. Оператор просит
+   * горизонт, а не такт: цикл живёт здесь, где смысл команды и назван. Так же его крутит и
+   * worker.
+   *
+   * Потолок — страховка от мира, который никогда не замолкает; выход по нему это отказ, а не
+   * тихо укороченная работа.
+   */
+  const owner = tickOwner();
+  const executedAll: CommandExecution[] = [];
+  let claimedTotal = 0;
+  let worldTime = state.worldTime;
+  let quiet = false;
+  for (let step = 0; step < MAX_TICK_STEPS; step += 1) {
+    const step_ = await runWorldTick(db, {
+      worldId: state.worldId,
+      owner,
+      ...(horizonResult.horizon === undefined ? {} : { horizon: horizonResult.horizon }),
+    });
+    worldTime = step_.worldTime;
+    claimedTotal += step_.claimed;
+    executedAll.push(...step_.executed);
+    if (step_.claimed === 0) {
+      quiet = true;
+      break;
+    }
+  }
+  if (!quiet) {
+    return {
+      stdout:
+        `world tick: мир не дошёл до горизонта за ${String(MAX_TICK_STEPS)} шагов — ` +
+        'похоже на действие, которое бесконечно порождает само себя.\n',
+      exitCode: 1,
+    };
+  }
+  const result = { claimed: claimedTotal, executed: executedAll, worldTime };
 
   if (result.claimed === 0) {
     return {

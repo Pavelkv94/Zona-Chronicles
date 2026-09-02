@@ -87,6 +87,7 @@ const seedState = (): ObserverProjectionState =>
         route_id: null,
         needs: { hunger: 'normal', fatigue: 'normal' },
         food_carried: 0,
+        goal: 'idle' as const,
       },
     ],
   });
@@ -101,6 +102,7 @@ const feedEntry = (projectionSequence: number, eventId: string): ObserverEvent =
   route_id: 'route:a-b',
   need: null,
   need_level: null,
+  goal: null,
 });
 
 describe('D6 — шаг проекции атомарен', () => {

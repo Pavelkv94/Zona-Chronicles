@@ -64,6 +64,10 @@ export const truncateWorldData = async (db: DatabaseConnection): Promise<void> =
   await db.deleteFrom('command_attempt_rejections').execute();
   await db.deleteFrom('command_results').execute();
   await db.deleteFrom('world_events').execute();
+  // Предметы ссылаются на владельца-агента (0016), поэтому уходят раньше агентов. Пропуск
+  // держался незамеченным ровно потому, что ни один тест с предметами не чистил базу между
+  // случаями: недоеденный паёк оставлял агента неудаляемым, а ошибка приходила от FK.
+  await db.deleteFrom('items').execute();
   await db.deleteFrom('agents').execute();
   await db.deleteFrom('routes').execute();
   await db.deleteFrom('locations').execute();

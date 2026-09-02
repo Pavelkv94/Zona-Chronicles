@@ -50,6 +50,7 @@ const initialState: WorldState = {
       status: 'idle',
       routeId: null,
       needBaseline: { hunger: '2034-05-17T18:00:00.000Z', fatigue: '2034-05-17T18:00:00.000Z' },
+      goal: 'idle',
     },
   },
   routes: {

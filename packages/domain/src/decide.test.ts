@@ -112,6 +112,7 @@ describe('decide: journey.start — отказы', () => {
           status: 'traveling',
           routeId: 'route:yard-to-bridge',
           needBaseline: fixtureNeedBaseline(),
+          goal: 'idle',
         },
       },
     });

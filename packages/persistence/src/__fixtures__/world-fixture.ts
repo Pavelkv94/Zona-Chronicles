@@ -29,6 +29,7 @@ export const fixtureState = (): WorldState => ({
       status: 'idle',
       routeId: null,
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
+      goal: 'idle',
     },
     [FIXTURE_OTHER_AGENT_ID]: {
       id: FIXTURE_OTHER_AGENT_ID,
@@ -36,6 +37,7 @@ export const fixtureState = (): WorldState => ({
       status: 'idle',
       routeId: null,
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
+      goal: 'idle',
     },
   },
   routes: {
@@ -92,6 +94,7 @@ export const fixtureInitializationWithAgents = (count: number): WorldInitializat
       status: 'idle',
       routeId: null,
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
+      goal: 'idle',
     };
     agentNames[id] = `Бегун ${String(index)}`;
   }

@@ -8,10 +8,14 @@
  */
 import { sql } from 'kysely';
 import {
+  GOAL_KINDS,
   NEED_KINDS,
   NEED_LEVELS,
+  OBSERVER_AGENT_STATUSES,
+  type GoalKind,
   type NeedKind,
   type NeedLevel,
+  type ObserverAgent,
   type ObserverEvent,
   type ObserverWorldSnapshot,
 } from '@zona/contracts';
@@ -103,13 +107,17 @@ export const loadObserverSnapshot = async (
         agent_id: row.agent_id,
         name: row.name,
         location_id: row.location_id,
-        status: row.status === 'traveling' ? ('traveling' as const) : ('idle' as const),
+        // Статус проверяется по словарю, а не сводится к двум значениям: прежняя редакция
+        // показывала отдыхающего агента праздным, потому что всё, кроме `traveling`, объявляла
+        // `idle`. Дефект I05-A, найденный при подключении цели.
+        status: observerStatusFromRow(row.status, row.agent_id),
         route_id: row.route_id,
         needs: {
           hunger: needLevelFromRow(row.hunger_level, row.agent_id, 'hunger'),
           fatigue: needLevelFromRow(row.fatigue_level, row.agent_id, 'fatigue'),
         },
         food_carried: row.food_carried,
+        goal: goalFromRow(row.goal, row.agent_id),
       })),
     };
   });
@@ -165,6 +173,7 @@ export const loadObserverEvents = async (
       route_id: row.route_id,
       need: needKindFromRow(row.need, row.event_id),
       need_level: needLevelFromNullableRow(row.need_level, row.event_id),
+      goal: goalFromNullableRow(row.goal, row.event_id),
     })),
     earliestAvailableSequence:
       earliest === undefined
@@ -201,6 +210,7 @@ export const saveProjectionStep = async (
           route_id: event.route_id,
           need: event.need,
           need_level: event.need_level,
+          goal: event.goal,
         })
         .execute();
     }
@@ -216,6 +226,7 @@ export const saveProjectionStep = async (
           hunger_level: agent.needs.hunger,
           fatigue_level: agent.needs.fatigue,
           food_carried: agent.food_carried,
+          goal: agent.goal,
         })
         .where('world_id', '=', state.worldId)
         .where('agent_id', '=', agent.agent_id)
@@ -290,6 +301,7 @@ export const initializeProjection = async (
             hunger_level: agent.needs.hunger,
             fatigue_level: agent.needs.fatigue,
             food_carried: agent.food_carried,
+            goal: agent.goal,
           })),
         )
         .execute();
@@ -355,6 +367,24 @@ export const assertObserverRoleIsReadOnly = async (db: ProjectionDatabase): Prom
  * `normal`: строка, которую записал не этот код, означает рассинхронизацию схемы и кода, и
  * молчаливая подстановка показала бы зрителю спокойного агента вместо голодного.
  */
+const observerStatusFromRow = (value: string, agentId: string): ObserverAgent['status'] => {
+  if ((OBSERVER_AGENT_STATUSES as readonly string[]).includes(value)) {
+    return value as ObserverAgent['status'];
+  }
+  throw new Error(
+    `projection: у агента ${agentId} статус ${JSON.stringify(value)}, ` +
+      `а известны только ${OBSERVER_AGENT_STATUSES.join(', ')}`,
+  );
+};
+
+const goalFromRow = (value: string, agentId: string): GoalKind => {
+  if ((GOAL_KINDS as readonly string[]).includes(value)) return value as GoalKind;
+  throw new Error(
+    `projection: у агента ${agentId} цель ${JSON.stringify(value)}, ` +
+      `а известны только ${GOAL_KINDS.join(', ')}`,
+  );
+};
+
 const needLevelFromRow = (value: string, agentId: string, need: string): NeedLevel => {
   if ((NEED_LEVELS as readonly string[]).includes(value)) return value as NeedLevel;
   throw new Error(
@@ -365,6 +395,9 @@ const needLevelFromRow = (value: string, agentId: string, need: string): NeedLev
 
 const needLevelFromNullableRow = (value: string | null, eventId: string): NeedLevel | null =>
   value === null ? null : needLevelFromRow(value, eventId, 'событие ленты');
+
+const goalFromNullableRow = (value: string | null, eventId: string): GoalKind | null =>
+  value === null ? null : goalFromRow(value, eventId);
 
 const needKindFromRow = (value: string | null, eventId: string): NeedKind | null => {
   if (value === null) return null;

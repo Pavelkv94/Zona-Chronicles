@@ -34,7 +34,10 @@ import {
   type ProjectionDatabase,
 } from '@zona/projections';
 import {
+  GOAL_KINDS,
   NEED_LEVELS,
+  OBSERVER_AGENT_STATUSES,
+  type GoalKind,
   type NeedLevel,
   type ObserverAgent,
   type ObserverEvent,
@@ -245,6 +248,9 @@ export const genesisFromSnapshot = async (
       food_carried: Object.values(state.items).filter(
         (item) => item.ownerId === agent.id && item.kind === 'food',
       ).length,
+      // Свежий мир решений ещё не принимал: цель у всех — праздность. Дальше её меняют только
+      // факты `goal.chosen` и шаги, которые цель потребляют.
+      goal: 'idle' as const,
     })),
   };
 };
@@ -289,13 +295,14 @@ const currentFoldState = async (
         agent_id: row.agent_id,
         name: row.name,
         location_id: row.location_id,
-        status: row.status === 'traveling' ? ('traveling' as const) : ('idle' as const),
+        status: observerStatus(row.status, row.agent_id),
         route_id: row.route_id,
         needs: {
           hunger: needLevel(row.hunger_level, row.agent_id),
           fatigue: needLevel(row.fatigue_level, row.agent_id),
         },
         food_carried: row.food_carried,
+        goal: observerGoal(row.goal, row.agent_id),
       },
     ]),
   );
@@ -408,6 +415,31 @@ export const rebuildProjection = async (
  * Уровень нужды из строки проекции. Неизвестное значение — громкий сбой: подстановка `normal`
  * показала бы зрителю спокойного агента вместо голодного и была бы неотличима от нормы.
  */
+/**
+ * Статус агента, ПРОВЕРЕННЫЙ по словарю, а не приведённый типом.
+ *
+ * Прежняя редакция сводила всё, что не `traveling`, к `idle`, и это был дефект I05-A: после
+ * перезапуска сборщика отдыхающий агент показывался праздным — то есть проекция теряла факт,
+ * который сама же и записала. Незамеченным он остался потому, что путь перезапуска и путь
+ * отдыха до сих пор не пересекались ни в одном тесте.
+ */
+const observerStatus = (value: string, agentId: string): ObserverAgent['status'] => {
+  if ((OBSERVER_AGENT_STATUSES as readonly string[]).includes(value)) {
+    return value as ObserverAgent['status'];
+  }
+  throw new Error(
+    `projection-builder: у агента ${agentId} неизвестный статус ${JSON.stringify(value)}`,
+  );
+};
+
+/** Цель агента, проверенная по словарю. Неизвестная — громкий отказ, а не молчаливая праздность. */
+const observerGoal = (value: string, agentId: string): GoalKind => {
+  if ((GOAL_KINDS as readonly string[]).includes(value)) return value as GoalKind;
+  throw new Error(
+    `projection-builder: у агента ${agentId} неизвестная цель ${JSON.stringify(value)}`,
+  );
+};
+
 const needLevel = (value: string, agentId: string): NeedLevel => {
   if ((NEED_LEVELS as readonly string[]).includes(value)) return value as NeedLevel;
   throw new Error(

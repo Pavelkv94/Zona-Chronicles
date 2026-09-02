@@ -17,6 +17,7 @@ import { observedWorldTimeMigration } from './0015-observed-world-time.ts';
 import { itemsMigration } from './0016-items.ts';
 import { projectionFoodMigration } from './0017-projection-food.ts';
 import { restingMigration } from './0018-resting.ts';
+import { goalsMigration } from './0019-goals.ts';
 
 export type { Migration } from './types.ts';
 
@@ -48,4 +49,5 @@ export const migrations: readonly Migration[] = [
   itemsMigration,
   projectionFoodMigration,
   restingMigration,
+  goalsMigration,
 ];

@@ -73,6 +73,8 @@ describe('world event envelope v1 (§3)', () => {
       'agent.rested',
       // I05: отдых занял мировое время, поэтому у него появилось начало как отдельный факт.
       'rest.started',
+      // I05-B: агент выбрал цель. Разбор оценок входит в payload, но не в observer-контракт.
+      'goal.chosen',
     ]);
   });
 
@@ -425,6 +427,8 @@ describe('A8: union пригоден для исчерпывающей пров�
         return 'rested';
       case 'rest.started':
         return 'rest-started';
+      case 'goal.chosen':
+        return 'goal-chosen';
       default:
         return assertNeverWorldEvent(event);
     }

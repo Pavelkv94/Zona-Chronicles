@@ -88,12 +88,19 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
       routeId: null,
       // Путь нужды не трогает: агент дошёл, а не поел (I04).
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
+      // Прибытие цели не ставит: цель появится решением, которое мир только что назначил.
+      goal: 'idle',
     });
-    // Расписание опустело, но строка осталась помеченной выполненной (C2).
-    expect(Object.keys(state?.scheduledActions ?? {})).toHaveLength(0);
-    const rows = await db.selectFrom('scheduled_actions').selectAll().execute();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.completed_at).toBeInstanceOf(Date);
+    // Завершение пути ушло из расписания, а на его месте появилось РЕШЕНИЕ: прибывший агент
+    // свободен, и мир обязан дать ему выбрать, что делать дальше (I05-B). Без этой строки
+    // тест утверждал бы, что мир после прибытия замолкает, — а он именно этого делать не
+    // должен.
+    expect(Object.values(state?.scheduledActions ?? {}).map((action) => action.kind)).toEqual([
+      'agent.decide',
+    ]);
+    const rows = await db.selectFrom('scheduled_actions').selectAll().orderBy('kind').execute();
+    expect(rows).toHaveLength(2);
+    expect(rows.find((row) => row.kind === 'journey.complete')?.completed_at).toBeInstanceOf(Date);
 
     const events = await loadWorldEvents(db, FIXTURE_WORLD_ID);
     expect(events.map((event) => event.type)).toEqual(['journey.started', 'journey.completed']);
@@ -199,14 +206,27 @@ describe('nextDueAt — миру есть что делать, даже когд
     expect(waiting.claimed).toBe(0);
     expect(waiting.nextDueAt).toBe('2028-04-26T06:40:00.000Z');
 
-    // 3. Действие исполнено — миру снова нечего делать.
+    // 3. Действие исполнено — но миру ЕСТЬ что делать: прибывший агент свободен, и мир
+    // назначил ему решение на тот же момент (I05-B). «Нечего делать» наступает раундом позже,
+    // когда решение принято и оказалось праздностью.
     const done = await runWorldTick(db, {
       worldId: FIXTURE_WORLD_ID,
       owner: 'worker-1',
       horizon: '2028-04-26T06:40:00.000Z',
     });
     expect(done.claimed).toBe(1);
-    expect(done.nextDueAt).toBeNull();
+    expect(done.nextDueAt).toBe('2028-04-26T06:40:00.000Z');
+
+    // 4. Решение принято: спокойному агенту начинать нечего, и он остаётся празден. Факт
+    // записан — решение это факт, даже когда оно ничего не меняет, — а расписание пусто.
+    const decided = await runWorldTick(db, {
+      worldId: FIXTURE_WORLD_ID,
+      owner: 'worker-1',
+      horizon: '2028-04-26T06:40:00.000Z',
+    });
+    expect(decided.claimed).toBe(1);
+    expect(decided.executed[0]?.outcome).toBe('accepted');
+    expect(decided.nextDueAt).toBeNull();
   });
 
   it('срок — БЛИЖАЙШИЙ из ждущих, а не любой', async () => {

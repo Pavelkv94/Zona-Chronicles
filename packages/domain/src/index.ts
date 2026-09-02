@@ -16,6 +16,7 @@ export { DerivedIdFactory, SequentialIdFactory } from './ports/id-factory.ts';
 export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
 export {
   FixedRuleset,
+  PROTOTYPE_GOAL_WEIGHTS,
   PROTOTYPE_NEEDS,
   PROTOTYPE_REST_MINUTES,
   RULES_VERSION,
@@ -23,6 +24,14 @@ export {
   testRuleset,
   testRulesetVersions,
 } from './ports/ruleset.ts';
+
+export type { GoalDecision, GoalSituation, GoalWeights } from './goals.ts';
+export {
+  GOAL_SCORE_BOUNDS,
+  MAX_GOAL_DURATION_MINUTES,
+  chooseGoal,
+  requireValidGoalWeights,
+} from './goals.ts';
 
 export type { NeedConfig, NeedThresholdCrossing } from './needs.ts';
 export {
@@ -37,7 +46,9 @@ export {
 
 export type {
   AgentState,
+  AgentDecideAction,
   AgentEatAction,
+  AgentRestAction,
   AgentStatus,
   ItemState,
   JourneyCompleteAction,
@@ -47,7 +58,14 @@ export type {
   ScheduledAction,
   WorldState,
 } from './state.ts';
-export { SCHEDULED_ACTION_PRIORITY, agentEatActionId, needThresholdActionId } from './state.ts';
+export {
+  SCHEDULED_ACTION_PRIORITY,
+  agentDecideActionId,
+  agentEatActionId,
+  agentRestActionId,
+  isAgentFree,
+  needThresholdActionId,
+} from './state.ts';
 
 export type { DecideContext, DecideRejection, DecideResult, DraftWorldEvent } from './decide.ts';
 export { decide } from './decide.ts';

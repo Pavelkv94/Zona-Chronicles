@@ -26,10 +26,12 @@ import {
   type JourneyStartedEvent,
   type AgentAteEvent,
   type AgentRestedEvent,
+  type GoalChosenEvent,
   type NeedThresholdCrossedEvent,
   type PlanInvalidatedEvent,
   type RestStartedEvent,
 } from '@zona/contracts';
+import { chooseGoal, type GoalSituation } from './goals.ts';
 import { betterThan, needLevelAt, nextThresholdCrossing } from './needs.ts';
 import type { Clock } from './ports/clock.ts';
 import type { IdFactory } from './ports/id-factory.ts';
@@ -76,7 +78,8 @@ export type DraftWorldEvent =
   | Omit<NeedThresholdCrossedEvent, 'recorded_at'>
   | Omit<AgentAteEvent, 'recorded_at'>
   | Omit<AgentRestedEvent, 'recorded_at'>
-  | Omit<RestStartedEvent, 'recorded_at'>;
+  | Omit<RestStartedEvent, 'recorded_at'>
+  | Omit<GoalChosenEvent, 'recorded_at'>;
 
 export type DecideResult =
   | { readonly kind: 'accepted'; readonly events: readonly DraftWorldEvent[] }
@@ -131,6 +134,8 @@ export function decide(state: WorldState, command: Command, context: DecideConte
       return decideAgentRest(state, command, context);
     case 'rest.complete':
       return decideRestComplete(state, command, context);
+    case 'agent.decide':
+      return decideAgentDecide(state, command, context);
     default:
       return assertNeverCommand(command);
   }
@@ -590,4 +595,76 @@ function decideRestComplete(
       }),
     ],
   };
+}
+
+/**
+ * Выбор цели (I05, §6).
+ *
+ * Здесь собирается СИТУАЦИЯ — то, что мир знает об агенте в момент решения, — и передаётся в
+ * чистую `chooseGoal`. Разделение не косметическое: арифметика выбора проверяется свойствами на
+ * произвольных входах, а сборка ситуации — тем, что она читает состояние, а не выдумывает его.
+ *
+ * ## Почему решение принимается ВСЕГДА, даже когда цель не изменилась
+ *
+ * §4.4 плана итерации требовал обратного: публиковать `goal.chosen` только при смене цели, а
+ * подтверждение прежней цели отвергать названной причиной, чтобы действие ушло из очереди.
+ * Построение показало, что так нельзя, и причина не вкусовая.
+ *
+ * Отвергнутое запланированное действие остаётся в КАНОНИЧЕСКОМ состоянии навсегда: у отказа нет
+ * события, а расписание выводится только из событий. Операционно оно помечено `failed_at` и в
+ * очередь не возвращается, но из состояния мира не исчезает. При этом решение обязано снимать
+ * ждущие решения того же агента — иначе два факта одного такта дают два решения, и второе
+ * принимается по положению, которое первое уже учло. Снять же строку, у которой уже есть
+ * конечный исход, база не даёт (`scheduled_actions_single_outcome`), а прочитать её как
+ * отсутствующую нельзя: replay о `failed_at` не знает и оставил бы действие на месте —
+ * состояние из базы и состояние из журнала разошлись бы молча.
+ *
+ * Поэтому решение — это ФАКТ, и оно записывается всегда. Заодно оказалось, что так честнее:
+ * разбор решения, оставшегося праздным, — единственное место, где видно, ПОЧЕМУ голодающий
+ * агент ничего не предпринял. При отказе это объяснение жило бы в тексте отказа, то есть нигде.
+ */
+function decideAgentDecide(
+  state: WorldState,
+  command: Extract<Command, { type: 'agent.decide' }>,
+  context: DecideContext,
+): DecideResult {
+  const staleness = checkExpectedVersion(state, command);
+  if (staleness !== null) return staleness;
+
+  const agent = state.agents[command.actor_id];
+  if (agent === undefined) {
+    return rejected('actor_not_actionable', `актор ${command.actor_id} неизвестен миру`);
+  }
+
+  const at = toCanonicalIso(context.clock.now());
+  const needs = context.ruleset.needs;
+  const situation: GoalSituation = {
+    currentGoal: agent.goal,
+    // Ключи перечислены явно, а не собраны циклом по `NEED_KINDS`: `satisfies` требует ключ на
+    // каждый вид нужды, и новый вид не соберётся молча с отсутствующим уровнем.
+    needLevels: {
+      hunger: needLevelAt(agent.needBaseline.hunger, at, needs.hunger),
+      fatigue: needLevelAt(agent.needBaseline.fatigue, at, needs.fatigue),
+    } satisfies Readonly<Record<NeedKind, NeedLevel>>,
+    hasFood: hasEdibleItem(state, command.actor_id),
+    isIdle: agent.status === 'idle',
+    restMinutes: context.ruleset.restMinutes,
+  };
+
+  const decision = chooseGoal(situation, context.ruleset.goalWeights);
+
+  const chosen: Omit<GoalChosenEvent, 'recorded_at'> = {
+    ...draftEnvelope(state, command, context, at, agent.locationId, 0),
+    type: 'goal.chosen',
+    payload: { goal: decision.goal, previous_goal: agent.goal, trace: decision.trace },
+  };
+
+  return { kind: 'accepted', events: [chosen] };
+}
+
+/** Есть ли у агента съедобное. Исполнимость цели «поесть» — свойство мира, а не оценки. */
+function hasEdibleItem(state: WorldState, agentId: string): boolean {
+  return Object.values(state.items).some(
+    (item) => item.ownerId === agentId && EDIBLE_ITEM_KINDS.includes(item.kind),
+  );
 }

@@ -50,6 +50,7 @@ export const COMMAND_TYPES = [
   'agent.eat',
   'agent.rest',
   'rest.complete',
+  'agent.decide',
 ] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
@@ -226,6 +227,25 @@ export const RestCompletePayloadSchema = Type.Object(
   { additionalProperties: false, description: 'Завершение отдыха не требует параметров.' },
 );
 
+/**
+ * `agent.decide`: намерение агента выбрать цель (I05, §6).
+ *
+ * Payload пуст, и это решение, а не заготовка. Кандидаты, их оценки и выбор — это ВЫВОД из
+ * состояния мира и коэффициентов ruleset, а не вход команды. Передать сюда список целей значило
+ * бы дать формирователю команды право решать, из чего агенту выбирать, — то есть завести второй
+ * источник правды рядом с `decide`, способный разойтись с ним молча.
+ *
+ * Команду формирует расписание — тем же путём, что `journey.complete` и `need.threshold.cross`.
+ * У мира остаётся один способ измениться.
+ */
+export const AgentDecidePayloadSchema = Type.Object(
+  {},
+  {
+    additionalProperties: false,
+    description: 'Выбор цели не имеет входов: кандидаты выводятся из состояния мира и ruleset.',
+  },
+);
+
 const COMMAND_PAYLOAD_SCHEMAS = {
   'journey.start': JourneyStartPayloadSchema,
   'journey.complete': JourneyCompletePayloadSchema,
@@ -233,6 +253,7 @@ const COMMAND_PAYLOAD_SCHEMAS = {
   'agent.eat': AgentEatPayloadSchema,
   'agent.rest': AgentRestPayloadSchema,
   'rest.complete': RestCompletePayloadSchema,
+  'agent.decide': AgentDecidePayloadSchema,
 } as const;
 
 const commandEnvelopeFields = {
@@ -298,6 +319,7 @@ export const NeedThresholdCrossCommandSchema = commandVariant('need.threshold.cr
 export const AgentEatCommandSchema = commandVariant('agent.eat');
 export const AgentRestCommandSchema = commandVariant('agent.rest');
 export const RestCompleteCommandSchema = commandVariant('rest.complete');
+export const AgentDecideCommandSchema = commandVariant('agent.decide');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению — тот же приём и то же основание, что у
@@ -315,6 +337,7 @@ const COMMAND_VARIANT_SCHEMAS = {
   'agent.eat': AgentEatCommandSchema,
   'agent.rest': AgentRestCommandSchema,
   'rest.complete': RestCompleteCommandSchema,
+  'agent.decide': AgentDecideCommandSchema,
 } as const satisfies Readonly<Record<CommandType, unknown>>;
 
 export const CommandSchema = Type.Union(
@@ -332,6 +355,7 @@ export type NeedThresholdCrossCommand = Static<typeof NeedThresholdCrossCommandS
 export type AgentEatCommand = Static<typeof AgentEatCommandSchema>;
 export type AgentRestCommand = Static<typeof AgentRestCommandSchema>;
 export type RestCompleteCommand = Static<typeof RestCompleteCommandSchema>;
+export type AgentDecideCommand = Static<typeof AgentDecideCommandSchema>;
 
 /**
  * Перечисление вариантов, а не `Static<typeof CommandSchema>` — по тому же доводу, что у

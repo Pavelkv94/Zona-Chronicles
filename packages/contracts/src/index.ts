@@ -29,6 +29,17 @@ export {
 export { type ItemKind, ITEM_KINDS, ItemKindSchema } from './item.ts';
 
 export {
+  type DecisionTrace,
+  type GoalKind,
+  type GoalScoreLine,
+  GOAL_KINDS,
+  DecisionTraceSchema,
+  GoalKindSchema,
+  GoalScoreLineSchema,
+  goalRank,
+} from './goal.ts';
+
+export {
   type NeedKind,
   type NeedLevel,
   NEED_KINDS,
@@ -54,6 +65,7 @@ export {
   DRAW_COUNT_UNIT,
   DRAW_INDEX_UNIT,
   MILLISECOND_UNIT,
+  GOAL_SCORE_UNIT,
   NEED_FRACTION_UNIT,
   NUMERIC_ROUNDING_MODES,
   SCHEMA_VERSION_UNIT,
@@ -138,6 +150,7 @@ export {
   type NeedThresholdCrossCommand,
   type AgentEatCommand,
   type AgentRestCommand,
+  type AgentDecideCommand,
   type RestCompleteCommand,
   COMMAND_ENVELOPE_KEYS,
   COMMAND_FINGERPRINT_EXCLUDED_KEYS,
@@ -165,6 +178,7 @@ export {
   type NeedThresholdCrossedEvent,
   type AgentAteEvent,
   type AgentRestedEvent,
+  type GoalChosenEvent,
   type RestStartedEvent,
   type RandomAudit,
   type WorldEvent,

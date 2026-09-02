@@ -21,6 +21,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type {
+  GoalKind,
   NeedKind,
   NeedLevel,
   ObserverAgent,
@@ -41,6 +42,17 @@ const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
   'agent.ate': 'поел',
   'agent.rested': 'отдохнул',
   'rest.started': 'лёг отдыхать',
+  'goal.chosen': 'решил',
+};
+
+/**
+ * Цель словами. `idle` читается как отказ от дела, а не как пустая строка: факт «перестал
+ * что-либо затевать» произошёл, и лента, показавшая на его месте пробел, соврала бы молчанием.
+ */
+const GOAL_LABELS: Record<GoalKind, string> = {
+  idle: 'ничего не делать',
+  eat: 'поесть',
+  rest: 'отдохнуть',
 };
 
 /**
@@ -67,6 +79,11 @@ const describe = (event: ObserverEvent): string => {
   if (event.need !== null && event.need_level !== null) {
     return `${who}: ${NEED_LEVEL_LABELS[event.need][event.need_level]}${where}`;
   }
+  // Решение читается своей целью. Разбора оценок в ленте нет и не будет: зритель видит, ЧТО
+  // агент решил, а не как считал (§7 `03_TECHNICAL_DESIGN`, ADR-005).
+  if (event.goal !== null) {
+    return `${who} решил ${GOAL_LABELS[event.goal]}${where}`;
+  }
   return `${who} ${EVENT_LABELS[event.type]}${where}`;
 };
 
@@ -81,7 +98,9 @@ const agentCondition = (agent: ObserverAgent): string => {
     .filter((need) => agent.needs[need] !== 'normal')
     .map((need) => NEED_LEVEL_LABELS[need][agent.needs[need]]);
   const food = agent.food_carried === 0 ? 'еды нет' : `еды: ${String(agent.food_carried)}`;
-  return troubles.length === 0 ? food : `${troubles.join(', ')} · ${food}`;
+  // Цель показывается только когда она есть: «намерен ничего не делать» — это не намерение.
+  const goal = agent.goal === 'idle' ? [] : [`намерен ${GOAL_LABELS[agent.goal]}`];
+  return [...troubles, food, ...goal].join(' · ');
 };
 
 const worldClock = (iso: string): string => iso.replace('T', ' ').replace('.000Z', '');

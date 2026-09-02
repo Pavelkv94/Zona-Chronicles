@@ -160,6 +160,7 @@ export function applyObserverEvent(
           route_id: event.payload.route_id,
           need: null,
           need_level: null,
+          goal: null,
         },
       };
     }
@@ -196,6 +197,7 @@ export function applyObserverEvent(
           route_id: event.payload.route_id,
           need: null,
           need_level: null,
+          goal: null,
         },
       };
     }
@@ -214,6 +216,7 @@ export function applyObserverEvent(
           route_id: null,
           need: null,
           need_level: null,
+          goal: null,
         },
       };
     }
@@ -245,6 +248,7 @@ export function applyObserverEvent(
           route_id: null,
           need: event.payload.need,
           need_level: event.payload.to_level,
+          goal: null,
         },
       };
     }
@@ -255,6 +259,20 @@ export function applyObserverEvent(
       // не дублируется. А вот запас еды меняет именно этот факт — он и есть сток.
       const actorId = singleActor(event);
       const agent = base.agents[actorId];
+      /**
+       * Занятость: лёг отдыхать — занят, встал — свободен.
+       *
+       * Ветка `agent.rested` раньше оставляла статус прежним, и это был дефект I05-A: в каноне
+       * агент вставал, а на экране оставался лежать до конца существования мира. Найдено при
+       * подключении цели к проекции — обе стороны трогают одну и ту же строку, и вторая
+       * заставила прочитать первую.
+       */
+      const nextStatus =
+        event.type === 'rest.started'
+          ? ('resting' as const)
+          : event.type === 'agent.rested'
+            ? ('idle' as const)
+            : agent?.status;
       const nextAgents =
         agent === undefined
           ? base.agents
@@ -267,9 +285,17 @@ export function applyObserverEvent(
                   event.type === 'agent.ate'
                     ? Math.max(0, agent.food_carried - 1)
                     : agent.food_carried,
-                // Занятость: лёг отдыхать — занят, встал — свободен. Путь сюда не относится, у
-                // него свои ветки выше.
-                status: event.type === 'rest.started' ? 'resting' : agent.status,
+                status: nextStatus ?? agent.status,
+                /**
+                 * Цель ПОТРЕБЛЯЕТСЯ своим шагом (I05): поел — цель достигнута, отдохнул — тоже.
+                 * Проекция повторяет это правило, а не читает канон: карточка, показывающая
+                 * цель, которой у агента уже нет, врала бы ровно теми же словами, какими
+                 * говорила правду минуту назад.
+                 */
+                goal:
+                  event.type === 'agent.ate' || event.type === 'agent.rested'
+                    ? ('idle' as const)
+                    : agent.goal,
               },
             };
       return {
@@ -284,6 +310,38 @@ export function applyObserverEvent(
           route_id: null,
           need: null,
           need_level: null,
+          goal: null,
+        },
+      };
+    }
+    case 'goal.chosen': {
+      /**
+       * Зрителю показывается ЦЕЛЬ, а не разбор оценок.
+       *
+       * `trace` из payload сюда не переносится и перенесён не будет: §7 `03_TECHNICAL_DESIGN`
+       * прямо запрещает публичному слою decision trace, а ADR-005 объясняет, почему — таблица
+       * оценок это внутренность движка, и, будучи показанной, она станет интерфейсом, который
+       * потом нельзя изменить, не сломав зрителя.
+       */
+      const actorId = singleActor(event);
+      const agent = base.agents[actorId];
+      const nextAgents =
+        agent === undefined
+          ? base.agents
+          : { ...base.agents, [actorId]: { ...agent, goal: event.payload.goal } };
+      return {
+        state: { ...base, agents: nextAgents },
+        emitted: {
+          projection_sequence: projectionSequence,
+          event_id: event.event_id,
+          world_time: event.world_time,
+          type: event.type,
+          actor_ids: [...event.actor_ids],
+          location_id: event.location_id ?? null,
+          route_id: null,
+          need: null,
+          need_level: null,
+          goal: event.payload.goal,
         },
       };
     }

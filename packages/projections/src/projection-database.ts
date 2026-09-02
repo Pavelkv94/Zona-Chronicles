@@ -64,6 +64,8 @@ export interface ProjectionAgentsTable {
   fatigue_level: string;
   /** Запас съедобного (миграция 0017). Считается свёрткой по фактам, а не читается из канона. */
   food_carried: number;
+  /** Цель, запомненная из факта `goal.chosen` (миграция 0019). Разбора оценок здесь нет. */
+  goal: string;
 }
 
 export interface ProjectionEventsTable {
@@ -78,6 +80,8 @@ export interface ProjectionEventsTable {
   /** Нужда и достигнутый уровень; `null` у событий, к нуждам не относящихся (0014). */
   need: string | null;
   need_level: string | null;
+  /** Выбранная цель; `null` у событий, к выбору не относящихся (0019). */
+  goal: string | null;
 }
 
 /**

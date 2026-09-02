@@ -17,6 +17,7 @@
  */
 import type { NeedKind } from '@zona/contracts';
 import { requireValidNeedConfig, type NeedConfig } from '../needs.ts';
+import { MAX_GOAL_DURATION_MINUTES, requireValidGoalWeights, type GoalWeights } from '../goals.ts';
 
 export interface RulesetVersions {
   /** Совпадает с `ENVELOPE_SCHEMA_VERSION` контракта на момент выпуска этого ruleset. */
@@ -38,6 +39,8 @@ export interface Ruleset {
    * привал: у него будет своя цена при тех же порогах усталости.
    */
   readonly restMinutes: number;
+  /** Коэффициенты выбора цели §6 (I05): срочность по уровням, цена времени, порог смены. */
+  readonly goalWeights: GoalWeights;
 }
 
 /**
@@ -46,7 +49,7 @@ export interface Ruleset {
  * надеждой — content не имеет права импортировать domain, поэтому общего литерала быть не может,
  * а расхождение двух литералов уже стоило проекту неработающего worker-а (m13 аудита I03).
  */
-export const RULES_VERSION = '0.3.0';
+export const RULES_VERSION = '0.4.0';
 
 /**
  * Коэффициенты нужд прототипа.
@@ -65,6 +68,32 @@ export const RULES_VERSION = '0.3.0';
  */
 export const PROTOTYPE_REST_MINUTES = 480;
 
+/**
+ * Коэффициенты выбора цели прототипа.
+ *
+ * Числа подобраны так, чтобы ВЫБОР имел содержание, и проверяются поведением, а не вкусом:
+ *
+ * - срочность растёт скачком по уровням (0 / 400 / 900), а не плавно со значением нужды.
+ *   Значение — производная величина и измерение; фактом является уровень (§5, решение I04), и
+ *   решение, принятое по измерению, менялось бы между двумя соседними минутами без единого
+ *   факта, который это объяснил бы;
+ * - цена времени 25 тысячных за час делает полный отдых (8 часов) стоящим 200. При спокойном
+ *   теле отдых оценивается в −300 и не выбирается никогда; при `warning` — в +100, то есть
+ *   заметно, но слабее еды;
+ * - еда при `warning` оценивается в 300 и обгоняет отдых. Порядок «сначала поел, потом лёг»
+ *   получается СЛЕДСТВИЕМ цены времени, а не записан правилом: еда мгновенна, отдых нет;
+ * - порог смены цели 100 не даёт спокойному агенту начинать что-либо: при уровне `normal`
+ *   любая цель, кроме безделья, уходит в минус.
+ */
+export const PROTOTYPE_GOAL_WEIGHTS: GoalWeights = requireValidGoalWeights(
+  {
+    urgencyPermille: { normal: 0, warning: 400, critical: 900 },
+    timeCostPermillePerHour: 25,
+    switchMarginPermille: 100,
+  },
+  'goalWeights',
+);
+
 export const PROTOTYPE_NEEDS: Readonly<Record<NeedKind, NeedConfig>> = {
   hunger: requireValidNeedConfig(
     { minutesToFull: 1440, warningAtPermille: 450, criticalAtPermille: 750 },
@@ -80,20 +109,31 @@ export class FixedRuleset implements Ruleset {
   readonly versions: RulesetVersions;
   readonly needs: Readonly<Record<NeedKind, NeedConfig>>;
   readonly restMinutes: number;
+  readonly goalWeights: GoalWeights;
 
   constructor(
     versions: RulesetVersions,
     needs: Readonly<Record<NeedKind, NeedConfig>>,
     restMinutes: number,
+    goalWeights: GoalWeights,
   ) {
-    if (!Number.isSafeInteger(restMinutes) || restMinutes <= 0) {
+    // Верхняя граница появилась вместе с оценкой целей: цена времени пропорциональна
+    // длительности, поэтому неограниченная длительность делает неограниченной и оценку — а
+    // вместе с ней бессмысленным утверждение «оценка лежит в объявленном диапазоне».
+    if (
+      !Number.isSafeInteger(restMinutes) ||
+      restMinutes <= 0 ||
+      restMinutes > MAX_GOAL_DURATION_MINUTES
+    ) {
       throw new Error(
-        `ruleset: restMinutes обязан быть положительным целым числом минут, получено ${String(restMinutes)}`,
+        'ruleset: restMinutes обязан быть целым числом минут в ' +
+          `(0, ${MAX_GOAL_DURATION_MINUTES}], получено ${String(restMinutes)}`,
       );
     }
     this.versions = versions;
     this.needs = needs;
     this.restMinutes = restMinutes;
+    this.goalWeights = requireValidGoalWeights(goalWeights, 'goalWeights');
   }
 }
 
@@ -109,7 +149,12 @@ export function rulesetFor(versions: RulesetVersions): Ruleset {
         `${RULES_VERSION}; коэффициенты чужой версии неизвестны и не подставляются молча`,
     );
   }
-  return new FixedRuleset(versions, PROTOTYPE_NEEDS, PROTOTYPE_REST_MINUTES);
+  return new FixedRuleset(
+    versions,
+    PROTOTYPE_NEEDS,
+    PROTOTYPE_REST_MINUTES,
+    PROTOTYPE_GOAL_WEIGHTS,
+  );
 }
 
 /** Версии для тестов и dev-фикстур: текущая версия правил и первая версия контента. */
@@ -119,5 +164,10 @@ export function testRulesetVersions(): RulesetVersions {
 
 /** Ruleset для тестов и dev-фикстур. */
 export function testRuleset(): Ruleset {
-  return new FixedRuleset(testRulesetVersions(), PROTOTYPE_NEEDS, PROTOTYPE_REST_MINUTES);
+  return new FixedRuleset(
+    testRulesetVersions(),
+    PROTOTYPE_NEEDS,
+    PROTOTYPE_REST_MINUTES,
+    PROTOTYPE_GOAL_WEIGHTS,
+  );
 }

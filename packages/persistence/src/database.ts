@@ -84,6 +84,8 @@ export interface AgentsTable {
   /** Моменты мирового времени, с которых отсчитываются нужды (миграция 0014). */
   hunger_baseline: string;
   fatigue_baseline: string;
+  /** Цель, которой агент придерживается сейчас (миграция 0019). */
+  goal: 'idle' | 'eat' | 'rest';
 }
 
 /** Append-only журнал фактов. Права на `update`/`delete` не выдаются никому (миграция 0003). */
@@ -169,7 +171,13 @@ export interface OutboxTable {
 export interface ScheduledActionsTable {
   world_id: string;
   action_id: string;
-  kind: 'journey.complete' | 'need.threshold' | 'agent.eat' | 'rest.complete';
+  kind:
+    | 'journey.complete'
+    | 'need.threshold'
+    | 'agent.eat'
+    | 'rest.complete'
+    | 'agent.decide'
+    | 'agent.rest';
   due_at: string;
   priority: number;
   entity_id: string;
