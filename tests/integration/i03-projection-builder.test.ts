@@ -229,6 +229,30 @@ describe('D6/D7 — сборка observer projection', () => {
     expect(other?.food_carried).toBe(0);
   });
 
+  it('I06: ни опасность мира, ни черты характера в проекцию не попадают', async () => {
+    /**
+     * STOP-условие I06 на НАСТОЯЩИХ данных, а не на схеме.
+     *
+     * Contract-тест проверяет, что лишнее поле отвергается схемой; здесь проверяется, что его
+     * там нет вовсе. Разница существенная: схема ловит поле, попавшее в объект, а эта проверка
+     * ловит колонку, добавленную в проекционную таблицу «на всякий случай», — оттуда оно
+     * пришло бы уже валидным, если бы кто-то заодно расширил схему.
+     */
+    await runProjectionStep(deps());
+    const snapshot = await loadObserverSnapshot(projection, FIXTURE_WORLD_ID);
+    const page = await loadObserverEvents(projection, FIXTURE_WORLD_ID, { after: 0, limit: 100 });
+    const serialized = JSON.stringify({ snapshot, events: page.events });
+
+    expect(serialized).not.toContain('risk');
+    expect(serialized).not.toContain('caution');
+    // Проверка имеет смысл только если в КАНОНЕ опасность есть: иначе она проходила бы на пустом
+    // множестве, а фикстура однажды перестала бы её содержать незаметно.
+    const canonicalState = await loadWorldState(canonical, FIXTURE_WORLD_ID);
+    expect(
+      Object.values(canonicalState?.locations ?? {}).some((location) => location.risk > 0),
+    ).toBe(true);
+  });
+
   /**
    * D7: единственный поддерживаемый способ починки. Проверяется побайтовым совпадением, а не
    * «пересборка отработала»: пересборка, дающая другой результат, — это и есть тот дефект, от

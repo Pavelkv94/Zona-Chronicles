@@ -64,6 +64,8 @@ export interface LocationsTable {
   location_id: string;
   name: string;
   description: string;
+  /** Опасность места в тысячных (миграция 0021). Зрителю НЕ отдаётся. */
+  risk: number;
 }
 
 export interface RoutesTable {
@@ -72,6 +74,8 @@ export interface RoutesTable {
   from_location_id: string;
   to_location_id: string;
   travel_minutes: number;
+  /** Опасность дороги в тысячных (миграция 0021). Зрителю НЕ отдаётся. */
+  risk: number;
 }
 
 export interface AgentsTable {
@@ -88,6 +92,8 @@ export interface AgentsTable {
   goal: 'idle' | 'eat' | 'rest';
   /** Тождество текущего плана; `null` — плана нет (миграция 0020). */
   plan_id: string | null;
+  /** Осторожность в тысячных: множитель воспринимаемого риска (миграция 0021). */
+  caution: number;
 }
 
 /** Append-only журнал фактов. Права на `update`/`delete` не выдаются никому (миграция 0003). */

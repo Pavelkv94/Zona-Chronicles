@@ -56,12 +56,15 @@ describe('seedWorld', () => {
     }
   });
 
-  it('prng_stream_positions содержит ровно один draw на агента', () => {
+  it('prng_stream_positions содержит ровно два draw на агента', () => {
+    // Два, а не один: с I06 генезис разыгрывает не только стартовую локацию, но и осторожность.
+    // Число точное, а не «не меньше»: позиция потока — это то, с чего продолжится случайность
+    // после восстановления снимка, и незамеченный третий розыгрыш сдвинул бы весь мир.
     const { snapshot } = seedWorld(42);
     const positions = snapshot.prng_stream_positions;
     expect(Object.keys(positions).sort()).toEqual(PROTOTYPE_WORLD.agents.map((a) => a.id).sort());
     for (const value of Object.values(positions)) {
-      expect(value).toBe(1);
+      expect(value).toBe(2);
     }
   });
 

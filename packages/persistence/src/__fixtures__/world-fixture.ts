@@ -31,6 +31,7 @@ export const fixtureState = (): WorldState => ({
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
       goal: 'idle',
       planId: null,
+      caution: 1000,
     },
     [FIXTURE_OTHER_AGENT_ID]: {
       id: FIXTURE_OTHER_AGENT_ID,
@@ -40,7 +41,12 @@ export const fixtureState = (): WorldState => ({
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
       goal: 'idle',
       planId: null,
+      caution: 1000,
     },
+  },
+  locations: {
+    'loc:quiet-yard': { id: 'loc:quiet-yard', risk: 0 },
+    'loc:bridge': { id: 'loc:bridge', risk: 600 },
   },
   routes: {
     [FIXTURE_ROUTE_ID]: {
@@ -48,12 +54,14 @@ export const fixtureState = (): WorldState => ({
       fromLocationId: FIXTURE_START_LOCATION_ID,
       toLocationId: FIXTURE_END_LOCATION_ID,
       travelMinutes: 40,
+      risk: 300,
     },
     [FIXTURE_BACK_ROUTE_ID]: {
       id: FIXTURE_BACK_ROUTE_ID,
       fromLocationId: FIXTURE_END_LOCATION_ID,
       toLocationId: FIXTURE_START_LOCATION_ID,
       travelMinutes: 40,
+      risk: 300,
     },
   },
   items: {},
@@ -98,6 +106,7 @@ export const fixtureInitializationWithAgents = (count: number): WorldInitializat
       needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME },
       goal: 'idle',
       planId: null,
+      caution: 1000,
     };
     agentNames[id] = `Бегун ${String(index)}`;
   }

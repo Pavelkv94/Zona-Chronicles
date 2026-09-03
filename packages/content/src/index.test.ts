@@ -21,9 +21,9 @@ describe('PROTOTYPE_WORLD (PLAN §6 fixtures)', () => {
     expect(PROTOTYPE_WORLD.worldId.startsWith('world:')).toBe(true);
   });
 
-  it('содержит от 2 до 4 локаций (PLAN §6)', () => {
+  it('содержит от 2 до 6 локаций (I06: добавлен овраг)', () => {
     expect(PROTOTYPE_WORLD.locations.length).toBeGreaterThanOrEqual(2);
-    expect(PROTOTYPE_WORLD.locations.length).toBeLessThanOrEqual(4);
+    expect(PROTOTYPE_WORLD.locations.length).toBeLessThanOrEqual(6);
   });
 
   /**
@@ -32,9 +32,34 @@ describe('PROTOTYPE_WORLD (PLAN §6 fixtures)', () => {
    * порождался и никуда не шёл; после I03 за ним наблюдают, а мир без обратных маршрутов
    * замирает через несколько переходов. Нижняя граница не тронута.
    */
-  it('содержит от 1 до 6 маршрутов (I03: связный граф с возвратом)', () => {
+  it('содержит от 1 до 10 маршрутов (I06: у мира появился обход)', () => {
+    // Верхняя граница поднята вместе с оврагом: из двора теперь выходят ДВЕ дороги, иначе
+    // «выбрал обход» невыразимо. Граница остаётся — она ловит карту, разросшуюся незаметно.
     expect(PROTOTYPE_WORLD.routes.length).toBeGreaterThanOrEqual(1);
-    expect(PROTOTYPE_WORLD.routes.length).toBeLessThanOrEqual(6);
+    expect(PROTOTYPE_WORLD.routes.length).toBeLessThanOrEqual(10);
+  });
+
+  it('из какой-то локации выходит больше одной дороги: иначе выбор дороги невыразим', () => {
+    // Прямая проверка предпосылки I06. Без неё карта могла бы вернуться к «одна дорога из
+    // каждой точки», и все тесты выбора остались бы зелёными, ничего не проверяя.
+    const outgoing = new Map<string, number>();
+    for (const route of PROTOTYPE_WORLD.routes) {
+      outgoing.set(route.fromLocationId, (outgoing.get(route.fromLocationId) ?? 0) + 1);
+    }
+    expect([...outgoing.values()].some((count) => count > 1)).toBe(true);
+  });
+
+  it('у каждого места и каждой дороги опасность объявлена и лежит в пределах тысячных', () => {
+    for (const location of PROTOTYPE_WORLD.locations) {
+      expect(Number.isSafeInteger(location.risk)).toBe(true);
+      expect(location.risk).toBeGreaterThanOrEqual(0);
+      expect(location.risk).toBeLessThanOrEqual(1000);
+    }
+    for (const route of PROTOTYPE_WORLD.routes) {
+      expect(Number.isSafeInteger(route.risk)).toBe(true);
+      expect(route.risk).toBeGreaterThanOrEqual(0);
+      expect(route.risk).toBeLessThanOrEqual(1000);
+    }
   });
 
   /**

@@ -23,6 +23,7 @@ import { sql } from 'kysely';
 import type {
   AgentState,
   ItemState,
+  LocationState,
   RouteDefinition,
   RulesetVersions,
   ScheduledAction,
@@ -120,6 +121,10 @@ export const initializeWorld = async (
             location_id: location.id,
             name: location.name,
             description: location.description,
+            // Опасность берётся из КАНОНИЧЕСКОГО состояния, а не из контента: в состояние она
+            // уже попала через генератор, и второй путь из контента дал бы два источника одной
+            // величины, способные разойтись при любой правке генезиса.
+            risk: state.locations[location.id]?.risk ?? 0,
           })),
         )
         .execute();
@@ -136,6 +141,7 @@ export const initializeWorld = async (
             from_location_id: route.fromLocationId,
             to_location_id: route.toLocationId,
             travel_minutes: route.travelMinutes,
+            risk: route.risk,
           })),
         )
         .execute();
@@ -157,6 +163,7 @@ export const initializeWorld = async (
             fatigue_baseline: agent.needBaseline.fatigue,
             goal: agent.goal,
             plan_id: agent.planId,
+            caution: agent.caution,
           })),
         )
         .execute();
@@ -271,12 +278,18 @@ const readWorldState = async (
     .executeTakeFirst();
   if (world === undefined) return null;
 
-  const [agentRows, routeRows, itemRows, actionRows] = await Promise.all([
+  const [agentRows, locationRows, routeRows, itemRows, actionRows] = await Promise.all([
     db
       .selectFrom('agents')
       .selectAll()
       .where('world_id', '=', worldId)
       .orderBy('agent_id')
+      .execute(),
+    db
+      .selectFrom('locations')
+      .selectAll()
+      .where('world_id', '=', worldId)
+      .orderBy('location_id')
       .execute(),
     db
       .selectFrom('routes')
@@ -306,7 +319,13 @@ const readWorldState = async (
       needBaseline: { hunger: row.hunger_baseline, fatigue: row.fatigue_baseline },
       goal: row.goal,
       planId: row.plan_id,
+      caution: row.caution,
     };
+  }
+
+  const locations: Record<string, LocationState> = {};
+  for (const row of locationRows) {
+    locations[row.location_id] = { id: row.location_id, risk: row.risk };
   }
 
   const routes: Record<string, RouteDefinition> = {};
@@ -316,6 +335,7 @@ const readWorldState = async (
       fromLocationId: row.from_location_id,
       toLocationId: row.to_location_id,
       travelMinutes: row.travel_minutes,
+      risk: row.risk,
     };
   }
 
@@ -339,6 +359,7 @@ const readWorldState = async (
     worldTime: world.world_time,
     sequence: requireSafeInteger(world.last_sequence, `worlds.last_sequence(${worldId})`),
     agents,
+    locations,
     routes,
     items,
     scheduledActions,

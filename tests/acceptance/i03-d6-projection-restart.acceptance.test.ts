@@ -56,8 +56,10 @@ import {
 import {
   createDatabase,
   loadWorldEvents,
+  loadWorldState,
   parseDatabaseConnectionUrl,
 } from '../../packages/persistence/src/index.ts';
+import { PROTOTYPE_WORLD } from '../../packages/content/src/index.ts';
 import {
   createProjectionDatabase,
   loadObserverEvents,
@@ -81,12 +83,29 @@ const ROLE_PASSWORD = 'zona_local_dev_only';
 const SEED = 42;
 const WORLD_ID = 'world:prototype';
 
-/** Маршруты кольца: агент ходит туда-обратно, поэтому событий можно сделать сколько нужно. */
-const RING: Readonly<Record<string, readonly [string, string]>> = {
-  'agent:rook': ['route:yard-to-bridge', 'route:bridge-to-yard'],
-  'agent:kite': ['route:yard-to-bridge', 'route:bridge-to-yard'],
-  'agent:finch': ['route:bridge-to-checkpoint', 'route:checkpoint-to-bridge'],
-  'agent:swift': ['route:checkpoint-to-bridge', 'route:bridge-to-checkpoint'],
+/**
+ * Кольцо «туда-обратно» для каждого агента, ВЫВЕДЕННОЕ из карты и из того, где агент стоит.
+ *
+ * Раньше пары маршрутов были выписаны руками, и это держалось на расстановке, которую даёт
+ * конкретный seed. Расстановка сменилась вместе с картой (I06 добавил овраг и второй розыгрыш в
+ * генезисе) — и тест упал с `route_unavailable`, то есть по причине, к его утверждению отношения
+ * не имеющей. Здесь он больше не знает карту наизусть: он спрашивает мир.
+ */
+const ringFor = (
+  agents: Readonly<Record<string, string>>,
+): Readonly<Record<string, readonly [string, string]>> => {
+  const ring: Record<string, readonly [string, string]> = {};
+  for (const [agentId, locationId] of Object.entries(agents)) {
+    const outbound = PROTOTYPE_WORLD.routes.find((route) => route.fromLocationId === locationId);
+    if (outbound === undefined) continue;
+    const inbound = PROTOTYPE_WORLD.routes.find(
+      (route) =>
+        route.fromLocationId === outbound.toLocationId && route.toLocationId === locationId,
+    );
+    if (inbound === undefined) continue;
+    ring[agentId] = [outbound.id, inbound.id];
+  }
+  return ring;
 };
 
 const roleUrl = (url: string, user: string): string => {
@@ -104,6 +123,19 @@ describe('I03 D6 — убитый сборщик проекции догоняе
 
   const cli = (argv: readonly string[]) =>
     spawnWorldCliDirect(argv, { env: { DATABASE_URL: db.url } });
+
+  /** Где сейчас стоит каждый агент — по каноническому состоянию, а не по памяти о seed. */
+  const agentLocations = async (): Promise<Readonly<Record<string, string>>> => {
+    const canonical = createDatabase(parseDatabaseConnectionUrl(db.url));
+    try {
+      const state = await loadWorldState(canonical, WORLD_ID);
+      return Object.fromEntries(
+        Object.values(state?.agents ?? {}).map((agent) => [agent.id, agent.locationId]),
+      );
+    } finally {
+      await canonical.destroy();
+    }
+  };
 
   const canonicalLog = async (): Promise<readonly string[]> => {
     const canonical = createDatabase(parseDatabaseConnectionUrl(db.url));
@@ -160,14 +192,18 @@ describe('I03 D6 — убитый сборщик проекции догоняе
 
     // Наполняем журнал: четыре агента по кольцу, чтобы догон был не мгновенным и убийство
     // имело шанс попасть внутрь него.
-    for (const [agentId, [outbound]] of Object.entries(RING)) {
+    const ring = ringFor(await agentLocations());
+    // Кольцо обязано быть непустым и покрывать почти всех: иначе журнал не наполнится, и
+    // «убийство попало внутрь догона» проверялось бы на мире, где догонять нечего.
+    expect(Object.keys(ring).length).toBeGreaterThanOrEqual(3);
+    for (const [agentId, [outbound]] of Object.entries(ring)) {
       const started = cli(['world', 'run', '--agent', agentId, '--route', outbound]);
       expect(started.exitCode, started.stdout).toBe(0);
     }
     // Доводим пути до конца БЕЗ сборщика: канонический журнал наполняется, проекция отстаёт.
     const tick = cli(['world', 'tick', '--advance', '120']);
     expect(tick.exitCode, tick.stdout).toBe(0);
-    for (const [agentId, [, inbound]] of Object.entries(RING)) {
+    for (const [agentId, [, inbound]] of Object.entries(ring)) {
       expect(cli(['world', 'run', '--agent', agentId, '--route', inbound]).exitCode).toBe(0);
     }
     expect(cli(['world', 'tick', '--advance', '120']).exitCode).toBe(0);

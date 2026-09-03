@@ -69,6 +69,35 @@ const validEvent = () => ({
   goal: null,
 });
 
+/**
+ * I06 — STOP-условие итерации выражено схемой, а не намерением.
+ *
+ * «Canonical risk протекает в public state» — это то, чего быть не должно; проверять это можно
+ * только попыткой протечь. Схема с `additionalProperties: false` отвергает лишнее поле, откуда бы
+ * оно ни пришло — из колонки таблицы, из свёртки или из чужой правки.
+ */
+describe('observer: canonical risk и черты характера наружу не выходят (I06)', () => {
+  it('поле risk у места отвергается схемой снимка', () => {
+    const base = validSnapshot();
+    const snapshot = { ...base, nodes: [{ ...base.nodes[0], risk: 600 }] };
+    expect(isValidationFailure(decodeObserverWorldSnapshot(snapshot))).toBe(true);
+  });
+
+  it('поле risk у дороги отвергается схемой снимка', () => {
+    const base = validSnapshot();
+    const snapshot = { ...base, edges: [{ ...base.edges[0], risk: 400 }] };
+    expect(isValidationFailure(decodeObserverWorldSnapshot(snapshot))).toBe(true);
+  });
+
+  it('осторожность агента отвергается схемой снимка', () => {
+    // Черта характера — внутренность движка ровно в том же смысле, что и разбор оценок: её показ
+    // превратил бы модель поведения в интерфейс, который потом нельзя изменить.
+    const base = validSnapshot();
+    const snapshot = { ...base, agents: [{ ...base.agents[0], caution: 1200 }] };
+    expect(isValidationFailure(decodeObserverWorldSnapshot(snapshot))).toBe(true);
+  });
+});
+
 describe('observer: публичный ответ не несёт канонических и скрытых полей', () => {
   it('snapshot принимает валидное тело', () => {
     const result = decodeObserverWorldSnapshot(validSnapshot());

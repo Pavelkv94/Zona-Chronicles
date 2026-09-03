@@ -496,6 +496,7 @@ function applyPlanInvalidated(
           ...agent,
           goal: 'idle',
           planId: null,
+          caution: 1000,
           // Путь сорванным планом не отменяется: маршрут выбирает оператор, а не агент.
           status: agent.status === 'resting' ? 'idle' : agent.status,
         },

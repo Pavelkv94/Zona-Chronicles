@@ -377,6 +377,20 @@ export const GOAL_SCORE_UNIT = defineNumericUnit({
   max: 1_000_000,
 });
 
+/**
+ * Опасность места или дороги (I06, `07_MVP_MECHANICS_SPEC` §8).
+ *
+ * Тысячные, как у нужды и оценки цели: величины одной природы обязаны жить в одном масштабе,
+ * иначе каждое сравнение начинается с деления. Ноль — безопасно, тысяча — опаснее некуда.
+ */
+export const RISK_UNIT = defineNumericUnit({
+  id: 'ratio.risk',
+  description: 'Опасность 0..1; minor unit — тысячная (3 знака).',
+  minorUnitsPerMajor: 1000,
+  min: 0,
+  max: 1000,
+});
+
 export const MILLISECOND_UNIT = defineNumericUnit({
   id: 'time.second',
   description: 'Момент/длительность в секундах; minor unit — миллисекунда (3 знака).',

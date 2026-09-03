@@ -69,12 +69,14 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
       needBaseline: { hunger: T0, fatigue: T0 },
       goal: 'idle',
       planId: null,
+      caution: 1000,
     };
     mutableRoutes[`route:${String(index)}`] = {
       id: `route:${String(index)}`,
       fromLocationId: 'loc:a',
       toLocationId: 'loc:b',
       travelMinutes: minutes,
+      risk: 0,
     };
   });
   return {
@@ -83,6 +85,10 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
     worldTime: T0,
     sequence: 0,
     agents,
+    locations: {
+      'loc:a': { id: 'loc:a', risk: 0 },
+      'loc:b': { id: 'loc:b', risk: 0 },
+    },
     routes,
     items: {},
     scheduledActions: {},

@@ -42,6 +42,7 @@ import {
   nextThresholdCrossing,
   type AgentState,
   type ItemState,
+  type LocationState,
   type NeedThresholdAction,
   type RouteDefinition as DomainRouteDefinition,
   type Ruleset,
@@ -58,12 +59,13 @@ import { NEED_KINDS, type NeedKind } from '@zona/contracts';
 export interface GeneratorContent {
   readonly worldId: string;
   readonly initialWorldTime: string;
-  readonly locations: readonly { readonly id: string }[];
+  readonly locations: readonly { readonly id: string; readonly risk: number }[];
   readonly routes: readonly {
     readonly id: string;
     readonly fromLocationId: string;
     readonly toLocationId: string;
     readonly travelMinutes: number;
+    readonly risk: number;
   }[];
   readonly agents: readonly { readonly id: string }[];
   readonly items: readonly {
@@ -119,6 +121,15 @@ function canonicalInstant(iso: string, label: string): string {
   return parsed.iso;
 }
 
+/**
+ * Границы осторожности в тысячных. Тысяча — нейтрально; ниже — беспечнее, выше — пугливее.
+ *
+ * Диапазон намеренно широк: при узком разбросе различие между агентами тонуло бы в округлении, и
+ * «разные агенты выбирают разное» проверялось бы на различии, которого почти нет.
+ */
+const MIN_CAUTION_PERMILLE = 500;
+const MAX_CAUTION_PERMILLE = 1500;
+
 interface SeededAgents {
   readonly agents: Readonly<Record<string, AgentState>>;
   readonly prngStreamPositions: Readonly<Record<string, number>>;
@@ -147,6 +158,24 @@ function seedAgents(content: GeneratorContent, seed: number, worldTime: string):
       content.locations.length - 1,
     );
     const location = content.locations[index]!;
+    /**
+     * Осторожность — ВТОРОЙ розыгрыш того же потока (I06).
+     *
+     * Тем же потоком, а не отдельным: поток разделён по агенту (`agent:<id>`, A7), и внутри него
+     * порядок розыгрышей фиксирован. Отдельный поток «caution:<id>» дал бы то же самое, но завёл
+     * бы второй ключ, который потом пришлось бы держать согласованным с первым при любом
+     * изменении генезиса.
+     *
+     * Диапазон — от беспечности до пугливости, целыми тысячными: значение входит в каноническое
+     * состояние, а дробь `canonicalize` отвергает.
+     */
+    const cautionDraw = random.draw(streamKey);
+    const caution =
+      MIN_CAUTION_PERMILLE +
+      Math.min(
+        Math.floor(cautionDraw.value * (MAX_CAUTION_PERMILLE - MIN_CAUTION_PERMILLE + 1)),
+        MAX_CAUTION_PERMILLE - MIN_CAUTION_PERMILLE,
+      );
     agents[agentDef.id] = {
       id: agentDef.id,
       locationId: location.id,
@@ -162,9 +191,10 @@ function seedAgents(content: GeneratorContent, seed: number, worldTime: string):
       // а тот же исход, который дал бы первый вызов выбора для спокойного тела.
       goal: 'idle',
       planId: null,
+      caution,
     };
-    // `drawIndex` внутри потока начинается с 0 (RandomDraw); позиция после одного draw — 1.
-    prngStreamPositions[streamKey] = draw.drawIndex + 1;
+    // `drawIndex` внутри потока начинается с 0 (RandomDraw); позиция после ДВУХ draw — 2.
+    prngStreamPositions[streamKey] = cautionDraw.drawIndex + 1;
   }
 
   return { agents, prngStreamPositions };
@@ -191,9 +221,25 @@ function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainR
       fromLocationId: route.fromLocationId,
       toLocationId: route.toLocationId,
       travelMinutes: route.travelMinutes,
+      risk: route.risk,
     };
   }
   return routes;
+}
+
+/**
+ * Локации в каноническом состоянии (I06).
+ *
+ * До появления опасности домену от локаций не было нужно ничего: агент помнил свой `locationId`,
+ * и этого хватало. Теперь у места есть свойство, от которого зависит решение, — и значит, место
+ * входит в состояние, а не остаётся справочником проекции.
+ */
+function buildLocations(content: GeneratorContent): Readonly<Record<string, LocationState>> {
+  const locations: Record<string, LocationState> = {};
+  for (const location of content.locations) {
+    locations[location.id] = { id: location.id, risk: location.risk };
+  }
+  return locations;
 }
 
 /**
@@ -281,6 +327,7 @@ export function seedWorld(
     worldTime,
     sequence: 0,
     agents,
+    locations: buildLocations(content),
     routes,
     items: buildItems(content),
     // Расписание свежего мира НЕ пусто, и это исключение названо явно.

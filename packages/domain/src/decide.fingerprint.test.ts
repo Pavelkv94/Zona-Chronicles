@@ -31,7 +31,12 @@ const state = (): WorldState => ({
       needBaseline: { hunger: WORLD_TIME, fatigue: WORLD_TIME },
       goal: 'idle',
       planId: null,
+      caution: 1000,
     },
+  },
+  locations: {
+    'loc:quiet-yard': { id: 'loc:quiet-yard', risk: 0 },
+    'loc:bridge': { id: 'loc:bridge', risk: 600 },
   },
   routes: {
     'route:a': {
@@ -39,6 +44,7 @@ const state = (): WorldState => ({
       fromLocationId: 'loc:yard',
       toLocationId: 'loc:bridge',
       travelMinutes: 40,
+      risk: 300,
     },
   },
   items: {},

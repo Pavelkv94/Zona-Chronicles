@@ -38,6 +38,7 @@ describe('evolve: journey.started', () => {
       needBaseline: fixtureNeedBaseline(),
       goal: 'idle',
       planId: null,
+      caution: 1000,
     });
   });
 
@@ -97,6 +98,7 @@ describe('evolve: journey.completed', () => {
       needBaseline: fixtureNeedBaseline(),
       goal: 'idle',
       planId: null,
+      caution: 1000,
     });
   });
 });
@@ -152,6 +154,7 @@ describe('M7 — снятие действия из расписания по п
           needBaseline: fixtureNeedBaseline(),
           goal: 'idle',
           planId: null,
+          caution: 1000,
         },
       },
       items: {},
@@ -202,6 +205,7 @@ describe('M7 — снятие действия из расписания по п
           needBaseline: fixtureNeedBaseline(),
           goal: 'idle',
           planId: null,
+          caution: 1000,
         },
       },
       items: {},

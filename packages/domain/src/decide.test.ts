@@ -114,6 +114,7 @@ describe('decide: journey.start — отказы', () => {
           needBaseline: fixtureNeedBaseline(),
           goal: 'idle',
           planId: null,
+          caution: 1000,
         },
       },
     });
@@ -138,6 +139,7 @@ describe('decide: journey.start — отказы', () => {
           fromLocationId: 'loc:far-away',
           toLocationId: 'loc:bridge',
           travelMinutes: 10,
+          risk: 300,
         },
       },
     });

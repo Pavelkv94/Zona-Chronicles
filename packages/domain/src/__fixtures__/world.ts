@@ -40,7 +40,12 @@ export function fixtureWorldState(overrides: Partial<WorldState> = {}): WorldSta
         needBaseline: fixtureNeedBaseline(),
         goal: 'idle',
         planId: null,
+        caution: 1000,
       },
+    },
+    locations: {
+      'loc:quiet-yard': { id: 'loc:quiet-yard', risk: 0 },
+      'loc:bridge': { id: 'loc:bridge', risk: 600 },
     },
     routes: {
       'route:yard-to-bridge': {
@@ -48,6 +53,7 @@ export function fixtureWorldState(overrides: Partial<WorldState> = {}): WorldSta
         fromLocationId: 'loc:quiet-yard',
         toLocationId: 'loc:bridge',
         travelMinutes: 40,
+        risk: 300,
       },
     },
     items: {},

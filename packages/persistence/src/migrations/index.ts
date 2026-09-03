@@ -19,6 +19,7 @@ import { projectionFoodMigration } from './0017-projection-food.ts';
 import { restingMigration } from './0018-resting.ts';
 import { goalsMigration } from './0019-goals.ts';
 import { plansMigration } from './0020-plans.ts';
+import { riskMigration } from './0021-risk.ts';
 
 export type { Migration } from './types.ts';
 
@@ -52,4 +53,5 @@ export const migrations: readonly Migration[] = [
   restingMigration,
   goalsMigration,
   plansMigration,
+  riskMigration,
 ];

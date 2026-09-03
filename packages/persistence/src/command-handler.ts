@@ -273,7 +273,11 @@ const changedAgents = (before: WorldState, after: WorldState): readonly AgentSta
       // Цель меняется решением и снимается достигнутым шагом (I05).
       previous.goal !== agent.goal ||
       // Тождество плана живёт вместе с целью, но снимается и срывом (I05-C).
-      previous.planId !== agent.planId
+      previous.planId !== agent.planId ||
+      // Осторожность неизменна с генезиса, и сравнение здесь — не про её изменение, а про
+      // guard: перечисление полей ручное, и забытое поле роняет команду сверкой checksum
+      // только если о нём помнит и читатель, и писатель.
+      previous.caution !== agent.caution
     );
   });
 
@@ -558,6 +562,7 @@ export const executeCommand = async (
             fatigue_baseline: agent.needBaseline.fatigue,
             goal: agent.goal,
             plan_id: agent.planId,
+            caution: agent.caution,
           })
           .where('world_id', '=', command.world_id)
           .where('agent_id', '=', agent.id)

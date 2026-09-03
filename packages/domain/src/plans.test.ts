@@ -26,6 +26,7 @@ const agent = (overrides: Partial<AgentState> = {}): AgentState => ({
   needBaseline: { hunger: '2034-05-17T18:00:00.000Z', fatigue: '2034-05-17T18:00:00.000Z' },
   goal: 'idle',
   planId: null,
+  caution: 1000,
   ...overrides,
 });
 

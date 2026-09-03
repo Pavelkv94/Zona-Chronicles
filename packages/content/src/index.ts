@@ -19,6 +19,13 @@ export interface LocationDefinition {
   readonly id: string;
   readonly name: string;
   readonly description: string;
+  /**
+   * Опасность места в тысячных (I06, §8).
+   *
+   * Данные мира, а не коэффициент правил: «мост полуразрушен» — свойство моста, и меняется оно
+   * вместе с картой, а не вместе с балансом. Тот же довод, что у длительности маршрута.
+   */
+  readonly risk: number;
 }
 
 export interface AgentDefinition {
@@ -37,6 +44,8 @@ export interface RouteDefinition {
   readonly toLocationId: string;
   /** Время в пути; единица — минуты мирового времени (совпадает с доменным `RouteDefinition`). */
   readonly travelMinutes: number;
+  /** Опасность дороги в тысячных (I06, §8). Данные дороги, как и её длина. */
+  readonly risk: number;
 }
 
 /**
@@ -73,10 +82,11 @@ export interface WorldDefinition {
  * Версия этого content bundle (§7/§9 контракта: "версии без checksum недостаточно" — версия
  * здесь, checksum считает `apps/cli` от фактического содержимого при сборке snapshot).
  */
+// 0.4.0 — I06: у мест и дорог появилась опасность, станция связи соединена с миром.
 // 0.3.0 — I04: у мира появились предметы. Версия контента входит в bundle снимка вместе с
 // checksum его СОДЕРЖИМОГО, поэтому расширение мира при прежней версии сделало бы два разных
 // мира неразличимыми по имени контента.
-export const CONTENT_VERSION = '0.3.0';
+export const CONTENT_VERSION = '0.4.0';
 
 /**
  * Версии, которыми подписывается каждое событие мира прототипа.
@@ -121,21 +131,35 @@ export const PROTOTYPE_WORLD: WorldDefinition = {
       id: 'loc:quiet-yard',
       name: 'Тихий двор',
       description: 'Огороженный внутренний двор — самое спокойное место в округе.',
+      risk: 0,
     },
     {
       id: 'loc:bridge',
       name: 'Мост',
       description: 'Полуразрушенный автомобильный мост через реку.',
+      // Единственное место карты, откуда агент уходит по своей воле: риск выше порога ruleset.
+      risk: 600,
     },
     {
       id: 'loc:checkpoint',
       name: 'Блокпост',
       description: 'Старый контрольный пункт на дороге за мостом.',
+      risk: 300,
     },
     {
       id: 'loc:relay-station',
       name: 'Ретрансляционная станция',
       description: 'Заброшенная станция связи на возвышенности.',
+      // Дорог к станции нет и в I06 не появилось: на её недостижимости держится D12 — «путь к
+      // недостижимой локации отвергается названной причиной». Соединить её значило бы починить
+      // карту и сломать проверку, ради которой она такая.
+      risk: 100,
+    },
+    {
+      id: 'loc:ravine',
+      name: 'Овраг',
+      description: 'Длинный обходной спуск по дну оврага — дольше, зато в стороне от дороги.',
+      risk: 150,
     },
   ],
   routes: [
@@ -144,12 +168,16 @@ export const PROTOTYPE_WORLD: WorldDefinition = {
       fromLocationId: 'loc:quiet-yard',
       toLocationId: 'loc:bridge',
       travelMinutes: 40,
+      risk: 400,
     },
     {
       id: 'route:bridge-to-checkpoint',
       fromLocationId: 'loc:bridge',
       toLocationId: 'loc:checkpoint',
       travelMinutes: 25,
+      // Короткая дорога с моста, но самая опасная: выбор между «быстро» и «спокойно» существует
+      // только когда эти два свойства расходятся.
+      risk: 700,
     },
     // I03: обратные маршруты. Без них мир «заканчивается» после нескольких переходов — агенты
     // упираются в тупик и больше не двигаются, и наблюдать становится нечего. Длительность та
@@ -159,12 +187,52 @@ export const PROTOTYPE_WORLD: WorldDefinition = {
       fromLocationId: 'loc:bridge',
       toLocationId: 'loc:quiet-yard',
       travelMinutes: 40,
+      risk: 400,
     },
     {
       id: 'route:checkpoint-to-bridge',
       fromLocationId: 'loc:checkpoint',
       toLocationId: 'loc:bridge',
       travelMinutes: 25,
+      risk: 700,
+    },
+    /**
+     * I06: у мира появился ОБХОД.
+     *
+     * До этой итерации из каждой локации выходила ровно одна дорога, и «выбрал обход» было
+     * невыразимо — выбирать не из чего. Овраг соединяет двор с блокпостом в объезд моста:
+     * заметно дольше и заметно спокойнее прямой дороги.
+     *
+     * Разница в числах обязательна. При равных длине и риске различие между осторожным и
+     * беспечным агентом не проявилось бы вовсе, и гипотезу итерации нечем было бы проверить.
+     */
+    {
+      id: 'route:yard-to-ravine',
+      fromLocationId: 'loc:quiet-yard',
+      toLocationId: 'loc:ravine',
+      travelMinutes: 90,
+      risk: 150,
+    },
+    {
+      id: 'route:ravine-to-yard',
+      fromLocationId: 'loc:ravine',
+      toLocationId: 'loc:quiet-yard',
+      travelMinutes: 90,
+      risk: 150,
+    },
+    {
+      id: 'route:ravine-to-checkpoint',
+      fromLocationId: 'loc:ravine',
+      toLocationId: 'loc:checkpoint',
+      travelMinutes: 70,
+      risk: 200,
+    },
+    {
+      id: 'route:checkpoint-to-ravine',
+      fromLocationId: 'loc:checkpoint',
+      toLocationId: 'loc:ravine',
+      travelMinutes: 70,
+      risk: 200,
     },
   ],
   agents: [

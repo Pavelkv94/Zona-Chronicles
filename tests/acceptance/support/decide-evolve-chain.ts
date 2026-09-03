@@ -52,7 +52,12 @@ const initialState: WorldState = {
       needBaseline: { hunger: '2034-05-17T18:00:00.000Z', fatigue: '2034-05-17T18:00:00.000Z' },
       goal: 'idle',
       planId: null,
+      caution: 1000,
     },
+  },
+  locations: {
+    'loc:quiet-yard': { id: 'loc:quiet-yard', risk: 0 },
+    'loc:bridge': { id: 'loc:bridge', risk: 600 },
   },
   routes: {
     'route:yard-to-bridge': {
@@ -60,6 +65,7 @@ const initialState: WorldState = {
       fromLocationId: 'loc:quiet-yard',
       toLocationId: 'loc:bridge',
       travelMinutes: 40,
+      risk: 300,
     },
   },
   items: {},

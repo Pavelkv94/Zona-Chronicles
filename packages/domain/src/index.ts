@@ -52,6 +52,7 @@ export type {
   AgentStatus,
   ItemState,
   JourneyCompleteAction,
+  LocationState,
   RestCompleteAction,
   NeedThresholdAction,
   RouteDefinition,
