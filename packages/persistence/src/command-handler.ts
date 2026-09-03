@@ -271,7 +271,9 @@ const changedAgents = (before: WorldState, after: WorldState): readonly AgentSta
       previous.needBaseline.hunger !== agent.needBaseline.hunger ||
       previous.needBaseline.fatigue !== agent.needBaseline.fatigue ||
       // Цель меняется решением и снимается достигнутым шагом (I05).
-      previous.goal !== agent.goal
+      previous.goal !== agent.goal ||
+      // Тождество плана живёт вместе с целью, но снимается и срывом (I05-C).
+      previous.planId !== agent.planId
     );
   });
 
@@ -555,6 +557,7 @@ export const executeCommand = async (
             hunger_baseline: agent.needBaseline.hunger,
             fatigue_baseline: agent.needBaseline.fatigue,
             goal: agent.goal,
+            plan_id: agent.planId,
           })
           .where('world_id', '=', command.world_id)
           .where('agent_id', '=', agent.id)

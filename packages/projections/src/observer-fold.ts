@@ -202,10 +202,28 @@ export function applyObserverEvent(
       };
     }
     case 'plan.invalidated': {
-      // Планы вне scope наблюдаемого мира I03, но факт произошёл и обязан быть виден в ленте:
-      // «событие есть, а изменения нет» — нормальное состояние, «события нет вовсе» — потеря.
+      /**
+       * План сорвался: агент снова празден, и карточка обязана это показать (I05-C).
+       *
+       * До появления производителя этого события ветка ничего не меняла — «событие есть, а
+       * изменения нет» было нормальным состоянием. Теперь изменение есть: цель снята, а
+       * прерванный отдых закончился ничем.
+       */
+      const actorId = singleActor(event);
+      const agent = base.agents[actorId];
+      const nextAgents =
+        agent === undefined
+          ? base.agents
+          : {
+              ...base.agents,
+              [actorId]: {
+                ...agent,
+                goal: 'idle' as const,
+                status: agent.status === 'resting' ? ('idle' as const) : agent.status,
+              },
+            };
       return {
-        state: base,
+        state: { ...base, agents: nextAgents },
         emitted: {
           projection_sequence: projectionSequence,
           event_id: event.event_id,

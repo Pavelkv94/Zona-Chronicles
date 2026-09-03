@@ -30,6 +30,7 @@ const state = (): WorldState => ({
       routeId: null,
       needBaseline: { hunger: WORLD_TIME, fatigue: WORLD_TIME },
       goal: 'idle',
+      planId: null,
     },
   },
   routes: {

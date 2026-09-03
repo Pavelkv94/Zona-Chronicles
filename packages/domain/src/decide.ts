@@ -27,11 +27,14 @@ import {
   type AgentAteEvent,
   type AgentRestedEvent,
   type GoalChosenEvent,
+  type GoalKind,
+  type PlanPreconditionType,
   type NeedThresholdCrossedEvent,
   type PlanInvalidatedEvent,
   type RestStartedEvent,
 } from '@zona/contracts';
 import { chooseGoal, type GoalSituation } from './goals.ts';
+import type { AgentState } from './state.ts';
 import { betterThan, needLevelAt, nextThresholdCrossing } from './needs.ts';
 import type { Clock } from './ports/clock.ts';
 import type { IdFactory } from './ports/id-factory.ts';
@@ -353,8 +356,46 @@ function decideNeedThresholdCross(
     },
   };
 
-  return { kind: 'accepted', events: [event] };
+  const interrupt = emergencyInterrupt(state, command, context, agent, need, toLevel);
+  return { kind: 'accepted', events: interrupt === null ? [event] : [event, interrupt] };
 }
+
+/**
+ * Emergency interrupt (§6): нужда дошла до предела и сорвала чужой план.
+ *
+ * Условий два, и второе — то, ради которого правило вообще формулируется отдельно.
+ *
+ * Первое: агент ЗАНЯТ занятием, которое можно прервать. Сегодня это отдых; путь сюда не входит,
+ * потому что маршрут выбирает оператор, а не агент, и прерывать чужое намерение мир не вправе.
+ *
+ * Второе: **прерывает та нужда, которую план НЕ лечит.** Усталость, дошедшая до предела во время
+ * отдыха, — это не чрезвычайное происшествие, а ровно то, чем агент занят; прерывать отдых из-за
+ * усталости значило бы поднимать спящего, чтобы отправить его спать. Голод во время отдыха —
+ * другое дело: план его не лечит и не вылечит.
+ */
+function emergencyInterrupt(
+  state: WorldState,
+  command: Command,
+  context: DecideContext,
+  agent: AgentState,
+  need: NeedKind,
+  toLevel: NeedLevel,
+): Omit<PlanInvalidatedEvent, 'recorded_at'> | null {
+  if (toLevel !== 'critical') return null;
+  if (agent.status !== 'resting') return null;
+  if (GOAL_TREATS_NEED[agent.goal] === need) return null;
+  return planFailure(state, command, context, agent, 'agent.not_in_emergency', 1);
+}
+
+/**
+ * Какую нужду лечит цель. Таблица, а не сравнение с литералом: новая цель обязана назвать свою
+ * нужду явно, иначе она молча начнёт прерываться любым пределом.
+ */
+const GOAL_TREATS_NEED = {
+  idle: null,
+  eat: 'hunger',
+  rest: 'fatigue',
+} as const satisfies Readonly<Record<GoalKind, NeedKind | null>>;
 
 /**
  * Общая часть envelope события, порождённого командой. Собирается один раз: три ветки,
@@ -420,6 +461,42 @@ function recoveryEvent(
 }
 
 /**
+ * Срыв плана (I05-C): предусловие шага не выполнено, и агент обязан выбрать заново.
+ *
+ * Это НЕ отказ. Разница в том, кто подал команду, и мир различает их по СОСТОЯНИЮ, а не по
+ * происхождению: у агента, чей шаг сорвался, есть план — цель и её тождество. Внешнее намерение
+ * оператора плана за собой не имеет, и для него невыполненное предусловие остаётся обычным
+ * доменным отказом.
+ *
+ * Различие не косметическое. Отказ помечает действие конечным и на этом всё: агент остаётся с
+ * целью, которую некому исполнить, до следующего факта, меняющего набор кандидатов. Событие
+ * снимает цель, освобождает агента и назначает ему новое решение — то есть чинит мир, а не
+ * сообщает о поломке.
+ */
+function planFailure(
+  state: WorldState,
+  command: Command,
+  context: DecideContext,
+  agent: AgentState,
+  precondition: PlanPreconditionType,
+  sequenceOffset = 0,
+): Omit<PlanInvalidatedEvent, 'recorded_at'> | null {
+  if (agent.planId === null) return null;
+  return {
+    ...draftEnvelope(
+      state,
+      command,
+      context,
+      toCanonicalIso(context.clock.now()),
+      agent.locationId,
+      sequenceOffset,
+    ),
+    type: 'plan.invalidated',
+    payload: { plan_id: agent.planId, precondition_type: precondition },
+  };
+}
+
+/**
  * Съесть предмет (I04).
  *
  * Отказы названы по причинам, а не сведены к одному «нельзя»: команда приходит от мира по
@@ -445,19 +522,26 @@ function decideAgentEat(
   }
 
   const item = state.items[command.payload.item_id];
-  if (item === undefined) {
-    return rejected(
-      'resource_unavailable',
-      `предмета ${command.payload.item_id} в мире нет: он уже израсходован или не существовал`,
-    );
+  const unavailable =
+    item === undefined
+      ? `предмета ${command.payload.item_id} в мире нет: он уже израсходован или не существовал`
+      : item.ownerId !== command.actor_id
+        ? `предмет ${item.id} принадлежит ${item.ownerId}, а не ${command.actor_id}`
+        : null;
+  if (unavailable !== null) {
+    const failure = planFailure(state, command, context, agent, 'item.available_to_actor');
+    if (failure !== null) return { kind: 'accepted', events: [failure] };
+    return rejected('resource_unavailable', unavailable);
   }
-  if (item.ownerId !== command.actor_id) {
-    return rejected(
-      'resource_unavailable',
-      `предмет ${item.id} принадлежит ${item.ownerId}, а не ${command.actor_id}`,
-    );
+  if (item === undefined) {
+    // Недостижимо: `unavailable` уже вернул бы результат. Ветка существует ради сужения типа —
+    // молчаливое приведение здесь означало бы утверждение о значении, которого компилятор не
+    // проверяет.
+    throw new Error('decide: предмет исчез между проверкой и использованием');
   }
   if (!EDIBLE_ITEM_KINDS.includes(item.kind)) {
+    const failure = planFailure(state, command, context, agent, 'item.available_to_actor');
+    if (failure !== null) return { kind: 'accepted', events: [failure] };
     return rejected('precondition_failed', `предмет ${item.id} не еда (вид "${item.kind}")`);
   }
 
@@ -519,6 +603,8 @@ function decideAgentRest(
     return rejected('actor_not_actionable', `актор ${command.actor_id} неизвестен миру`);
   }
   if (agent.status !== 'idle') {
+    const failure = planFailure(state, command, context, agent, 'agent.is_idle');
+    if (failure !== null) return { kind: 'accepted', events: [failure] };
     return rejected(
       'precondition_failed',
       `актор ${command.actor_id} в статусе "${agent.status}": начать отдых можно только свободному`,

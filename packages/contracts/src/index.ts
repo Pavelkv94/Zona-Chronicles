@@ -179,6 +179,8 @@ export {
   type AgentAteEvent,
   type AgentRestedEvent,
   type GoalChosenEvent,
+  type PlanPreconditionType,
+  PLAN_PRECONDITION_TYPES,
   type RestStartedEvent,
   type RandomAudit,
   type WorldEvent,

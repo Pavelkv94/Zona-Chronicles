@@ -51,7 +51,7 @@ const writePreviousReleaseWorld = async (
    * Параметр явный, а не вывод из схемы: писатель, заглядывающий в `information_schema`, — это
    * писатель ТЕКУЩЕЙ поставки, а тест обязан вести себя как старый.
    */
-  release: { readonly needBaselines: boolean },
+  release: { readonly needBaselines: boolean; readonly goal?: boolean },
 ): Promise<void> => {
   const init = fixtureInitialization();
   const state = init.state;
@@ -83,7 +83,17 @@ const writePreviousReleaseWorld = async (
     // молча; первая же обязательная колонка это отставание назвала — тест упал на вставке, а не
     // на сравнении, и это его работа. Список обязан описывать схему поставки N-1, иначе тест
     // моделирует поставку, которой не существовало.
-    if (release.needBaselines) {
+    if (release.goal === true) {
+      // Поставка N-1 после 0019: цель обязательна и умолчания у неё нет — новый агент получает
+      // её явно, иначе забытая вставка дала бы цель «по умолчанию».
+      await sql`
+        insert into agents (world_id, agent_id, name, location_id, status, route_id,
+                            hunger_baseline, fatigue_baseline, goal)
+        values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
+                ${agent.locationId}, ${agent.status}, ${agent.routeId},
+                ${agent.needBaseline.hunger}, ${agent.needBaseline.fatigue}, ${agent.goal})
+      `.execute(db);
+    } else if (release.needBaselines) {
       await sql`
         insert into agents (world_id, agent_id, name, location_id, status, route_id,
                             hunger_baseline, fatigue_baseline)
@@ -126,7 +136,7 @@ describe('N-1 — обновление с предыдущей поставки'
     // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
     // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
     // а не изобретать свой (найдено исполнением при написании теста).
-    await writePreviousReleaseWorld(db, { needBaselines: true });
+    await writePreviousReleaseWorld(db, { needBaselines: true, goal: true });
 
     const appliedBefore = await db
       .selectFrom('schema_migrations')

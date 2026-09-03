@@ -86,6 +86,8 @@ export interface AgentsTable {
   fatigue_baseline: string;
   /** Цель, которой агент придерживается сейчас (миграция 0019). */
   goal: 'idle' | 'eat' | 'rest';
+  /** Тождество текущего плана; `null` — плана нет (миграция 0020). */
+  plan_id: string | null;
 }
 
 /** Append-only журнал фактов. Права на `update`/`delete` не выдаются никому (миграция 0003). */

@@ -37,6 +37,7 @@ describe('evolve: journey.started', () => {
       routeId: 'route:yard-to-bridge',
       needBaseline: fixtureNeedBaseline(),
       goal: 'idle',
+      planId: null,
     });
   });
 
@@ -95,6 +96,7 @@ describe('evolve: journey.completed', () => {
       routeId: null,
       needBaseline: fixtureNeedBaseline(),
       goal: 'idle',
+      planId: null,
     });
   });
 });
@@ -149,6 +151,7 @@ describe('M7 — снятие действия из расписания по п
           routeId: 'route:yard-to-bridge',
           needBaseline: fixtureNeedBaseline(),
           goal: 'idle',
+          planId: null,
         },
       },
       items: {},
@@ -198,6 +201,7 @@ describe('M7 — снятие действия из расписания по п
           routeId: 'route:yard-to-bridge',
           needBaseline: fixtureNeedBaseline(),
           goal: 'idle',
+          planId: null,
         },
       },
       items: {},

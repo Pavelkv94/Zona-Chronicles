@@ -39,6 +39,7 @@ export function fixtureWorldState(overrides: Partial<WorldState> = {}): WorldSta
         routeId: null,
         needBaseline: fixtureNeedBaseline(),
         goal: 'idle',
+        planId: null,
       },
     },
     routes: {

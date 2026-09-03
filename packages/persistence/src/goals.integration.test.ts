@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { NEED_KINDS, requireAddMinutes, requireInstant, type WorldEvent } from '@zona/contracts';
 import {
   PROTOTYPE_NEEDS,
+  PROTOTYPE_REST_MINUTES,
   SCHEDULED_ACTION_PRIORITY,
   needThresholdActionId,
   nextThresholdCrossing,
@@ -54,11 +55,25 @@ const HORIZON = at(2880);
  * приходится поставить самим — ТОЙ ЖЕ функцией, которой их ставит мир. Вторым способом их
  * посчитать нельзя: разойдясь, он дал бы тест, проверяющий согласие мира с арифметикой теста.
  */
-const initialNeedSchedule = (agentIds: readonly string[]): Record<string, ScheduledAction> => {
+const initialNeedSchedule = (agentIds: readonly string[]): Record<string, ScheduledAction> =>
+  initialNeedScheduleFrom(
+    Object.fromEntries(
+      agentIds.map((id) => [
+        id,
+        { needBaseline: { hunger: FIXTURE_WORLD_TIME, fatigue: FIXTURE_WORLD_TIME } },
+      ]),
+    ),
+  );
+
+/** То же, но от РЕАЛЬНЫХ моментов отсчёта агентов: сценарий может начинать мир не с сытости. */
+const initialNeedScheduleFrom = (
+  agents: Readonly<Record<string, { readonly needBaseline: Readonly<Record<string, string>> }>>,
+): Record<string, ScheduledAction> => {
   const scheduled: Record<string, ScheduledAction> = {};
-  for (const agentId of agentIds) {
+  for (const [agentId, agent] of Object.entries(agents)) {
     for (const need of NEED_KINDS) {
-      const crossing = nextThresholdCrossing(FIXTURE_WORLD_TIME, 'normal', PROTOTYPE_NEEDS[need]);
+      const baseline = agent.needBaseline[need] ?? FIXTURE_WORLD_TIME;
+      const crossing = nextThresholdCrossing(baseline, 'normal', PROTOTYPE_NEEDS[need]);
       if (crossing === null) continue;
       const id = needThresholdActionId(agentId, need, crossing.at);
       scheduled[id] = {
@@ -90,12 +105,16 @@ const withFood = (owners: readonly string[]) =>
  * Так проверяется §4.3 плана — «доля бесконечных replans = 0»: мир, который перепланирует без
  * конца, до тишины не доходит вовсе.
  */
-const runUntilQuiet = async (migrated: MigratedDatabase, maxTicks = 200): Promise<number> => {
+const runUntilQuiet = async (
+  migrated: MigratedDatabase,
+  horizon: string = HORIZON,
+  maxTicks = 200,
+): Promise<number> => {
   for (let tick = 0; tick < maxTicks; tick += 1) {
     const result = await runWorldTick(migrated.db, {
       worldId: FIXTURE_WORLD_ID,
       owner: `t-${String(tick)}`,
-      horizon: HORIZON,
+      horizon,
     });
     if (result.claimed === 0) return tick;
   }
@@ -257,6 +276,127 @@ describe('I05-B — выбор цели без единой команды че�
       // производя ничего.
       expect(decisions).toBeLessThanOrEqual(facts);
       expect(decisions).toBeGreaterThan(0);
+    }
+  });
+
+  it('голод, дошедший до предела во сне, будит агента — и он ест, а не спит дальше', async () => {
+    /**
+     * Момент отсчёта голода сдвинут В ПРОШЛОЕ на 200 минут, и это не подкрутка результата.
+     *
+     * На коэффициентах прототипа усталость доходит до порога раньше голода, поэтому агент,
+     * начинающий сытым, успевает поесть до того, как ляжет. Чтобы проверить emergency interrupt,
+     * нужен агент, который лёг спать УЖЕ проголодавшимся — то есть история, начавшаяся не с
+     * сытости. Сдвиг момента отсчёта — единственный способ её задать: значение нужды в этом мире
+     * не хранится вовсе, оно вычисляется из момента.
+     *
+     * Числа: отдых идёт с 432-й по 912-ю минуту, предел голода наступает на 880-й — внутри сна.
+     */
+    const hungryBaseline = requireAddMinutes(
+      requireInstant(FIXTURE_WORLD_TIME, 'старт мира'),
+      -200,
+      'сдвиг голода в прошлое',
+    ).iso;
+    const init = fixtureInitialization();
+    const agents = Object.fromEntries(
+      Object.entries(init.state.agents).map(([id, agent]) => [
+        id,
+        { ...agent, needBaseline: { ...agent.needBaseline, hunger: hungryBaseline } },
+      ]),
+    );
+    await initializeWorld(migrated.db, {
+      ...init,
+      state: {
+        ...init.state,
+        agents,
+        items: withFood([FIXTURE_AGENT_ID]),
+        scheduledActions: initialNeedScheduleFrom(agents),
+      },
+    });
+
+    /**
+     * Мир останавливается РОВНО на моменте прерывания, а потом идёт дальше.
+     *
+     * Двухфазный прогон нужен ради одного утверждения: расписание сразу после срыва. Прогон «до
+     * конца» его увидеть не может, и первая редакция теста этого не увидела — мутация «срыв не
+     * снимает ждущие шаги» прошла её дважды подряд, в том числе через проверку по журналу.
+     * Уцелевшее завершение отдыха срабатывает позже и закрывает СЛЕДУЮЩИЙ отдых, а по журналу
+     * это читается как исправная пара «лёг — отдохнул»: причинность у неё настоящая, украден
+     * только сон.
+     */
+    await runUntilQuiet(migrated, at(880));
+    const atInterrupt = await loadWorldState(migrated.db, FIXTURE_WORLD_ID);
+    const pending = Object.values(atInterrupt?.scheduledActions ?? {}).filter(
+      (action) => action.entityId === FIXTURE_AGENT_ID && action.kind === 'rest.complete',
+    );
+    // Ровно одно завершение — от НОВОГО отдыха, начатого после еды. Прерванный сон своего
+    // завершения за собой не оставил.
+    expect(pending.map((action) => action.dueAt)).toEqual([at(880 + PROTOTYPE_REST_MINUTES)]);
+
+    await runUntilQuiet(migrated);
+
+    const events = await loadWorldEvents(migrated.db, FIXTURE_WORLD_ID);
+    const mine = events
+      .filter((event) => event.actor_ids.includes(FIXTURE_AGENT_ID))
+      .map((event) => `${event.world_time.slice(11, 16)} ${event.type}`);
+
+    // Сон прерван пределом голода, и прерван ИМЕННО им: следом идёт решение и еда, а не
+    // продолжение отдыха. `agent.rested` в этой цепочке нет вовсе — отдых не состоялся.
+    const start = mine.indexOf('13:12 rest.started');
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(mine.slice(start, start + 7)).toEqual([
+      '13:12 rest.started',
+      // Во сне голод переходит в «голоден», а усталость — в «вымотан». Ни то, ни другое сна не
+      // прерывает: первое ещё не предел, второе лечится тем самым сном.
+      '13:28 need.threshold.crossed',
+      '18:00 need.threshold.crossed',
+      // А это предел голода — и он будит.
+      '20:40 need.threshold.crossed',
+      '20:40 plan.invalidated',
+      '20:40 goal.chosen',
+      '20:40 agent.ate',
+    ]);
+
+    // Прерванный отдых закончился НИЧЕМ: события «отдохнул» в этот момент нет, а значит нет и
+    // снятия усталости. Платить за работу, которой не было, — самая тихая из возможных ошибок:
+    // агент просыпался бы отдохнувшим, не отдохнув. (Точное утверждение о моменте отсчёта —
+    // в `plans.test.ts`, где состояние видно целиком.)
+    expect(mine.filter((line) => line === '20:40 agent.rested')).toEqual([]);
+
+    /**
+     * Ни одно запланированное действие не закончилось отказом.
+     *
+     * Это утверждение о том, что срыв плана СНЯЛ ждущее завершение отдыха, а не просто поднял
+     * агента. Первая редакция теста этого не проверяла, и мутация «не снимать ждущие шаги»
+     * прошла её целиком: видимая цепочка событий от неё не меняется. Последствие при этом
+     * тяжёлое — уцелевшее завершение срабатывает позже и закрывает СЛЕДУЮЩИЙ отдых, отдавая
+     * агенту полное восстановление за полчаса сна.
+     *
+     * Отказ здесь и есть след такого хвоста: устаревшее завершение отвергается доменом.
+     */
+    const failed = await migrated.db
+      .selectFrom('scheduled_actions')
+      .select(['kind', 'failure_code'])
+      .where('failed_at', 'is not', null)
+      .execute();
+    expect(failed).toEqual([]);
+
+    /**
+     * И ни один отдых не закончился раньше своего срока: полное восстановление стоит ровно
+     * столько мировых минут, сколько объявлено в ruleset.
+     */
+    const rests = events.filter(
+      (event) => event.actor_ids.includes(FIXTURE_AGENT_ID) && event.type === 'rest.started',
+    );
+    for (const started of rests) {
+      // Пара ищется ПО ПРИЧИНЕ, а не по «первому следующему»: прерванный отдых конца не имеет
+      // вовсе, и поиск по времени приписал бы ему конец СЛЕДУЮЩЕГО — то есть тест сам сочинил бы
+      // ту связь, наличие которой проверяет.
+      const ended = events.find(
+        (event) => event.type === 'agent.rested' && event.caused_by.includes(started.event_id),
+      );
+      if (ended === undefined) continue;
+      if (started.type !== 'rest.started') continue;
+      expect(ended.world_time).toBe(started.payload.expected_end);
     }
   });
 

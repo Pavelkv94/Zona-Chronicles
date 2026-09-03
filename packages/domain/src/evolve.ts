@@ -18,6 +18,7 @@ import {
   agentRestActionId,
   isAgentFree,
   needThresholdActionId,
+  planIdFor,
   type AgentDecideAction,
   type AgentEatAction,
   type AgentRestAction,
@@ -57,10 +58,7 @@ export function evolve(state: WorldState, event: WorldEvent): WorldState {
     case 'goal.chosen':
       return applyGoalChosen(bumped, event);
     case 'plan.invalidated':
-      // Планы и потребности агентов — вне scope I01 (§5 плана итерации); envelope уже
-      // заморожен (§11), поэтому ветка обязана существовать уже сейчас (A8), даже без
-      // собственного эффекта на `WorldState`.
-      return bumped;
+      return applyPlanInvalidated(bumped, event);
     default:
       return assertNeverWorldEvent(event);
   }
@@ -317,6 +315,7 @@ function applyAgentAte(
           // значило бы утверждать намерение, которого у него больше нет, и новое решение
           // считалось бы сменой цели там, где менять нечего.
           goal: 'idle',
+          planId: null,
           needBaseline: { ...agent.needBaseline, hunger: event.world_time },
         },
       },
@@ -397,6 +396,7 @@ function applyAgentRested(
           status: 'idle',
           // Цель достигнута — см. тот же довод у `agent.ate`.
           goal: 'idle',
+          planId: null,
           needBaseline: { ...agent.needBaseline, fatigue: event.world_time },
         },
       },
@@ -441,10 +441,83 @@ function applyGoalChosen(
 
   return {
     ...state,
-    agents: { ...state.agents, [actorId]: { ...agent, goal: event.payload.goal } },
+    agents: {
+      ...state.agents,
+      [actorId]: {
+        ...agent,
+        goal: event.payload.goal,
+        // У праздности плана нет: «ничего не делать» не срывается и тождества не требует.
+        planId:
+          event.payload.goal === 'idle'
+            ? null
+            : planIdFor(actorId, event.payload.goal, event.sequence),
+      },
+    },
     scheduledActions: remaining,
   };
 }
+
+/**
+ * План сорвался: агент свободен и обязан выбрать заново (I05-C, §6).
+ *
+ * Ветка существовала с I01 пустой — envelope события был заморожен раньше, чем появился хоть
+ * один его производитель. Здесь она наконец что-то делает.
+ *
+ * Снимается ВСЁ, что держало агента в сорванном плане: цель, её тождество, занятость и ждущие
+ * шаги. Оставить хоть что-то одно значило бы получить агента, который свободен по одному полю и
+ * занят по другому, — и разойтись эти поля могли бы только молча.
+ *
+ * Момент отсчёта усталости при прерванном отдыхе НЕ сдвигается: отдых не состоялся, и снимать за
+ * него усталость было бы платой за работу, которой не было.
+ */
+function applyPlanInvalidated(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'plan.invalidated' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: plan.invalidated ссылается на неизвестного актора ${actorId}`);
+  }
+
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, action] of Object.entries(state.scheduledActions)) {
+    if (action.entityId === actorId && ABANDONED_ON_PLAN_FAILURE.includes(action.kind)) continue;
+    remaining[id] = action;
+  }
+
+  return withDecisionScheduled(
+    {
+      ...state,
+      scheduledActions: remaining,
+      agents: {
+        ...state.agents,
+        [actorId]: {
+          ...agent,
+          goal: 'idle',
+          planId: null,
+          // Путь сорванным планом не отменяется: маршрут выбирает оператор, а не агент.
+          status: agent.status === 'resting' ? 'idle' : agent.status,
+        },
+      },
+    },
+    actorId,
+    event,
+  );
+}
+
+/**
+ * Что снимается вместе с сорванным планом.
+ *
+ * Завершение пути сюда не входит: путь не является целью этого среза, и снять его завершение
+ * значило бы оставить агента в пути навсегда — начатый путь обязан завершиться.
+ */
+const ABANDONED_ON_PLAN_FAILURE: readonly ScheduledAction['kind'][] = [
+  'agent.eat',
+  'agent.rest',
+  'rest.complete',
+  'agent.decide',
+];
 
 /**
  * Первый (и пока единственный) шаг выбранной цели.

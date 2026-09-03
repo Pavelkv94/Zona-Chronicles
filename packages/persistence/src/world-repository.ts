@@ -156,6 +156,7 @@ export const initializeWorld = async (
             hunger_baseline: agent.needBaseline.hunger,
             fatigue_baseline: agent.needBaseline.fatigue,
             goal: agent.goal,
+            plan_id: agent.planId,
           })),
         )
         .execute();
@@ -304,6 +305,7 @@ const readWorldState = async (
       routeId: row.route_id,
       needBaseline: { hunger: row.hunger_baseline, fatigue: row.fatigue_baseline },
       goal: row.goal,
+      planId: row.plan_id,
     };
   }
 

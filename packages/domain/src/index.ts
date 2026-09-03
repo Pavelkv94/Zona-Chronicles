@@ -65,6 +65,7 @@ export {
   agentRestActionId,
   isAgentFree,
   needThresholdActionId,
+  planIdFor,
 } from './state.ts';
 
 export type { DecideContext, DecideRejection, DecideResult, DraftWorldEvent } from './decide.ts';

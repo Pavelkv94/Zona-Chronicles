@@ -68,6 +68,7 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
       routeId: null,
       needBaseline: { hunger: T0, fatigue: T0 },
       goal: 'idle',
+      planId: null,
     };
     mutableRoutes[`route:${String(index)}`] = {
       id: `route:${String(index)}`,
