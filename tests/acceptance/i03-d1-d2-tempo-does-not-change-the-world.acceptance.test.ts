@@ -178,7 +178,7 @@ describe('I03 D1/D2 — скорость мира не меняет канони
       // ПОЛНЫМ: помощник убивает worker-а, как только счётчик достигнут, и заниженное ожидание
       // останавливает мир на середине — а сравнение двух миров потом объявляет это расхождением
       // темпов. Так этот тест и упал впервые.
-      const expected = COMMANDS.length * 3;
+      const expected = COMMANDS.length * 4;
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
         if ((await journalOf(db)).length >= expected) return;
@@ -221,10 +221,10 @@ describe('I03 D1/D2 — скорость мира не меняет канони
     const slowPrefix = upTo(slowJournal, bound);
     const fastPrefix = upTo(fastJournal, bound);
 
-    // Три события на команду, а не два: старт, завершение и РЕШЕНИЕ прибывшего агента (I05-B).
-    // Пин остаётся точным числом, а не «не меньше»: он страхует от сравнения пустых префиксов,
-    // и мягкая форма перестала бы это делать.
-    expect(slowPrefix.length).toBe(COMMANDS.length * 3);
+    // Четыре события на команду: старт, завершение, РАЗВЕДКА пройденной дороги (I06-B) и
+    // решение прибывшего агента (I05-B). Пин остаётся точным числом, а не «не меньше»: он
+    // страхует от сравнения пустых префиксов, и мягкая форма перестала бы это делать.
+    expect(slowPrefix.length).toBe(COMMANDS.length * 4);
     expect(fastPrefix.map(canonicalShape)).toEqual(slowPrefix.map(canonicalShape));
   });
 

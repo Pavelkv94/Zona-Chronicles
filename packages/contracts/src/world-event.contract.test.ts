@@ -75,6 +75,8 @@ describe('world event envelope v1 (§3)', () => {
       'rest.started',
       // I05-B: агент выбрал цель. Разбор оценок входит в payload, но не в observer-контракт.
       'goal.chosen',
+      // I06-B: агент узнал опасность дороги. Единственный способ, которым знание входит в мир.
+      'risk.observed',
     ]);
   });
 
@@ -429,6 +431,8 @@ describe('A8: union пригоден для исчерпывающей пров�
         return 'rest-started';
       case 'goal.chosen':
         return 'goal-chosen';
+      case 'risk.observed':
+        return 'risk-observed';
       default:
         return assertNeverWorldEvent(event);
     }

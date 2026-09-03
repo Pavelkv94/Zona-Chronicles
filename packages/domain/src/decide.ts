@@ -32,6 +32,7 @@ import {
   type NeedThresholdCrossedEvent,
   type PlanInvalidatedEvent,
   type RestStartedEvent,
+  type RiskObservedEvent,
 } from '@zona/contracts';
 import { chooseGoal, type GoalSituation } from './goals.ts';
 import type { AgentState } from './state.ts';
@@ -82,7 +83,8 @@ export type DraftWorldEvent =
   | Omit<AgentAteEvent, 'recorded_at'>
   | Omit<AgentRestedEvent, 'recorded_at'>
   | Omit<RestStartedEvent, 'recorded_at'>
-  | Omit<GoalChosenEvent, 'recorded_at'>;
+  | Omit<GoalChosenEvent, 'recorded_at'>
+  | Omit<RiskObservedEvent, 'recorded_at'>;
 
 export type DecideResult =
   | { readonly kind: 'accepted'; readonly events: readonly DraftWorldEvent[] }
@@ -204,7 +206,26 @@ function decideJourneyComplete(
     payload: { route_id: route.id },
   };
 
-  return { kind: 'accepted', events: [event] };
+  /**
+   * Пройденная дорога СТАНОВИТСЯ ИЗВЕСТНОЙ (I06-B).
+   *
+   * Здесь канонический риск читается — и это законный путь из мира в знание: агент только что
+   * прошёл по этой дороге своими ногами. Утёк, которого итерация не допускает, — это чтение
+   * канона при ВЫБОРЕ дороги, а не при её прохождении.
+   *
+   * Факт не повторяется: узнать уже известное нечего, и лента, повторяющая «узнал то же самое»
+   * на каждом проходе, перестала бы быть перечнем произошедшего.
+   */
+  const alreadyKnown = agent.knownRoutes[route.id] !== undefined;
+  if (alreadyKnown) return { kind: 'accepted', events: [event] };
+
+  const observed: Omit<RiskObservedEvent, 'recorded_at'> = {
+    ...draftEnvelope(state, command, context, event.world_time, route.toLocationId, 1),
+    type: 'risk.observed',
+    payload: { route_id: route.id, risk: route.risk },
+  };
+
+  return { kind: 'accepted', events: [event, observed] };
 }
 
 /**

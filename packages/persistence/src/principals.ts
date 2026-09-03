@@ -60,6 +60,10 @@ export const GRANT_MATRIX: Readonly<Record<RoleName, Readonly<Record<string, rea
       // читателя, а не на форме данных. История при этом не теряется — она в append-only
       // журнале, которому DELETE не выдан никому.
       items: ['SELECT', 'INSERT', 'DELETE'],
+      // I06: субъективная карта риска. `UPDATE` не выдан, и `DELETE` тоже: забыть узнанное в
+      // этом мире нельзя, а знание, которое можно переписать задним числом, перестало бы быть
+      // свидетельством. Когда появится устаревание, права появятся вместе с механикой.
+      agent_route_knowledge: ['SELECT', 'INSERT'],
       world_snapshots: ['SELECT', 'INSERT'],
     },
     [ROLE_NAMES.projection]: {

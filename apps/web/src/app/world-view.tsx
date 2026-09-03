@@ -43,6 +43,7 @@ const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
   'agent.rested': 'отдохнул',
   'rest.started': 'лёг отдыхать',
   'goal.chosen': 'решил',
+  'risk.observed': 'разведал дорогу',
 };
 
 /**

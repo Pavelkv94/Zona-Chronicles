@@ -91,6 +91,14 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
       // Прибытие цели не ставит: цель появится решением, которое мир только что назначил.
       goal: 'idle',
       planId: null,
+      // Пройденная дорога стала известной — это второй факт того же прибытия (I06-B).
+      knownRoutes: {
+        [FIXTURE_ROUTE_ID]: {
+          risk: 300,
+          at: '2028-04-26T06:40:00.000Z',
+          sourceEventId: expect.stringMatching(/^evt_/),
+        },
+      },
       caution: 1000,
     });
     // Завершение пути ушло из расписания, а на его месте появилось РЕШЕНИЕ: прибывший агент
@@ -105,7 +113,13 @@ describe('C2/C3/C4/C12 — шаг worker-а', () => {
     expect(rows.find((row) => row.kind === 'journey.complete')?.completed_at).toBeInstanceOf(Date);
 
     const events = await loadWorldEvents(db, FIXTURE_WORLD_ID);
-    expect(events.map((event) => event.type)).toEqual(['journey.started', 'journey.completed']);
+    // Третий факт — РАЗВЕДКА: пройденная дорога стала известной (I06-B). Перечислен явно, а не
+    // отфильтрован: утверждение о составе журнала требует знать всё, что мир произвёл.
+    expect(events.map((event) => event.type)).toEqual([
+      'journey.started',
+      'journey.completed',
+      'risk.observed',
+    ]);
     expect(events[1]?.world_time).toBe('2028-04-26T06:40:00.000Z');
   });
 

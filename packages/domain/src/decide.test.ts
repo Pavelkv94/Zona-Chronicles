@@ -115,6 +115,7 @@ describe('decide: journey.start — отказы', () => {
           goal: 'idle',
           planId: null,
           caution: 1000,
+          knownRoutes: {},
         },
       },
     });

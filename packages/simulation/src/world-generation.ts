@@ -192,6 +192,9 @@ function seedAgents(content: GeneratorContent, seed: number, worldTime: string):
       goal: 'idle',
       planId: null,
       caution,
+      // Свежий мир никуда не ходил: узнавать в нём ещё нечего. Пустая карта — не умолчание, а
+      // утверждение о том, что дорог никто пока не видел.
+      knownRoutes: {},
     };
     // `drawIndex` внутри потока начинается с 0 (RandomDraw); позиция после ДВУХ draw — 2.
     prngStreamPositions[streamKey] = cautionDraw.drawIndex + 1;

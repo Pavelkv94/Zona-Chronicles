@@ -53,6 +53,7 @@ const initialState: WorldState = {
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     },
   },
   locations: {

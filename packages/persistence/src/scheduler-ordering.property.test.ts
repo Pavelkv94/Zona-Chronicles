@@ -70,6 +70,7 @@ const buildState = (travelMinutes: readonly number[]): WorldState => {
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     };
     mutableRoutes[`route:${String(index)}`] = {
       id: `route:${String(index)}`,

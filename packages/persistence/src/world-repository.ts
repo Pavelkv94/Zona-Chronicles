@@ -24,6 +24,7 @@ import type {
   AgentState,
   ItemState,
   LocationState,
+  RouteKnowledge,
   RouteDefinition,
   RulesetVersions,
   ScheduledAction,
@@ -169,6 +170,23 @@ export const initializeWorld = async (
         .execute();
     }
 
+    // Свежий мир знанием не обладает: узнавать в нём ещё нечего, и генезисная запись означала бы
+    // утверждение об истории, которой не было. Ветка существует ради миров, собранных не
+    // генератором, — например восстановленных из снимка.
+    const knowledge = agents.flatMap((agent) =>
+      Object.entries(agent.knownRoutes).map(([routeId, known]) => ({
+        world_id: state.worldId,
+        agent_id: agent.id,
+        route_id: routeId,
+        risk: known.risk,
+        learned_at: known.at,
+        source_event_id: known.sourceEventId,
+      })),
+    );
+    if (knowledge.length > 0) {
+      await trx.insertInto('agent_route_knowledge').values(knowledge).execute();
+    }
+
     const items = Object.values(state.items);
     if (items.length > 0) {
       await trx
@@ -278,36 +296,61 @@ const readWorldState = async (
     .executeTakeFirst();
   if (world === undefined) return null;
 
-  const [agentRows, locationRows, routeRows, itemRows, actionRows] = await Promise.all([
-    db
-      .selectFrom('agents')
-      .selectAll()
-      .where('world_id', '=', worldId)
-      .orderBy('agent_id')
-      .execute(),
-    db
-      .selectFrom('locations')
-      .selectAll()
-      .where('world_id', '=', worldId)
-      .orderBy('location_id')
-      .execute(),
-    db
-      .selectFrom('routes')
-      .selectAll()
-      .where('world_id', '=', worldId)
-      .orderBy('route_id')
-      .execute(),
-    db.selectFrom('items').selectAll().where('world_id', '=', worldId).orderBy('item_id').execute(),
-    // Каноническим является только НЕЗАВЕРШЁННОЕ расписание: выполненные строки остаются в
-    // таблице как история обработки (ACCEPTANCE C2) и в состояние мира не входят.
-    db
-      .selectFrom('scheduled_actions')
-      .selectAll()
-      .where('world_id', '=', worldId)
-      .where('completed_at', 'is', null)
-      .orderBy('action_id')
-      .execute(),
-  ]);
+  const [agentRows, knowledgeRows, locationRows, routeRows, itemRows, actionRows] =
+    await Promise.all([
+      db
+        .selectFrom('agents')
+        .selectAll()
+        .where('world_id', '=', worldId)
+        .orderBy('agent_id')
+        .execute(),
+      db
+        .selectFrom('agent_route_knowledge')
+        .selectAll()
+        .where('world_id', '=', worldId)
+        .orderBy(['agent_id', 'route_id'])
+        .execute(),
+      db
+        .selectFrom('locations')
+        .selectAll()
+        .where('world_id', '=', worldId)
+        .orderBy('location_id')
+        .execute(),
+      db
+        .selectFrom('routes')
+        .selectAll()
+        .where('world_id', '=', worldId)
+        .orderBy('route_id')
+        .execute(),
+      db
+        .selectFrom('items')
+        .selectAll()
+        .where('world_id', '=', worldId)
+        .orderBy('item_id')
+        .execute(),
+      // Каноническим является только НЕЗАВЕРШЁННОЕ расписание: выполненные строки остаются в
+      // таблице как история обработки (ACCEPTANCE C2) и в состояние мира не входят.
+      db
+        .selectFrom('scheduled_actions')
+        .selectAll()
+        .where('world_id', '=', worldId)
+        .where('completed_at', 'is', null)
+        .orderBy('action_id')
+        .execute(),
+    ]);
+
+  // Знание собирается по агентам ЗАРАНЕЕ: иначе на каждого агента пришёлся бы проход по всем
+  // строкам знания, и стоимость чтения мира стала бы квадратичной по числу дорог.
+  const knownByAgent = new Map<string, Record<string, RouteKnowledge>>();
+  for (const row of knowledgeRows) {
+    const known = knownByAgent.get(row.agent_id) ?? {};
+    known[row.route_id] = {
+      risk: row.risk,
+      at: row.learned_at,
+      sourceEventId: row.source_event_id,
+    };
+    knownByAgent.set(row.agent_id, known);
+  }
 
   const agents: Record<string, AgentState> = {};
   for (const row of agentRows) {
@@ -320,6 +363,7 @@ const readWorldState = async (
       goal: row.goal,
       planId: row.plan_id,
       caution: row.caution,
+      knownRoutes: knownByAgent.get(row.agent_id) ?? {},
     };
   }
 

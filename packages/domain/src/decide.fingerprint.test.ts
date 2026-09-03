@@ -32,6 +32,7 @@ const state = (): WorldState => ({
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     },
   },
   locations: {

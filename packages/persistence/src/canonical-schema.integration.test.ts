@@ -37,6 +37,8 @@ describe('B1 — канонические таблицы I02A', () => {
           order by table_name`,
       );
       expect(tables.rows.map((row) => row.table_name)).toEqual([
+        // I06: субъективная карта риска — что агент знает о дорогах и откуда.
+        'agent_route_knowledge',
         'agents',
         'command_attempt_rejections',
         'command_results',

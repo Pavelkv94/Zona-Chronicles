@@ -41,6 +41,7 @@ export function fixtureWorldState(overrides: Partial<WorldState> = {}): WorldSta
         goal: 'idle',
         planId: null,
         caution: 1000,
+        knownRoutes: {},
       },
     },
     locations: {

@@ -180,6 +180,7 @@ export {
   type AgentAteEvent,
   type AgentRestedEvent,
   type GoalChosenEvent,
+  type RiskObservedEvent,
   type PlanPreconditionType,
   PLAN_PRECONDITION_TYPES,
   type RestStartedEvent,

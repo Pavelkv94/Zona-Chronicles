@@ -27,6 +27,7 @@ const agent = (overrides: Partial<AgentState> = {}): AgentState => ({
   goal: 'idle',
   planId: null,
   caution: 1000,
+  knownRoutes: {},
   ...overrides,
 });
 

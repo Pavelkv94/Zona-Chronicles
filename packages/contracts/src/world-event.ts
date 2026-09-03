@@ -49,6 +49,7 @@ export const WORLD_EVENT_TYPES = [
   'agent.rested',
   'rest.started',
   'goal.chosen',
+  'risk.observed',
 ] as const;
 
 export type WorldEventType = (typeof WORLD_EVENT_TYPES)[number];
@@ -343,6 +344,37 @@ export const GoalChosenPayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `risk.observed`: агент узнал, насколько опасна дорога (I06, §8, §12).
+ *
+ * Единственный способ, которым знание входит в мир. Это решение, а не оформление: узнать можно
+ * будет по-разному — пройдя самому, увидев издали, услышав от другого, — и если каждый способ
+ * станет побочным эффектом своего события, то «знание не появляется без provenance» (SIM-05)
+ * придётся соблюдать дисциплиной в N местах вместо одного. Один тип факта — одна точка входа.
+ *
+ * **Поля `source_type` здесь НЕТ**, хотя §12 его называет. Источник у этого среза ровно один —
+ * увиденное своими глазами, — и он выражен самим типом события. Поле с единственным значением
+ * заморозило бы форму пересказа и вывода раньше, чем принято решение об их правилах (§12
+ * контрактов запрещает реализовывать схемы будущих slices заранее).
+ *
+ * Provenance при этом полон: кто узнал — `actor_ids`, когда — `world_time`, из-за чего —
+ * `caused_by`. Запись в субъективной карте помнит `event_id` этого факта.
+ */
+export const RiskObservedPayloadSchema = Type.Object(
+  {
+    route_id: NamespacedIdSchema,
+    risk: Type.Integer({
+      minimum: 0,
+      maximum: 1000,
+      description: 'Узнанная опасность дороги в тысячных.',
+    }),
+  },
+  {
+    additionalProperties: false,
+    description: 'Узнанная дорога и её опасность. Узнавший — actor_ids, момент — world_time (§4).',
+  },
+);
+
 const PAYLOAD_SCHEMAS = {
   'journey.started': JourneyStartedPayloadSchema,
   'journey.completed': JourneyCompletedPayloadSchema,
@@ -352,6 +384,7 @@ const PAYLOAD_SCHEMAS = {
   'agent.rested': AgentRestedPayloadSchema,
   'rest.started': RestStartedPayloadSchema,
   'goal.chosen': GoalChosenPayloadSchema,
+  'risk.observed': RiskObservedPayloadSchema,
 } as const;
 
 /** Моменты внутри payload, которые декодер обязан привести к канонической форме. */
@@ -366,6 +399,7 @@ const PAYLOAD_INSTANT_FIELDS: Readonly<Record<WorldEventType, readonly string[]>
   'agent.rested': [],
   'rest.started': ['expected_end'],
   'goal.chosen': [],
+  'risk.observed': [],
 };
 
 function eventVariant<T extends WorldEventType>(type: T) {
@@ -391,6 +425,7 @@ export const AgentAteEventSchema = eventVariant('agent.ate');
 export const AgentRestedEventSchema = eventVariant('agent.rested');
 export const RestStartedEventSchema = eventVariant('rest.started');
 export const GoalChosenEventSchema = eventVariant('goal.chosen');
+export const RiskObservedEventSchema = eventVariant('risk.observed');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению.
@@ -408,6 +443,7 @@ const VARIANT_SCHEMAS = {
   'agent.rested': AgentRestedEventSchema,
   'rest.started': RestStartedEventSchema,
   'goal.chosen': GoalChosenEventSchema,
+  'risk.observed': RiskObservedEventSchema,
 } as const satisfies Readonly<Record<WorldEventType, unknown>>;
 
 export const WorldEventSchema = Type.Union(
@@ -430,6 +466,7 @@ export type AgentAteEvent = Static<typeof AgentAteEventSchema>;
 export type AgentRestedEvent = Static<typeof AgentRestedEventSchema>;
 export type RestStartedEvent = Static<typeof RestStartedEventSchema>;
 export type GoalChosenEvent = Static<typeof GoalChosenEventSchema>;
+export type RiskObservedEvent = Static<typeof RiskObservedEventSchema>;
 
 /**
  * Закрытый union canonical events v1 — ВЫВЕДЕННЫЙ из каталога, а не выписанный рядом с ним.

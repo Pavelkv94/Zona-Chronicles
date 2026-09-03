@@ -68,6 +68,8 @@ export const truncateWorldData = async (db: DatabaseConnection): Promise<void> =
   // держался незамеченным ровно потому, что ни один тест с предметами не чистил базу между
   // случаями: недоеденный паёк оставлял агента неудаляемым, а ошибка приходила от FK.
   await db.deleteFrom('items').execute();
+  // Знание ссылается и на агента, и на дорогу (0022), поэтому уходит раньше обоих.
+  await db.deleteFrom('agent_route_knowledge').execute();
   await db.deleteFrom('agents').execute();
   await db.deleteFrom('routes').execute();
   await db.deleteFrom('locations').execute();

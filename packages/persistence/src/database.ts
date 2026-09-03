@@ -78,6 +78,21 @@ export interface RoutesTable {
   risk: number;
 }
 
+/**
+ * Субъективная карта риска (миграция 0022): что агент знает о дорогах и откуда.
+ *
+ * Не зеркало канона: строки здесь появляются только по факту `risk.observed`, и значение может
+ * расходиться с настоящей опасностью дороги. Расхождение — предмет механики, а не рассинхрон.
+ */
+export interface AgentRouteKnowledgeTable {
+  world_id: string;
+  agent_id: string;
+  route_id: string;
+  risk: number;
+  learned_at: string;
+  source_event_id: string;
+}
+
 export interface AgentsTable {
   world_id: string;
   agent_id: string;
@@ -234,6 +249,7 @@ export interface Database {
   locations: LocationsTable;
   routes: RoutesTable;
   agents: AgentsTable;
+  agent_route_knowledge: AgentRouteKnowledgeTable;
   items: ItemsTable;
   world_events: WorldEventsTable;
   command_results: CommandResultsTable;

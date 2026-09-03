@@ -243,8 +243,14 @@ describe('D6/D7 — сборка observer projection', () => {
     const page = await loadObserverEvents(projection, FIXTURE_WORLD_ID, { after: 0, limit: 100 });
     const serialized = JSON.stringify({ snapshot, events: page.events });
 
-    expect(serialized).not.toContain('risk');
-    expect(serialized).not.toContain('caution');
+    // Ищется ПОЛЕ, а не подстрока: тип события `risk.observed` содержит слово «risk» законно —
+    // зритель видит, что агент разведал дорогу, и не узнаёт вместе с ним её опасность. Первая
+    // редакция проверки этого не различала и падала на собственном же новом факте.
+    expect(serialized).not.toMatch(/"risk"\s*:/);
+    expect(serialized).not.toMatch(/"caution"\s*:/);
+    // И числа опасности из канона в выдаче нет ни под каким именем: 600 у моста, 400 у дороги.
+    expect(serialized).not.toContain('600');
+    expect(serialized).not.toContain('400');
     // Проверка имеет смысл только если в КАНОНЕ опасность есть: иначе она проходила бы на пустом
     // множестве, а фикстура однажды перестала бы её содержать незаметно.
     const canonicalState = await loadWorldState(canonical, FIXTURE_WORLD_ID);

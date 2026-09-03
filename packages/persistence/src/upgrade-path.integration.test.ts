@@ -51,7 +51,7 @@ const writePreviousReleaseWorld = async (
    * Параметр явный, а не вывод из схемы: писатель, заглядывающий в `information_schema`, — это
    * писатель ТЕКУЩЕЙ поставки, а тест обязан вести себя как старый.
    */
-  release: { readonly needBaselines: boolean; readonly goal?: boolean },
+  release: { readonly needBaselines: boolean; readonly goal?: boolean; readonly risk?: boolean },
 ): Promise<void> => {
   const init = fixtureInitialization();
   const state = init.state;
@@ -65,12 +65,29 @@ const writePreviousReleaseWorld = async (
   `.execute(db);
 
   for (const location of init.content.locations) {
+    if (release.risk === true) {
+      await sql`
+        insert into locations (world_id, location_id, name, description, risk)
+        values (${state.worldId}, ${location.id}, ${location.name}, ${location.description},
+                ${state.locations[location.id]?.risk ?? 0})
+      `.execute(db);
+      continue;
+    }
     await sql`
       insert into locations (world_id, location_id, name, description)
       values (${state.worldId}, ${location.id}, ${location.name}, ${location.description})
     `.execute(db);
   }
   for (const route of Object.values(state.routes)) {
+    if (release.risk === true) {
+      await sql`
+        insert into routes (world_id, route_id, from_location_id, to_location_id, travel_minutes,
+                            risk)
+        values (${state.worldId}, ${route.id}, ${route.fromLocationId}, ${route.toLocationId},
+                ${route.travelMinutes}, ${route.risk})
+      `.execute(db);
+      continue;
+    }
     await sql`
       insert into routes (world_id, route_id, from_location_id, to_location_id, travel_minutes)
       values (${state.worldId}, ${route.id}, ${route.fromLocationId}, ${route.toLocationId},
@@ -84,14 +101,15 @@ const writePreviousReleaseWorld = async (
     // на сравнении, и это его работа. Список обязан описывать схему поставки N-1, иначе тест
     // моделирует поставку, которой не существовало.
     if (release.goal === true) {
-      // Поставка N-1 после 0019: цель обязательна и умолчания у неё нет — новый агент получает
-      // её явно, иначе забытая вставка дала бы цель «по умолчанию».
+      // Поставка N-1 после 0019 и 0021: цель и осторожность обязательны и умолчаний у них нет —
+      // новый агент получает их явно, иначе забытая вставка дала бы значения «по умолчанию».
       await sql`
         insert into agents (world_id, agent_id, name, location_id, status, route_id,
-                            hunger_baseline, fatigue_baseline, goal)
+                            hunger_baseline, fatigue_baseline, goal, caution)
         values (${state.worldId}, ${agent.id}, ${init.content.agentNames[agent.id] ?? agent.id},
                 ${agent.locationId}, ${agent.status}, ${agent.routeId},
-                ${agent.needBaseline.hunger}, ${agent.needBaseline.fatigue}, ${agent.goal})
+                ${agent.needBaseline.hunger}, ${agent.needBaseline.fatigue}, ${agent.goal},
+                ${agent.caution})
       `.execute(db);
     } else if (release.needBaselines) {
       await sql`
@@ -136,7 +154,7 @@ describe('N-1 — обновление с предыдущей поставки'
     // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
     // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
     // а не изобретать свой (найдено исполнением при написании теста).
-    await writePreviousReleaseWorld(db, { needBaselines: true, goal: true });
+    await writePreviousReleaseWorld(db, { needBaselines: true, goal: true, risk: true });
 
     const appliedBefore = await db
       .selectFrom('schema_migrations')

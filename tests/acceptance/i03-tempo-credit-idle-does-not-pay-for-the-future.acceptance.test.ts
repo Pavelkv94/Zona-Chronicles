@@ -120,6 +120,9 @@ describe('кредит темпа: тишина не сокращает путь
     expect(events.map((event) => event.type)).toEqual([
       'journey.started',
       'journey.completed',
+      // I06-B: пройденная дорога стала известной. Разведка идёт прежде решения — агент сначала
+      // приходит и видит, и только потом решает, что делать дальше.
+      'risk.observed',
       'goal.chosen',
     ]);
   });

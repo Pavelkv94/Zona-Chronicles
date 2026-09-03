@@ -363,6 +363,34 @@ export function applyObserverEvent(
         },
       };
     }
+    case 'risk.observed': {
+      /**
+       * Зритель видит, что агент РАЗВЕДАЛ дорогу, но не узнаёт вместе с ним её опасность.
+       *
+       * Разница ровно та же, что у разбора оценок: факт наблюдения произошёл и принадлежит
+       * летописи, а его содержимое — внутренность мира. Показать число значило бы отдать
+       * зрителю canonical risk окольным путём, и STOP-условие итерации оказалось бы нарушено
+       * не в снимке, а в ленте.
+       *
+       * Карточку агента это не меняет: субъективная карта — не состояние, которое видно со
+       * стороны, а память, и чужую память не показывают.
+       */
+      return {
+        state: base,
+        emitted: {
+          projection_sequence: projectionSequence,
+          event_id: event.event_id,
+          world_time: event.world_time,
+          type: event.type,
+          actor_ids: [...event.actor_ids],
+          location_id: event.location_id ?? null,
+          route_id: event.payload.route_id,
+          need: null,
+          need_level: null,
+          goal: null,
+        },
+      };
+    }
     default: {
       // Исчерпывающий union (A8): новый тип события обязан ломать компиляцию здесь, а не
       // молча выпадать из ленты.

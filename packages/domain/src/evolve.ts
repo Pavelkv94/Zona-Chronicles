@@ -57,6 +57,8 @@ export function evolve(state: WorldState, event: WorldEvent): WorldState {
       return applyRestStarted(bumped, event);
     case 'goal.chosen':
       return applyGoalChosen(bumped, event);
+    case 'risk.observed':
+      return applyRiskObserved(bumped, event);
     case 'plan.invalidated':
       return applyPlanInvalidated(bumped, event);
     default:
@@ -496,7 +498,6 @@ function applyPlanInvalidated(
           ...agent,
           goal: 'idle',
           planId: null,
-          caution: 1000,
           // Путь сорванным планом не отменяется: маршрут выбирает оператор, а не агент.
           status: agent.status === 'resting' ? 'idle' : agent.status,
         },
@@ -608,4 +609,44 @@ function withDecisionScheduled(
   remaining[decision.id] = decision;
 
   return { ...state, scheduledActions: remaining };
+}
+
+/**
+ * Агент узнал опасность дороги (I06-B).
+ *
+ * Знание кладётся в состояние ИМЕННО ЗДЕСЬ, из факта, и нигде больше. Побочный эффект в ветке
+ * прибытия дал бы то же самое сегодня и разошёлся бы завтра: способов узнать станет несколько, а
+ * требование «знание не появляется без provenance» (SIM-05) держалось бы дисциплиной в каждой из
+ * веток вместо одной.
+ *
+ * Записывается `event_id` этого факта — провенанс, а не украшение: по нему расследование
+ * отвечает на вопрос «откуда он это взял», не гадая по времени.
+ */
+function applyRiskObserved(
+  state: WorldState,
+  event: Extract<WorldEvent, { type: 'risk.observed' }>,
+): WorldState {
+  const actorId = requireSingleActorId(event);
+  const agent = state.agents[actorId];
+  if (agent === undefined) {
+    throw new Error(`evolve: risk.observed ссылается на неизвестного актора ${actorId}`);
+  }
+
+  return {
+    ...state,
+    agents: {
+      ...state.agents,
+      [actorId]: {
+        ...agent,
+        knownRoutes: {
+          ...agent.knownRoutes,
+          [event.payload.route_id]: {
+            risk: event.payload.risk,
+            at: event.world_time,
+            sourceEventId: event.event_id,
+          },
+        },
+      },
+    },
+  };
 }

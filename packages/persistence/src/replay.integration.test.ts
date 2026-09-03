@@ -196,12 +196,18 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
     expect(tick.claimed).toBe(2);
 
     const continuous = await loadWorldState(db, FIXTURE_WORLD_ID);
-    expect(continuous!.sequence).toBe(4); // N = 4 > K = 1 — сравнение не тавтологично
+    // Шесть, а не четыре: с I06-B каждое прибытие даёт ВТОРОЙ факт — пройденная дорога стала
+    // известной. Число точное, а не «не меньше»: оно и есть N, до которого доигрывается суффикс.
+    expect(continuous!.sequence).toBe(6); // N = 6 > K = 1 — сравнение не тавтологично
 
     const replayed = await replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshotAtK);
-    expect(replayed.appliedEventCount).toBe(3); // суффикс K+1..N = {2, 3, 4}
+    expect(replayed.appliedEventCount).toBe(5); // суффикс K+1..N = {2, 3, 4, 5, 6}
     expect(replayed.state).toEqual(continuous);
     expect(replayed.checksum).toBe(checksumOf(continuous));
+    // Субъективное знание восстановлено ИЗ ЖУРНАЛА (I06-B). Утверждение отдельное, а не
+    // следствие сравнения состояний: знание живёт в своей таблице, и «пересимуляция дала то же
+    // самое» перестало бы быть верным первым же полем, которое туда попало мимо событий.
+    expect(Object.keys(replayed.state.agents[FIXTURE_AGENT_ID]?.knownRoutes ?? {})).toHaveLength(1);
 
     // Удобный вход тоже: единственный снимок мира — как раз snapshotAtK, `replayWorld`
     // обязан найти его сам и дать тот же результат.
@@ -295,7 +301,8 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
     await runWorldTick(db, { worldId: FIXTURE_WORLD_ID, owner: 'w', horizon: ARRIVAL });
 
     const beforeDeletion = await loadWorldEvents(db, FIXTURE_WORLD_ID);
-    expect(beforeDeletion.map((event) => event.sequence)).toEqual([1, 2, 3, 4]);
+    // Шесть фактов: два выхода, два прибытия и две разведки (I06-B).
+    expect(beforeDeletion.map((event) => event.sequence)).toEqual([1, 2, 3, 4, 5, 6]);
 
     // Порча журнала В ОБХОД приложения: и `world_events`, и рантайм-роль (миграция 0003) не
     // дают delete НИКОМУ на уровне грантов (`principals.ts`) — здесь подключаемся владельцем
@@ -319,7 +326,7 @@ describe('replay: снимок плюс суффикс журнала (C9, C10)'
     }
 
     const afterDeletion = await loadWorldEvents(db, FIXTURE_WORLD_ID);
-    expect(afterDeletion.map((event) => event.sequence)).toEqual([1, 3, 4]);
+    expect(afterDeletion.map((event) => event.sequence)).toEqual([1, 3, 4, 5, 6]);
 
     await expect(replayFromSnapshot(db, FIXTURE_WORLD_ID, snapshotAtZero)).rejects.toThrow(
       /разрыв в журнале/,

@@ -32,6 +32,7 @@ export const fixtureState = (): WorldState => ({
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     },
     [FIXTURE_OTHER_AGENT_ID]: {
       id: FIXTURE_OTHER_AGENT_ID,
@@ -42,6 +43,7 @@ export const fixtureState = (): WorldState => ({
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     },
   },
   locations: {
@@ -107,6 +109,7 @@ export const fixtureInitializationWithAgents = (count: number): WorldInitializat
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     };
     agentNames[id] = `Бегун ${String(index)}`;
   }

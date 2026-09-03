@@ -56,6 +56,7 @@ export type {
   RestCompleteAction,
   NeedThresholdAction,
   RouteDefinition,
+  RouteKnowledge,
   ScheduledAction,
   WorldState,
 } from './state.ts';

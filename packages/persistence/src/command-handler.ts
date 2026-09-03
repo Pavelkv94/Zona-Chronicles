@@ -53,6 +53,7 @@ export const TRANSACTION_STEPS = [
   'event-inserted',
   'schedule-updated',
   'items-updated',
+  'knowledge-updated',
   'agent-updated',
   'world-updated',
   'outbox-inserted',
@@ -79,6 +80,7 @@ export const ACCEPTED_PATH_STEPS: readonly TransactionStep[] = [
   'event-inserted',
   'schedule-updated',
   'items-updated',
+  'knowledge-updated',
   'agent-updated',
   'world-updated',
   'outbox-inserted',
@@ -278,6 +280,9 @@ const changedAgents = (before: WorldState, after: WorldState): readonly AgentSta
       // guard: перечисление полей ручное, и забытое поле роняет команду сверкой checksum
       // только если о нём помнит и читатель, и писатель.
       previous.caution !== agent.caution
+      // `knownRoutes` СЮДА НЕ ВХОДИТ намеренно: знание живёт в своей таблице и пишется
+      // отдельным шагом (ниже). Сравнивать его здесь значило бы переписывать всю строку агента
+      // из-за одной новой дороги.
     );
   });
 
@@ -550,6 +555,33 @@ export const executeCommand = async (
           .execute();
       }
       await afterStep('items-updated');
+
+      /**
+       * Субъективная карта риска: появившиеся записи вставляются, исчезнувших не бывает.
+       *
+       * Забыть узнанное в этом мире нельзя, и односторонность здесь не упрощение, а свойство
+       * механики: `risk.observed` знание добавляет, и ни один факт его не убирает. Когда
+       * появится устаревание (§12 — `expires_or_stales_at`), обратная сторона появится вместе с
+       * фактом, который её порождает, — а не «на всякий случай» заранее.
+       */
+      for (const agent of Object.values(nextState.agents)) {
+        const before = state.agents[agent.id]?.knownRoutes ?? {};
+        for (const [routeId, known] of Object.entries(agent.knownRoutes)) {
+          if (before[routeId] !== undefined) continue;
+          await trx
+            .insertInto('agent_route_knowledge')
+            .values({
+              world_id: command.world_id,
+              agent_id: agent.id,
+              route_id: routeId,
+              risk: known.risk,
+              learned_at: known.at,
+              source_event_id: known.sourceEventId,
+            })
+            .execute();
+        }
+      }
+      await afterStep('knowledge-updated');
 
       for (const agent of changedAgents(state, nextState)) {
         await trx

@@ -39,6 +39,7 @@ describe('evolve: journey.started', () => {
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     });
   });
 
@@ -99,6 +100,7 @@ describe('evolve: journey.completed', () => {
       goal: 'idle',
       planId: null,
       caution: 1000,
+      knownRoutes: {},
     });
   });
 });
@@ -155,6 +157,7 @@ describe('M7 — снятие действия из расписания по п
           goal: 'idle',
           planId: null,
           caution: 1000,
+          knownRoutes: {},
         },
       },
       items: {},
@@ -206,6 +209,7 @@ describe('M7 — снятие действия из расписания по п
           goal: 'idle',
           planId: null,
           caution: 1000,
+          knownRoutes: {},
         },
       },
       items: {},
