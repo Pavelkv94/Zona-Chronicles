@@ -48,7 +48,10 @@ export const fixtureState = (): WorldState => ({
   },
   locations: {
     'loc:quiet-yard': { id: 'loc:quiet-yard', risk: 0 },
-    'loc:bridge': { id: 'loc:bridge', risk: 600 },
+    // Опасность НЕНУЛЕВАЯ, но заведомо ниже цены ухода: фикстурный мир должен содержать риск —
+    // иначе проверки «канон наружу не выходит» шли бы на пустом множестве, — и при этом не
+    // разгонять агентов по своей воле в тестах, которые про другое.
+    'loc:bridge': { id: 'loc:bridge', risk: 100 },
   },
   routes: {
     [FIXTURE_ROUTE_ID]: {

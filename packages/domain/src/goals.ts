@@ -61,6 +61,18 @@ export interface GoalWeights {
   readonly timeCostPermillePerHour: number;
   /** `switch_margin` §6: тысячные, на которые новая цель обязана превзойти текущую. */
   readonly switchMarginPermille: number;
+  /**
+   * Во сколько агент оценивает опасность дороги, о которой ничего не знает (I06, §8).
+   *
+   * Так выражен `uncertainty_penalty` формулы §8 — предполагаемым риском, а НЕ отдельным
+   * штрафом. Два множителя за одно и то же взяли бы двойную плату: осторожность уже умножает
+   * воспринимаемый риск, и неизвестная дорога дорожает для пугливого агента сама собой.
+   *
+   * Значение обязано быть таким, чтобы уход в неизвестность оставался возможным. Слишком
+   * высокое даёт мир, где никто не трогается с места, пока не узнает дорогу, — а узнать её,
+   * не пройдя, нельзя.
+   */
+  readonly assumedUnknownRiskPermille: number;
 }
 
 /**
@@ -88,7 +100,8 @@ export function requireValidGoalWeights(weights: GoalWeights, label: string): Go
     weights.switchMarginPermille,
     ...NEED_LEVELS.map((level) => weights.urgencyPermille[level]),
   ];
-  for (const value of permilles) {
+  const permillesWithUnknown = [...permilles, weights.assumedUnknownRiskPermille];
+  for (const value of permillesWithUnknown) {
     if (!Number.isSafeInteger(value) || value < 0 || value > MAX_PERMILLE) {
       throw new Error(
         `ruleset: коэффициенты "${label}" обязаны быть целыми тысячными в [0, ${MAX_PERMILLE}], ` +
@@ -128,7 +141,79 @@ export interface GoalSituation {
   readonly isIdle: boolean;
   /** Сколько мирового времени займёт отдых. Приходит из ruleset через `decide`. */
   readonly restMinutes: number;
+  /**
+   * Опасность места, где агент находится, в тысячных (I06-C).
+   *
+   * Это единственная опасность, которую агент знает БЕЗ памяти: он здесь, и место вокруг него.
+   * Знание о дорогах — другое дело, оно требует того, чтобы по ним прошли.
+   */
+  readonly locationRisk: number;
+  /**
+   * Дороги, доступные отсюда, — И ТОЛЬКО ТО, ЧТО АГЕНТ О НИХ ЗНАЕТ.
+   *
+   * Здесь проходит граница, ради которой вся итерация и затевалась. Канонической опасности
+   * дороги в ситуации нет вовсе: `perceivedRisk === null` означает «не знает», и подставить сюда
+   * настоящее значение — это и есть тот утёк, который объявлен STOP-условием. Проверяется
+   * свойством: изменение канона неизвестных дорог не меняет выбора.
+   */
+  readonly travelOptions: readonly TravelOption[];
 }
+
+/** Дорога глазами агента: длина известна всем, опасность — только тому, кто по ней ходил. */
+export interface TravelOption {
+  readonly routeId: string;
+  readonly travelMinutes: number;
+  /** `null` — агент об этой дороге ничего не знает. НЕ ноль: незнание это не безопасность. */
+  readonly perceivedRisk: number | null;
+}
+
+/** Цена дороги глазами агента: длина плюс страх, умноженный на осторожность (§8). */
+export interface RouteCost {
+  readonly routeId: string;
+  readonly cost: number;
+}
+
+/**
+ * Дорога, которую агент выберет отсюда, либо `null`, если идти некуда.
+ *
+ * Дешевле — лучше; при равной цене выигрывает дорога с меньшим id. Порядок задан ключом, а не
+ * порядком перебора: второе зависело бы от того, как собран список, и переставленные местами
+ * дороги дали бы другой мир при том же seed.
+ */
+export function chooseRoute(
+  options: readonly TravelOption[],
+  weights: GoalWeights,
+  caution: number,
+): RouteCost | null {
+  let best: RouteCost | null = null;
+  for (const option of options) {
+    const cost = routeCost(option, weights, caution);
+    if (
+      best === null ||
+      cost < best.cost ||
+      (cost === best.cost && option.routeId < best.routeId)
+    ) {
+      best = { routeId: option.routeId, cost };
+    }
+  }
+  return best;
+}
+
+/**
+ * Цена одной дороги.
+ *
+ * Осторожность умножает ИМЕННО воспринимаемый риск, а не всю цену: бояться можно опасности, а не
+ * расстояния. Умножение всей цены сделало бы пугливого агента ещё и домоседом, и различить эти
+ * два свойства в поведении стало бы невозможно.
+ */
+function routeCost(option: TravelOption, weights: GoalWeights, caution: number): number {
+  const perceived = option.perceivedRisk ?? weights.assumedUnknownRiskPermille;
+  const durationCost = timeCostOf(option.travelMinutes, weights);
+  return durationCost + Math.ceil((perceived * caution) / PERMILLE);
+}
+
+/** Тысяча — нейтральный множитель. Один литерал на весь модуль, а не число в трёх местах. */
+const PERMILLE = 1000;
 
 export interface GoalDecision {
   readonly goal: GoalKind;
@@ -146,11 +231,22 @@ function timeCostOf(minutes: number, weights: GoalWeights): number {
   return Math.ceil((minutes * weights.timeCostPermillePerHour) / MINUTES_PER_HOUR);
 }
 
-/** Нужда, которую снимает цель; у `idle` её нет, поэтому срочность нулевая. */
+/** Нужда, которую снимает цель; у `idle` и `flee` её нет — они не о теле. */
 function needOf(goal: GoalKind): NeedKind | null {
   if (goal === 'eat') return 'hunger';
   if (goal === 'rest') return 'fatigue';
   return null;
+}
+
+/**
+ * Срочность цели «уйти» — это опасность места, где агент стоит (I06-C).
+ *
+ * Читается напрямую, без ступеней по уровням, — в отличие от нужд. Разница не в произволе:
+ * значение нужды это ИЗМЕРЕНИЕ, которое дрейфует между двумя соседними минутами, а опасность
+ * места — свойство мира, постоянное, пока мир его не изменил. Решение по нему не «плавает».
+ */
+function fleeUrgency(situation: GoalSituation): number {
+  return situation.locationRisk;
 }
 
 /**
@@ -162,6 +258,17 @@ function needOf(goal: GoalKind): NeedKind | null {
  */
 function durationOf(goal: GoalKind, situation: GoalSituation): number {
   return goal === 'rest' ? situation.restMinutes : 0;
+}
+
+/**
+ * Цена цели «уйти» — это цена ЛУЧШЕЙ доступной дороги (§8).
+ *
+ * Решить уйти, не зная куда, нельзя: «уйти» и «выбрать дорогу» — одно решение, а не два. Поэтому
+ * стоимость дороги входит в оценку цели, а не считается потом. Если идти некуда, цели нет вовсе
+ * — это выражено исполнимостью, а не бесконечной ценой.
+ */
+function fleeCost(situation: GoalSituation, weights: GoalWeights, caution: number): number {
+  return chooseRoute(situation.travelOptions, weights, caution)?.cost ?? 0;
 }
 
 /**
@@ -179,14 +286,29 @@ function isFeasible(goal: GoalKind, situation: GoalSituation): boolean {
   if (goal === 'idle') return true;
   if (!situation.isIdle) return false;
   if (goal === 'eat') return situation.hasFood;
+  // Уйти можно только туда, куда есть дорога. Место без выхода — не «дорого уходить», а некуда.
+  if (goal === 'flee') return situation.travelOptions.length > 0;
   return true;
 }
 
 /** Одна строка разбора: слагаемые считаются и для неисполнимых целей (см. `goal.ts`). */
-function lineFor(goal: GoalKind, situation: GoalSituation, weights: GoalWeights): GoalScoreLine {
+function lineFor(
+  goal: GoalKind,
+  situation: GoalSituation,
+  weights: GoalWeights,
+  caution: number,
+): GoalScoreLine {
   const need = needOf(goal);
-  const urgency = need === null ? 0 : weights.urgencyPermille[situation.needLevels[need]];
-  const timeCost = timeCostOf(durationOf(goal, situation), weights);
+  const urgency =
+    goal === 'flee'
+      ? fleeUrgency(situation)
+      : need === null
+        ? 0
+        : weights.urgencyPermille[situation.needLevels[need]];
+  const timeCost =
+    goal === 'flee'
+      ? fleeCost(situation, weights, caution)
+      : timeCostOf(durationOf(goal, situation), weights);
   const switchingCost = goal === situation.currentGoal ? 0 : weights.switchMarginPermille;
   return {
     goal,
@@ -206,8 +328,12 @@ function lineFor(goal: GoalKind, situation: GoalSituation, weights: GoalWeights)
  * зависело бы от того, как написан цикл, и переставленные местами кандидаты дали бы другой мир
  * при том же seed. Проверяется пробой, переставляющей кандидатов.
  */
-export function chooseGoal(situation: GoalSituation, weights: GoalWeights): GoalDecision {
-  const candidates = GOAL_KINDS.map((goal) => lineFor(goal, situation, weights));
+export function chooseGoal(
+  situation: GoalSituation,
+  weights: GoalWeights,
+  caution: number,
+): GoalDecision {
+  const candidates = GOAL_KINDS.map((goal) => lineFor(goal, situation, weights, caution));
 
   let best: GoalScoreLine | null = null;
   for (const line of candidates) {

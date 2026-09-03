@@ -238,6 +238,17 @@ export interface AgentRestAction extends ScheduledActionBase {
   readonly kind: 'agent.rest';
 }
 
+/**
+ * Шаг цели «уйти»: выйти в путь (I06-C).
+ *
+ * Дороги здесь НЕТ, и это то же решение, что в payload команды: её выбирает `decide` в момент
+ * ухода, по субъективной карте агента. Записать дорогу в действие значило бы, что выбрала её
+ * `evolve`, у которой нет ни коэффициентов, ни права взвешивать.
+ */
+export interface AgentTravelAction extends ScheduledActionBase {
+  readonly kind: 'agent.travel';
+}
+
 export interface NeedThresholdAction extends ScheduledActionBase {
   readonly kind: 'need.threshold';
   readonly need: NeedKind;
@@ -251,7 +262,8 @@ export type ScheduledAction =
   | AgentEatAction
   | RestCompleteAction
   | AgentDecideAction
-  | AgentRestAction;
+  | AgentRestAction
+  | AgentTravelAction;
 
 /**
  * Ключи действий, порождённых ФАКТОМ, выводятся из `event_id` этого факта.
@@ -280,6 +292,11 @@ export function agentRestActionId(causeEventId: string): string {
 /** Детерминированный ключ шага «поесть». */
 export function agentEatActionId(causeEventId: string): string {
   return `sched:eat:${causeEventId}`;
+}
+
+/** Детерминированный ключ шага «уйти». */
+export function agentTravelActionId(causeEventId: string): string {
+  return `sched:travel:${causeEventId}`;
 }
 
 /**
@@ -322,6 +339,8 @@ export const SCHEDULED_ACTION_PRIORITY: Readonly<Record<ScheduledAction['kind'],
   // следует. При равном сроке иначе получилась бы летопись, где агент лёг отдыхать до того,
   // как решил отдыхать.
   'agent.rest': 310,
+  // Шаг ухода — там же, где остальные шаги цели: после решения, его породившего.
+  'agent.travel': 320,
 };
 
 /**

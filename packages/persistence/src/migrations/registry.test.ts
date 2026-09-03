@@ -147,6 +147,11 @@ const GOLDEN_REGISTRY: readonly RegistryEntry[] = [
     name: 'route-knowledge',
     checksum: 'e6ae8d6bcd904a09af30de67e3c14830362ce3cd24dfa590e51a75df05793d61',
   },
+  {
+    id: '0023',
+    name: 'travel-step',
+    checksum: '17cadf634bb7c6d525a170603191a687a9e5e68f71422a66a36cb7bac67f8c68',
+  },
 ];
 
 describe('реестр миграций', () => {

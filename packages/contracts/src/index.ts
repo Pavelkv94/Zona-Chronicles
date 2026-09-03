@@ -152,6 +152,7 @@ export {
   type AgentEatCommand,
   type AgentRestCommand,
   type AgentDecideCommand,
+  type AgentTravelCommand,
   type RestCompleteCommand,
   COMMAND_ENVELOPE_KEYS,
   COMMAND_FINGERPRINT_EXCLUDED_KEYS,

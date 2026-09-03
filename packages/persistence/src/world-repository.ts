@@ -741,7 +741,8 @@ const scheduledActionFromRow = (row: {
     | 'agent.eat'
     | 'rest.complete'
     | 'agent.decide'
-    | 'agent.rest';
+    | 'agent.rest'
+    | 'agent.travel';
   readonly due_at: string;
   readonly priority: number;
   readonly entity_id: string;
@@ -774,6 +775,10 @@ const scheduledActionFromRow = (row: {
 
   if (row.kind === 'agent.rest') {
     return { ...base, kind: 'agent.rest' };
+  }
+
+  if (row.kind === 'agent.travel') {
+    return { ...base, kind: 'agent.travel' };
   }
 
   if (row.kind === 'agent.eat') {

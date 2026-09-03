@@ -60,6 +60,7 @@ import {
   parseDatabaseConnectionUrl,
 } from '../../packages/persistence/src/index.ts';
 import { PROTOTYPE_WORLD } from '../../packages/content/src/index.ts';
+import { CALM_LOCATIONS, assertCalmLocationsMatchMap } from '../support/calm-routes.ts';
 import {
   createProjectionDatabase,
   loadObserverEvents,
@@ -96,7 +97,13 @@ const ringFor = (
 ): Readonly<Record<string, readonly [string, string]>> => {
   const ring: Record<string, readonly [string, string]> = {};
   for (const [agentId, locationId] of Object.entries(agents)) {
-    const outbound = PROTOTYPE_WORLD.routes.find((route) => route.fromLocationId === locationId);
+    // Кольцо строится только между СПОКОЙНЫМИ местами: с I06-C агент, попавший в опасное,
+    // немедленно уходит сам, и второй, обратный, «прогон оператора» получил бы отказ — тест
+    // упал бы из-за поведения агента, а не из-за догона проекции.
+    if (!CALM_LOCATIONS.includes(locationId)) continue;
+    const outbound = PROTOTYPE_WORLD.routes.find(
+      (route) => route.fromLocationId === locationId && CALM_LOCATIONS.includes(route.toLocationId),
+    );
     if (outbound === undefined) continue;
     const inbound = PROTOTYPE_WORLD.routes.find(
       (route) =>
@@ -192,10 +199,13 @@ describe('I03 D6 — убитый сборщик проекции догоняе
 
     // Наполняем журнал: четыре агента по кольцу, чтобы догон был не мгновенным и убийство
     // имело шанс попасть внутрь него.
+    assertCalmLocationsMatchMap();
     const ring = ringFor(await agentLocations());
     // Кольцо обязано быть непустым и покрывать почти всех: иначе журнал не наполнится, и
     // «убийство попало внутрь догона» проверялось бы на мире, где догонять нечего.
-    expect(Object.keys(ring).length).toBeGreaterThanOrEqual(3);
+    // Двое достаточно: длину журнала проверяет отдельное утверждение ниже, а больше агентов в
+    // спокойных местах карта при этом seed не даёт.
+    expect(Object.keys(ring).length).toBeGreaterThanOrEqual(2);
     for (const [agentId, [outbound]] of Object.entries(ring)) {
       const started = cli(['world', 'run', '--agent', agentId, '--route', outbound]);
       expect(started.exitCode, started.stdout).toBe(0);

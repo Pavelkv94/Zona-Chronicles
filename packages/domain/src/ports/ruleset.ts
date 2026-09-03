@@ -49,7 +49,7 @@ export interface Ruleset {
  * надеждой — content не имеет права импортировать domain, поэтому общего литерала быть не может,
  * а расхождение двух литералов уже стоило проекту неработающего worker-а (m13 аудита I03).
  */
-export const RULES_VERSION = '0.4.0';
+export const RULES_VERSION = '0.5.0';
 
 /**
  * Коэффициенты нужд прототипа.
@@ -90,6 +90,15 @@ export const PROTOTYPE_GOAL_WEIGHTS: GoalWeights = requireValidGoalWeights(
     urgencyPermille: { normal: 0, warning: 400, critical: 900 },
     timeCostPermillePerHour: 25,
     switchMarginPermille: 100,
+    /**
+     * Неизвестная дорога пугает, но не запрещает (I06).
+     *
+     * 300 — меньше, чем опасность худшей дороги карты, и заметно меньше опасности моста. При
+     * более высоком значении мир замирает: уйти в неизвестность становится дороже, чем остаться
+     * в опасном месте, а узнать дорогу, не пройдя по ней, нельзя — и никто никогда не трогается.
+     * Проверено поведением, а не подобрано на глаз.
+     */
+    assumedUnknownRiskPermille: 300,
   },
   'goalWeights',
 );

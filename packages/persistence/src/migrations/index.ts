@@ -21,6 +21,7 @@ import { goalsMigration } from './0019-goals.ts';
 import { plansMigration } from './0020-plans.ts';
 import { riskMigration } from './0021-risk.ts';
 import { routeKnowledgeMigration } from './0022-route-knowledge.ts';
+import { travelStepMigration } from './0023-travel-step.ts';
 
 export type { Migration } from './types.ts';
 
@@ -56,4 +57,5 @@ export const migrations: readonly Migration[] = [
   plansMigration,
   riskMigration,
   routeKnowledgeMigration,
+  travelStepMigration,
 ];

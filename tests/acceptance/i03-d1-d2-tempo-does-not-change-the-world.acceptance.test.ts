@@ -54,6 +54,12 @@ import type { WorldEvent } from '../../packages/contracts/src/index.ts';
 import { currentBundles, currentDeterministicRuntimeProfile } from '../../apps/cli/src/world.ts';
 import { killAndWait } from '../support/kill-child.ts';
 import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
+import {
+  assertCalmLocationsMatchMap,
+  calmLegs,
+  parseAgentLocations,
+  type CalmLeg,
+} from '../support/calm-routes.ts';
 
 const WORKER_ENTRY = fileURLToPath(new URL('../../apps/worker/src/main.ts', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
@@ -61,16 +67,28 @@ const WORLD_ID = 'world:prototype';
 const SEED = 42;
 
 /** Один и тот же набор команд для всех трёх миров, с ФИКСИРОВАННЫМИ идентификаторами. */
-const COMMANDS: readonly { readonly agent: string; readonly route: string; readonly id: string }[] =
-  [
-    { agent: 'agent:rook', route: 'route:yard-to-bridge', id: 'cmd_D2FIXED0000000000000001' },
-    { agent: 'agent:kite', route: 'route:yard-to-bridge', id: 'cmd_D2FIXED0000000000000002' },
-    {
-      agent: 'agent:finch',
-      route: 'route:bridge-to-checkpoint',
-      id: 'cmd_D2FIXED0000000000000003',
-    },
-  ];
+/**
+ * Команды выводятся из КАРТЫ и из расстановки, а не выписаны руками.
+ *
+ * Раньше пары «агент — маршрут» были фиксированы и держались на расстановке конкретного seed.
+ * Расстановка меняется вместе с картой, и тест падал с `route_unavailable` — по причине, к
+ * утверждению D1/D2 отношения не имеющей.
+ *
+ * Дороги берутся спокойные: с I06-C агент, попавший в опасное место, уходит сам, и тогда журнал
+ * содержал бы не только то, что велел оператор. Для утверждения «темп ничего не меняет» это не
+ * помеха, но лишний шум сравнивать труднее, а причину расхождения — искать дольше.
+ *
+ * Идентификаторы команд остаются ДЕТЕРМИНИРОВАННЫМИ: у обоих миров один seed, значит одна
+ * расстановка, значит одни и те же команды с одними и теми же id.
+ */
+const commandsFor = (
+  legs: readonly CalmLeg[],
+): readonly { readonly agent: string; readonly route: string; readonly id: string }[] =>
+  legs.map((leg, index) => ({
+    agent: leg.agentId,
+    route: leg.routeId,
+    id: `cmd_D2FIXED000000000000000${String(index + 1)}`,
+  }));
 
 /** Всё, что делает событие событием, кроме отметки стенных часов записи. */
 const canonicalShape = (event: WorldEvent) => {
@@ -108,6 +126,18 @@ const commonBound = (journal: readonly WorldEvent[]): string => {
 describe('I03 D1/D2 — скорость мира не меняет канонический журнал', () => {
   const created: TestDatabase[] = [];
 
+  /** Расстановка по выводу `world state` — тем же способом, каким её видит оператор. */
+  const agentLocationsOf = (
+    cli: (argv: readonly string[]) => { readonly stdout: string; readonly exitCode: number | null },
+  ): Readonly<Record<string, string>> => {
+    const state = cli(['world', 'state']);
+    expect(state.exitCode, state.stdout).toBe(0);
+    return parseAgentLocations(state.stdout);
+  };
+
+  /** Сколько команд оператор подал в каждый мир. Заполняется первым созданным миром. */
+  let commandCount = 0;
+
   const makeWorld = async (label: string): Promise<TestDatabase> => {
     const db = await createTestDatabase(label);
     created.push(db);
@@ -115,7 +145,11 @@ describe('I03 D1/D2 — скорость мира не меняет канони
       spawnWorldCliDirect(argv, { env: { DATABASE_URL: db.url } });
     expect(cli(['world', 'migrate']).exitCode).toBe(0);
     expect(cli(['world', 'init', '--seed', String(SEED)]).exitCode).toBe(0);
-    for (const command of COMMANDS) {
+    assertCalmLocationsMatchMap();
+    const commands = commandsFor(calmLegs(agentLocationsOf(cli)));
+    expect(commands.length, 'нужен хотя бы один агент в спокойном месте').toBeGreaterThan(0);
+    commandCount = commands.length;
+    for (const command of commands) {
       const started = cli([
         'world',
         'run',
@@ -178,7 +212,7 @@ describe('I03 D1/D2 — скорость мира не меняет канони
       // ПОЛНЫМ: помощник убивает worker-а, как только счётчик достигнут, и заниженное ожидание
       // останавливает мир на середине — а сравнение двух миров потом объявляет это расхождением
       // темпов. Так этот тест и упал впервые.
-      const expected = COMMANDS.length * 4;
+      const expected = commandCount * 4;
       const deadline = Date.now() + 90_000;
       while (Date.now() < deadline) {
         if ((await journalOf(db)).length >= expected) return;
@@ -224,7 +258,7 @@ describe('I03 D1/D2 — скорость мира не меняет канони
     // Четыре события на команду: старт, завершение, РАЗВЕДКА пройденной дороги (I06-B) и
     // решение прибывшего агента (I05-B). Пин остаётся точным числом, а не «не меньше»: он
     // страхует от сравнения пустых префиксов, и мягкая форма перестала бы это делать.
-    expect(slowPrefix.length).toBe(COMMANDS.length * 4);
+    expect(slowPrefix.length).toBe(commandCount * 4);
     expect(fastPrefix.map(canonicalShape)).toEqual(slowPrefix.map(canonicalShape));
   });
 

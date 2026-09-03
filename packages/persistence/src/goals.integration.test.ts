@@ -213,10 +213,13 @@ describe('I05-B — выбор цели без единой команды че�
     expect(chosen.payload.previous_goal).toBe('idle');
     // Разбор объясняет и ОТВЕРГНУТОЕ: без строки про еду нельзя отличить «еды не было» от «еда
     // была, но отдых оказался важнее».
+    // Четвёртая строка — «уйти» (I06-C). Она в разборе есть всегда, даже когда уходить незачем:
+    // объяснение обязано называть и отвергнутое.
     expect(chosen.payload.trace.candidates.map((line) => line.goal)).toEqual([
       'idle',
       'eat',
       'rest',
+      'flee',
     ]);
     const eat = chosen.payload.trace.candidates.find((line) => line.goal === 'eat');
     expect(eat?.feasible).toBe(true);

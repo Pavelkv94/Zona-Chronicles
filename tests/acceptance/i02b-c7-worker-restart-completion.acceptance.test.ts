@@ -21,22 +21,22 @@ import {
   type TestDatabase,
 } from '../../packages/persistence/src/__fixtures__/test-database.ts';
 import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
+import {
+  assertCalmLocationsMatchMap,
+  calmLegs,
+  parseAgentLocations,
+} from '../support/calm-routes.ts';
 
 const SEED = 42;
 // route:yard-to-bridge (40 мин) годится только агентам, начинающим в loc:quiet-yard — при
 // seed=42 это agent:rook и agent:kite (проверено `world inspect --seed 42`); agent:finch стартует
 // в loc:bridge, поэтому для него — второй маршрут route:bridge-to-checkpoint (25 мин).
-const ROUTE_YARD_TO_BRIDGE = 'route:yard-to-bridge';
-const ROUTE_BRIDGE_TO_CHECKPOINT = 'route:bridge-to-checkpoint';
 
 const cli = (argv: readonly string[], databaseUrl: string) =>
   spawnWorldCliDirect(argv, { env: { DATABASE_URL: databaseUrl } });
 
 /** Строки `world events` для заданного типа события — считаем по подстроке, а не парсим JSON:
  *  вывод CLI — человекочитаемый текст, а не машинный формат (см. `runWorldEventsCommand`). */
-const countEventLines = (eventsOutput: string, eventType: string): number =>
-  eventsOutput.split('\n').filter((line) => line.includes(eventType)).length;
-
 describe('I02B C7 — worker, запущенный заново, доводит journey до конца', () => {
   let db: TestDatabase;
 
@@ -52,13 +52,35 @@ describe('I02B C7 — worker, запущенный заново, доводит 
     await db.drop();
   });
 
+  /** Где стоит каждый агент — по выводу `world state`, а не по памяти о seed. */
+  const agentLocations = (): Readonly<Record<string, string>> => {
+    const state = cli(['world', 'state'], db.url);
+    expect(state.exitCode, state.stdout).toBe(0);
+    return parseAgentLocations(state.stdout);
+  };
+
+  /** Сколько событий данного типа относится к КОНКРЕТНОМУ агенту. */
+  const countFor = (eventsOutput: string, eventType: string, agentId: string): number =>
+    eventsOutput.split('\n').filter((line) => line.includes(eventType) && line.includes(agentId))
+      .length;
+
   it('C7: единственный journey, начатый без единого запуска worker-а, завершается свежим процессом', () => {
+    /**
+     * Дорога выбирается СПОКОЙНАЯ, и это не удобство.
+     *
+     * С I06-C мир перестал быть неподвижным между командами оператора: пришедший в опасное место
+     * агент немедленно решает уйти. Тест про перезапуск worker-а, поставленный на такую дорогу,
+     * падал бы из-за поведения агента — то есть по причине, к его утверждению отношения не
+     * имеющей. Так он и упал впервые.
+     */
+    assertCalmLocationsMatchMap();
+    const [leg] = calmLegs(agentLocations());
+    expect(leg, 'ни один агент не стоит в спокойном месте').toBeDefined();
+    if (leg === undefined) return;
+
     // Given: journey начат. Ни одного `world tick` до этой точки в тесте не было вовсе — это
     // ПЕРВОЕ обращение к worker-стороне очереди для этого мира.
-    const run = cli(
-      ['world', 'run', '--agent', 'agent:rook', '--route', ROUTE_YARD_TO_BRIDGE],
-      db.url,
-    );
+    const run = cli(['world', 'run', '--agent', leg.agentId, '--route', leg.routeId], db.url);
     expect(run.exitCode, run.stdout + run.stderr).toBe(0);
     expect(run.stdout).toContain('принята');
 
@@ -67,70 +89,51 @@ describe('I02B C7 — worker, запущенный заново, доводит 
     expect(beforeTick.stdout).not.toContain('journey.completed');
 
     // When: worker запускается заново — свежий OS-процесс, ничего не унаследовавший от
-    // процесса, который выполнил `world run`. `--advance 40` — ровно `travelMinutes` маршрута,
-    // поэтому горизонт совпадает с due_at запланированного завершения.
-    const tick = cli(['world', 'tick', '--advance', '40'], db.url);
+    // процесса, который выполнил `world run`. Горизонт равен длительности маршрута, поэтому
+    // совпадает с due_at запланированного завершения.
+    const tick = cli(['world', 'tick', '--advance', String(leg.travelMinutes)], db.url);
     expect(tick.exitCode, tick.stdout + tick.stderr).toBe(0);
     expect(tick.stdout).not.toContain('отклонена');
 
-    // Then: завершение произошло, и на единственный journey.started приходится РОВНО одно
-    // journey.completed — ни пропуска, ни дубля.
+    // Then: у ЭТОГО агента на единственный journey.started приходится ровно одно
+    // journey.completed — ни пропуска, ни дубля. Счёт по агенту, а не по миру: мир живёт своей
+    // жизнью, и общий счётчик проверял бы её, а не перезапуск worker-а.
     const afterTick = cli(['world', 'events'], db.url);
-    expect(countEventLines(afterTick.stdout, 'journey.started')).toBe(1);
-    expect(countEventLines(afterTick.stdout, 'journey.completed')).toBe(1);
+    expect(countFor(afterTick.stdout, 'journey.started', leg.agentId)).toBe(1);
+    expect(countFor(afterTick.stdout, 'journey.completed', leg.agentId)).toBe(1);
 
     const state = cli(['world', 'state'], db.url);
-    expect(state.stdout).toMatch(/agent:rook\s+idle\s+в loc:bridge/);
+    expect(state.stdout).toMatch(new RegExp(`${leg.agentId}\\s+idle\\s+в ${leg.toLocationId}`));
   });
 
   it('C7: несколько стартов без единого tick между ними — один tick закрывает КАЖДЫЙ ровно один раз', () => {
-    // Given: два НОВЫХ journey стартуют один за другим, и между ними worker снова не запускается
-    // ни разу (после предыдущего теста тоже не запускался — это одна и та же база, продолжение
-    // истории). У маршрутов разная длительность (40 и 25 минут) специально: single tick обязан
-    // подобрать оба due action одним горизонтом, а не совпадением due_at.
-    const startedBefore = countEventLines(
-      cli(['world', 'events'], db.url).stdout,
-      'journey.started',
-    );
-    const completedBefore = countEventLines(
-      cli(['world', 'events'], db.url).stdout,
-      'journey.completed',
+    // Given: два НОВЫХ journey стартуют один за другим, и между ними worker не запускается ни
+    // разу. Оба ведут в спокойные места — по тому же доводу, что и выше.
+    assertCalmLocationsMatchMap();
+    const legs = calmLegs(agentLocations()).slice(0, 2);
+    expect(legs.length, 'нужны двое агентов в спокойных местах').toBe(2);
+
+    for (const leg of legs) {
+      const started = cli(['world', 'run', '--agent', leg.agentId, '--route', leg.routeId], db.url);
+      expect(started.exitCode, started.stdout + started.stderr).toBe(0);
+    }
+
+    const startedBefore = legs.map((leg) =>
+      countFor(cli(['world', 'events'], db.url).stdout, 'journey.completed', leg.agentId),
     );
 
-    const runKite = cli(
-      ['world', 'run', '--agent', 'agent:kite', '--route', ROUTE_YARD_TO_BRIDGE],
-      db.url,
-    );
-    expect(runKite.exitCode, runKite.stdout + runKite.stderr).toBe(0);
-    const runFinch = cli(
-      ['world', 'run', '--agent', 'agent:finch', '--route', ROUTE_BRIDGE_TO_CHECKPOINT],
-      db.url,
-    );
-    expect(runFinch.exitCode, runFinch.stdout + runFinch.stderr).toBe(0);
-
-    const midEvents = cli(['world', 'events'], db.url).stdout;
-    expect(countEventLines(midEvents, 'journey.started')).toBe(startedBefore + 2);
-    expect(countEventLines(midEvents, 'journey.completed')).toBe(completedBefore);
-
-    // When: ОДИН свежий worker-процесс. `--advance 40` покрывает оба due_at: finch (+25) и
-    // kite (+40) относительно текущего мирового времени.
-    const tick = cli(['world', 'tick', '--advance', '40'], db.url);
+    // When: ОДИН свежий worker-процесс, горизонт покрывает оба due_at.
+    const horizon = Math.max(...legs.map((leg) => leg.travelMinutes));
+    const tick = cli(['world', 'tick', '--advance', String(horizon)], db.url);
     expect(tick.exitCode, tick.stdout + tick.stderr).toBe(0);
-    // Четыре, а не два: с I05-B каждый прибывший СВОБОДЕН, и мир немедленно даёт ему решить,
-    // что делать дальше. `world tick` доводит мир до горизонта, поэтому оба решения попадают в
-    // тот же вызов. Утверждение C7 при этом не ослаблено: оно про завершения пути, и они
-    // проверяются ниже по журналу поимённо.
-    expect(tick.stdout).toContain('Захвачено действий: 4');
 
-    // Then: у каждого из двух новых journey.started есть ровно одно journey.completed — прирост
-    // завершений равен приросту стартов, а не меньше (пропуск) и не больше (дубль).
+    // Then: у каждого прирост завершений ровно один — не меньше (пропуск) и не больше (дубль).
     const afterEvents = cli(['world', 'events'], db.url).stdout;
-    expect(countEventLines(afterEvents, 'journey.started')).toBe(startedBefore + 2);
-    expect(countEventLines(afterEvents, 'journey.completed')).toBe(completedBefore + 2);
-
-    const state = cli(['world', 'state'], db.url);
-    expect(state.stdout).toMatch(/agent:kite\s+idle\s+в loc:bridge/);
-    expect(state.stdout).toMatch(/agent:finch\s+idle\s+в loc:checkpoint/);
+    legs.forEach((leg, index) => {
+      expect(countFor(afterEvents, 'journey.completed', leg.agentId)).toBe(
+        (startedBefore[index] ?? 0) + 1,
+      );
+    });
   });
 
   // Не C7 сама по себе, а требование постановки задачи к `world tick`: «оба флага сразу — отказ

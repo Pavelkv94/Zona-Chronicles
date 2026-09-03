@@ -37,16 +37,26 @@ import {
 } from '../../packages/persistence/src/index.ts';
 import { killAndWait } from '../support/kill-child.ts';
 import { spawnWorldCliDirect } from '../support/spawn-world-cli.ts';
+import {
+  assertCalmLocationsMatchMap,
+  calmLegs,
+  parseAgentLocations,
+} from '../support/calm-routes.ts';
 
 const WORKER_ENTRY = fileURLToPath(new URL('../../apps/worker/src/main.ts', import.meta.url));
 const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const WORLD_ID = 'world:prototype';
 
-/** Минут мира за секунду реального. 40 мировых минут маршрута → 10 реальных секунд. */
+/**
+ * Минут мира за секунду реального.
+ *
+ * Ожидаемая длительность пути ВЫВОДИТСЯ из длины выбранной дороги, а не выписана числом: дорога
+ * с I06-C выбирается из спокойных, а они разной длины. Число, закреплённое под одну карту,
+ * измеряло бы карту, а не темп.
+ */
 const TEMPO = 4;
-const TRAVEL_REAL_MS = 10_000;
-/** Тишина ДО команды. Больше длины маршрута в мировых минутах: 12 с × 4 = 48 > 40. */
-const IDLE_MS = 12_000;
+/** Тишина ДО команды. Заведомо больше длины любой дороги в мировых минутах, делённой на темп. */
+const IDLE_MS = 30_000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -54,6 +64,8 @@ describe('кредит темпа: тишина не сокращает путь
   let db: TestDatabase;
   let worker: ChildProcess | null = null;
   let elapsedMs = 0;
+  /** Сколько реального времени должна занять выбранная дорога при этом темпе. */
+  let travelRealMs = 0;
 
   const journal = async () => {
     const connection = createDatabase(parseDatabaseConnectionUrl(db.url));
@@ -88,15 +100,23 @@ describe('кредит темпа: тишина не сокращает путь
     await sleep(IDLE_MS);
     expect(await journal()).toHaveLength(0);
 
+    /**
+     * Дорога берётся СПОКОЙНАЯ и выводится из расстановки, а не выписана руками.
+     *
+     * С I06-C агент, пришедший в опасное место, немедленно решает уйти, и журнал перестал бы
+     * состоять только из того, что велел оператор, — а этот тест утверждает про его состав.
+     * Расстановка же меняется вместе с картой, и жёсткая пара «агент — маршрут» упиралась бы в
+     * `route_unavailable`.
+     */
+    assertCalmLocationsMatchMap();
+    const state = cli(['world', 'state']);
+    expect(state.exitCode, state.stdout).toBe(0);
+    const [leg] = calmLegs(parseAgentLocations(state.stdout));
+    expect(leg, 'ни один агент не стоит в спокойном месте').toBeDefined();
+    if (leg === undefined) return;
+
     const startedAt = Date.now();
-    const started = cli([
-      'world',
-      'run',
-      '--agent',
-      'agent:rook',
-      '--route',
-      'route:yard-to-bridge',
-    ]);
+    const started = cli(['world', 'run', '--agent', leg.agentId, '--route', leg.routeId]);
     expect(started.exitCode, started.stdout).toBe(0);
 
     const deadline = startedAt + 60_000;
@@ -105,7 +125,8 @@ describe('кредит темпа: тишина не сокращает путь
       await sleep(200);
     }
     elapsedMs = Date.now() - startedAt;
-  }, 180_000);
+    travelRealMs = (leg.travelMinutes / TEMPO) * 1000;
+  }, 300_000);
 
   afterAll(async () => {
     if (worker !== null) await killAndWait(worker);
@@ -132,8 +153,8 @@ describe('кредит темпа: тишина не сокращает путь
      * Нижняя граница с запасом на команду CLI и опрос: важно отличить «десять секунд» от «ноль»,
      * а не измерить их точно. При дефекте здесь была одна секунда.
      */
-    expect(elapsedMs).toBeGreaterThanOrEqual(TRAVEL_REAL_MS * 0.8);
+    expect(elapsedMs).toBeGreaterThanOrEqual(travelRealMs * 0.8);
     // Верхняя граница: тишина не имеет права и ЗАМЕДЛИТЬ путь.
-    expect(elapsedMs).toBeLessThanOrEqual(TRAVEL_REAL_MS * 2);
+    expect(elapsedMs).toBeLessThanOrEqual(travelRealMs * 2);
   });
 });

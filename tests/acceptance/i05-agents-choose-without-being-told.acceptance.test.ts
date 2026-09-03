@@ -124,7 +124,10 @@ describe('I05-B — мир перестаёт быть таким, где люд
         (event) =>
           event.actor_ids[0] === actor &&
           event.world_time === decision.world_time &&
-          (event.type === 'rest.started' || event.type === 'agent.ate'),
+          (event.type === 'rest.started' ||
+            event.type === 'agent.ate' ||
+            // Шаг цели «уйти» — выход в путь (I06-C).
+            event.type === 'journey.started'),
       );
       expect(
         step,

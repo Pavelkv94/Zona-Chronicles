@@ -34,7 +34,7 @@ import {
   type RestStartedEvent,
   type RiskObservedEvent,
 } from '@zona/contracts';
-import { chooseGoal, type GoalSituation } from './goals.ts';
+import { chooseGoal, chooseRoute, type GoalSituation, type TravelOption } from './goals.ts';
 import type { AgentState } from './state.ts';
 import { betterThan, needLevelAt, nextThresholdCrossing } from './needs.ts';
 import type { Clock } from './ports/clock.ts';
@@ -141,6 +141,8 @@ export function decide(state: WorldState, command: Command, context: DecideConte
       return decideRestComplete(state, command, context);
     case 'agent.decide':
       return decideAgentDecide(state, command, context);
+    case 'agent.travel':
+      return decideAgentTravel(state, command, context);
     default:
       return assertNeverCommand(command);
   }
@@ -416,6 +418,8 @@ const GOAL_TREATS_NEED = {
   idle: null,
   eat: 'hunger',
   rest: 'fatigue',
+  // Уход лечит не нужду, а место: прервать его пределом голода — законно.
+  flee: null,
 } as const satisfies Readonly<Record<GoalKind, NeedKind | null>>;
 
 /**
@@ -756,9 +760,11 @@ function decideAgentDecide(
     hasFood: hasEdibleItem(state, command.actor_id),
     isIdle: agent.status === 'idle',
     restMinutes: context.ruleset.restMinutes,
+    locationRisk: state.locations[agent.locationId]?.risk ?? 0,
+    travelOptions: travelOptionsFor(state, agent),
   };
 
-  const decision = chooseGoal(situation, context.ruleset.goalWeights);
+  const decision = chooseGoal(situation, context.ruleset.goalWeights, agent.caution);
 
   const chosen: Omit<GoalChosenEvent, 'recorded_at'> = {
     ...draftEnvelope(state, command, context, at, agent.locationId, 0),
@@ -774,4 +780,87 @@ function hasEdibleItem(state: WorldState, agentId: string): boolean {
   return Object.values(state.items).some(
     (item) => item.ownerId === agentId && EDIBLE_ITEM_KINDS.includes(item.kind),
   );
+}
+
+/**
+ * Дороги отсюда ГЛАЗАМИ АГЕНТА (I06-C).
+ *
+ * Единственное место, где субъективность собирается, и потому единственное, где её можно
+ * нарушить. Канонический риск дороги сюда не попадает: берётся `knownRoutes`, а незнание
+ * остаётся незнанием (`null`), а не превращается в ноль.
+ *
+ * Читать `route.risk` здесь — это и есть тот утёк, который итерация объявила STOP-условием.
+ * Проверяется свойством, а не взглядом: изменение канона неизвестных дорог не меняет выбора.
+ */
+function travelOptionsFor(state: WorldState, agent: AgentState): readonly TravelOption[] {
+  return Object.values(state.routes)
+    .filter((route) => route.fromLocationId === agent.locationId)
+    .map((route) => ({
+      routeId: route.id,
+      travelMinutes: route.travelMinutes,
+      perceivedRisk: agent.knownRoutes[route.id]?.risk ?? null,
+    }))
+    .sort((a, b) => (a.routeId < b.routeId ? -1 : a.routeId > b.routeId ? 1 : 0));
+}
+
+/**
+ * Уйти отсюда (I06-C): дорога выбирается ЗДЕСЬ, в момент ухода.
+ *
+ * Не в момент решения и не расписанием — по самому свежему знанию агента. Между «решил уйти» и
+ * «пошёл» он мог узнать больше; выбор, сделанный заранее, был бы выбором по устаревшей карте.
+ *
+ * Отказ здесь — нормальный исход: агент мог оказаться занят, а дорога — исчезнуть. Если у него
+ * при этом есть план, отказ становится его срывом (I05-C), и агент возвращается к решению.
+ */
+function decideAgentTravel(
+  state: WorldState,
+  command: Extract<Command, { type: 'agent.travel' }>,
+  context: DecideContext,
+): DecideResult {
+  const staleness = checkExpectedVersion(state, command);
+  if (staleness !== null) return staleness;
+
+  const agent = state.agents[command.actor_id];
+  if (agent === undefined) {
+    return rejected('actor_not_actionable', `актор ${command.actor_id} неизвестен миру`);
+  }
+  if (agent.status !== 'idle') {
+    const failure = planFailure(state, command, context, agent, 'agent.is_idle');
+    if (failure !== null) return { kind: 'accepted', events: [failure] };
+    return rejected(
+      'precondition_failed',
+      `актор ${command.actor_id} в статусе "${agent.status}": выйти в путь можно только свободному`,
+    );
+  }
+
+  const chosen = chooseRoute(
+    travelOptionsFor(state, agent),
+    context.ruleset.goalWeights,
+    agent.caution,
+  );
+  if (chosen === null) {
+    const failure = planFailure(state, command, context, agent, 'route.available_from_location');
+    if (failure !== null) return { kind: 'accepted', events: [failure] };
+    return rejected('route_unavailable', `из локации ${agent.locationId} не ведёт ни одна дорога`);
+  }
+
+  const route = state.routes[chosen.routeId];
+  if (route === undefined) {
+    throw new Error(`decide: выбранная дорога ${chosen.routeId} исчезла между отбором и выходом`);
+  }
+
+  const worldTime = context.clock.now();
+  const expectedArrival = requireAddMinutes(
+    worldTime,
+    route.travelMinutes,
+    `travelMinutes маршрута ${route.id}`,
+  );
+
+  const started: Omit<JourneyStartedEvent, 'recorded_at'> = {
+    ...draftEnvelope(state, command, context, toCanonicalIso(worldTime), agent.locationId, 0),
+    type: 'journey.started',
+    payload: { route_id: route.id, expected_arrival: toCanonicalIso(expectedArrival) },
+  };
+
+  return { kind: 'accepted', events: [started] };
 }

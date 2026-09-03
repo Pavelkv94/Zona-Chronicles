@@ -16,12 +16,14 @@ import {
   agentDecideActionId,
   agentEatActionId,
   agentRestActionId,
+  agentTravelActionId,
   isAgentFree,
   needThresholdActionId,
   planIdFor,
   type AgentDecideAction,
   type AgentEatAction,
   type AgentRestAction,
+  type AgentTravelAction,
   type ItemState,
   type NeedThresholdAction,
   type RestCompleteAction,
@@ -101,13 +103,22 @@ function applyJourneyStarted(
     routeId: event.payload.route_id,
   };
 
+  // Исполненный шаг «уйти» снимается по признаку действия — как приём пищи и укладывание: у
+  // агента не бывает двух ждущих выходов. У пути, начатого оператором, снимать нечего.
+  const remaining: Record<string, ScheduledAction> = {};
+  for (const [id, other] of Object.entries(state.scheduledActions)) {
+    if (other.kind === 'agent.travel' && other.entityId === actorId) continue;
+    remaining[id] = other;
+  }
+  remaining[action.id] = action;
+
   return {
     ...state,
     agents: {
       ...state.agents,
       [actorId]: { ...agent, status: 'traveling', routeId: event.payload.route_id },
     },
-    scheduledActions: { ...state.scheduledActions, [action.id]: action },
+    scheduledActions: remaining,
   };
 }
 
@@ -159,7 +170,17 @@ function applyJourneyCompleted(
       ...state,
       agents: {
         ...state.agents,
-        [actorId]: { ...agent, status: 'idle', routeId: null, locationId: route.toLocationId },
+        [actorId]: {
+          ...agent,
+          status: 'idle',
+          routeId: null,
+          locationId: route.toLocationId,
+          // Дошёл — значит, ушёл: цель «уйти» достигнута прибытием и снимается, как всякая
+          // достигнутая цель. У пути, начатого оператором, цель и так праздная, и снятие
+          // ничего не меняет.
+          goal: 'idle',
+          planId: null,
+        },
       },
       scheduledActions: remaining,
     },
@@ -517,6 +538,7 @@ function applyPlanInvalidated(
 const ABANDONED_ON_PLAN_FAILURE: readonly ScheduledAction['kind'][] = [
   'agent.eat',
   'agent.rest',
+  'agent.travel',
   'rest.complete',
   'agent.decide',
 ];
@@ -531,7 +553,16 @@ function stepFor(
   state: WorldState,
   actorId: string,
   event: Extract<WorldEvent, { type: 'goal.chosen' }>,
-): AgentEatAction | AgentRestAction | null {
+): AgentEatAction | AgentRestAction | AgentTravelAction | null {
+  if (event.payload.goal === 'flee') {
+    return {
+      id: agentTravelActionId(event.event_id),
+      kind: 'agent.travel',
+      dueAt: event.world_time,
+      priority: SCHEDULED_ACTION_PRIORITY['agent.travel'],
+      entityId: actorId,
+    };
+  }
   if (event.payload.goal === 'rest') {
     return {
       id: agentRestActionId(event.event_id),

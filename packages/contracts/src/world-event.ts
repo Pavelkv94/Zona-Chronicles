@@ -210,6 +210,8 @@ export const PLAN_PRECONDITION_TYPES = [
   'agent.is_idle',
   /** Нужда, которую план НЕ лечит, дошла до предела — emergency interrupt §6. */
   'agent.not_in_emergency',
+  /** Из локации, где стоит агент, не ведёт ни одна дорога — уходить некуда. */
+  'route.available_from_location',
 ] as const;
 
 export type PlanPreconditionType = (typeof PLAN_PRECONDITION_TYPES)[number];

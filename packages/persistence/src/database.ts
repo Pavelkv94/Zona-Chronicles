@@ -104,7 +104,7 @@ export interface AgentsTable {
   hunger_baseline: string;
   fatigue_baseline: string;
   /** Цель, которой агент придерживается сейчас (миграция 0019). */
-  goal: 'idle' | 'eat' | 'rest';
+  goal: 'idle' | 'eat' | 'rest' | 'flee';
   /** Тождество текущего плана; `null` — плана нет (миграция 0020). */
   plan_id: string | null;
   /** Осторожность в тысячных: множитель воспринимаемого риска (миграция 0021). */
@@ -200,7 +200,8 @@ export interface ScheduledActionsTable {
     | 'agent.eat'
     | 'rest.complete'
     | 'agent.decide'
-    | 'agent.rest';
+    | 'agent.rest'
+    | 'agent.travel';
   due_at: string;
   priority: number;
   entity_id: string;

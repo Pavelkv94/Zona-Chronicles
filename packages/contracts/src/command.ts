@@ -51,6 +51,7 @@ export const COMMAND_TYPES = [
   'agent.rest',
   'rest.complete',
   'agent.decide',
+  'agent.travel',
 ] as const;
 
 export type CommandType = (typeof COMMAND_TYPES)[number];
@@ -246,6 +247,25 @@ export const AgentDecidePayloadSchema = Type.Object(
   },
 );
 
+/**
+ * `agent.travel`: намерение уйти отсюда (I06-C, §8).
+ *
+ * Payload пуст, и в частности В НЁМ НЕТ МАРШРУТА. Это решение: дорогу выбирает `decide` в момент
+ * ухода, по субъективной карте агента и коэффициентам ruleset. Назвать дорогу в команде значило
+ * бы, что её выбрал кто-то другой — расписание, — а расписание выводится чистой `evolve`, у
+ * которой нет ни знания о том, что агент видел, ни коэффициентов, чтобы взвесить.
+ *
+ * Отсюда же следует, что выбор делается по САМОМУ СВЕЖЕМУ знанию: между решением уйти и самим
+ * уходом агент мог узнать больше.
+ */
+export const AgentTravelPayloadSchema = Type.Object(
+  {},
+  {
+    additionalProperties: false,
+    description: 'Уход не называет дорогу: её выбирает decide по субъективной карте риска.',
+  },
+);
+
 const COMMAND_PAYLOAD_SCHEMAS = {
   'journey.start': JourneyStartPayloadSchema,
   'journey.complete': JourneyCompletePayloadSchema,
@@ -254,6 +274,7 @@ const COMMAND_PAYLOAD_SCHEMAS = {
   'agent.rest': AgentRestPayloadSchema,
   'rest.complete': RestCompletePayloadSchema,
   'agent.decide': AgentDecidePayloadSchema,
+  'agent.travel': AgentTravelPayloadSchema,
 } as const;
 
 const commandEnvelopeFields = {
@@ -320,6 +341,7 @@ export const AgentEatCommandSchema = commandVariant('agent.eat');
 export const AgentRestCommandSchema = commandVariant('agent.rest');
 export const RestCompleteCommandSchema = commandVariant('rest.complete');
 export const AgentDecideCommandSchema = commandVariant('agent.decide');
+export const AgentTravelCommandSchema = commandVariant('agent.travel');
 
 /**
  * Каталог вариантов, ПОЛНЫЙ по построению — тот же приём и то же основание, что у
@@ -338,6 +360,7 @@ const COMMAND_VARIANT_SCHEMAS = {
   'agent.rest': AgentRestCommandSchema,
   'rest.complete': RestCompleteCommandSchema,
   'agent.decide': AgentDecideCommandSchema,
+  'agent.travel': AgentTravelCommandSchema,
 } as const satisfies Readonly<Record<CommandType, unknown>>;
 
 export const CommandSchema = Type.Union(
@@ -356,6 +379,7 @@ export type AgentEatCommand = Static<typeof AgentEatCommandSchema>;
 export type AgentRestCommand = Static<typeof AgentRestCommandSchema>;
 export type RestCompleteCommand = Static<typeof RestCompleteCommandSchema>;
 export type AgentDecideCommand = Static<typeof AgentDecideCommandSchema>;
+export type AgentTravelCommand = Static<typeof AgentTravelCommandSchema>;
 
 /**
  * Перечисление вариантов, а не `Static<typeof CommandSchema>` — по тому же доводу, что у

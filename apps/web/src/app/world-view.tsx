@@ -54,6 +54,7 @@ const GOAL_LABELS: Record<GoalKind, string> = {
   idle: 'ничего не делать',
   eat: 'поесть',
   rest: 'отдохнуть',
+  flee: 'уйти отсюда',
 };
 
 /**

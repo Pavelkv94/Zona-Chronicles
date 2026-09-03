@@ -66,6 +66,11 @@ export interface ClaimedAgentRestAction extends ClaimedActionBase {
   readonly kind: 'agent.rest';
 }
 
+/** Шаг «уйти» (I06). Дороги не несёт: её выбирает `decide` по субъективной карте агента. */
+export interface ClaimedAgentTravelAction extends ClaimedActionBase {
+  readonly kind: 'agent.travel';
+}
+
 /**
  * Захваченное действие — РАЗМЕЧЕННЫЙ union, а не запись с необязательными полями.
  *
@@ -81,7 +86,8 @@ export type ClaimedAction =
   | ClaimedAgentEatAction
   | ClaimedRestCompleteAction
   | ClaimedAgentDecideAction
-  | ClaimedAgentRestAction;
+  | ClaimedAgentRestAction
+  | ClaimedAgentTravelAction;
 
 export interface ClaimOptions {
   readonly worldId: string;
@@ -240,6 +246,10 @@ const claimedActionFromRow = (row: {
 
   if (row.kind === 'agent.rest') {
     return { ...base, kind: 'agent.rest' };
+  }
+
+  if (row.kind === 'agent.travel') {
+    return { ...base, kind: 'agent.travel' };
   }
 
   if (row.kind === 'agent.eat') {
@@ -640,6 +650,8 @@ export const commandFor = (
       return { ...envelope, type: 'agent.decide', payload: {} };
     case 'agent.rest':
       return { ...envelope, type: 'agent.rest', payload: {} };
+    case 'agent.travel':
+      return { ...envelope, type: 'agent.travel', payload: {} };
     default:
       return assertNeverAction(action);
   }

@@ -25,11 +25,12 @@ export {
   testRulesetVersions,
 } from './ports/ruleset.ts';
 
-export type { GoalDecision, GoalSituation, GoalWeights } from './goals.ts';
+export type { GoalDecision, GoalSituation, GoalWeights, RouteCost, TravelOption } from './goals.ts';
 export {
   GOAL_SCORE_BOUNDS,
   MAX_GOAL_DURATION_MINUTES,
   chooseGoal,
+  chooseRoute,
   requireValidGoalWeights,
 } from './goals.ts';
 
@@ -49,6 +50,7 @@ export type {
   AgentDecideAction,
   AgentEatAction,
   AgentRestAction,
+  AgentTravelAction,
   AgentStatus,
   ItemState,
   JourneyCompleteAction,
@@ -65,6 +67,7 @@ export {
   agentDecideActionId,
   agentEatActionId,
   agentRestActionId,
+  agentTravelActionId,
   isAgentFree,
   needThresholdActionId,
   planIdFor,

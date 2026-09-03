@@ -21,8 +21,15 @@ const situation = (overrides: Partial<GoalSituation> = {}): GoalSituation => ({
   hasFood: true,
   isIdle: true,
   restMinutes: PROTOTYPE_REST_MINUTES,
+  // Спокойное место без выхода: уход в этих случаях не кандидат вовсе, и проверки нужд от него
+  // не зависят. Сценарии про уход задают эти поля сами.
+  locationRisk: 0,
+  travelOptions: [],
   ...overrides,
 });
+
+/** Нейтральная осторожность: тысяча — множитель, ничего не меняющий. */
+const NEUTRAL = 1000;
 
 const needs = (
   hunger: NeedLevel,
@@ -36,13 +43,14 @@ describe('chooseGoal — что агент выбирает', () => {
   it('спокойное тело не даёт повода ничего начинать', () => {
     // Не «еда не нужна», а именно «ни одна цель не окупает своей цены»: при уровне `normal`
     // срочность нулевая, а порог смены цели положителен.
-    expect(chooseGoal(situation(), PROTOTYPE_GOAL_WEIGHTS).goal).toBe('idle');
+    expect(chooseGoal(situation(), PROTOTYPE_GOAL_WEIGHTS, NEUTRAL).goal).toBe('idle');
   });
 
   it('проголодавшийся с едой выбирает поесть', () => {
     const decision = chooseGoal(
       situation({ needLevels: needs('warning', 'normal') }),
       PROTOTYPE_GOAL_WEIGHTS,
+      NEUTRAL,
     );
     expect(decision.goal).toBe('eat');
   });
@@ -51,6 +59,7 @@ describe('chooseGoal — что агент выбирает', () => {
     const decision = chooseGoal(
       situation({ needLevels: needs('critical', 'normal'), hasFood: false }),
       PROTOTYPE_GOAL_WEIGHTS,
+      NEUTRAL,
     );
     expect(decision.goal).toBe('idle');
     // Именно неисполнимость, а не низкая оценка: у голодающего срочность максимальна.
@@ -61,8 +70,11 @@ describe('chooseGoal — что агент выбирает', () => {
 
   it('уставший выбирает отдых', () => {
     expect(
-      chooseGoal(situation({ needLevels: needs('normal', 'warning') }), PROTOTYPE_GOAL_WEIGHTS)
-        .goal,
+      chooseGoal(
+        situation({ needLevels: needs('normal', 'warning') }),
+        PROTOTYPE_GOAL_WEIGHTS,
+        NEUTRAL,
+      ).goal,
     ).toBe('rest');
   });
 
@@ -71,6 +83,7 @@ describe('chooseGoal — что агент выбирает', () => {
     const decision = chooseGoal(
       situation({ needLevels: needs('warning', 'warning') }),
       PROTOTYPE_GOAL_WEIGHTS,
+      NEUTRAL,
     );
     expect(decision.goal).toBe('eat');
     const eat = decision.trace.candidates.find((line) => line.goal === 'eat');
@@ -84,6 +97,7 @@ describe('chooseGoal — что агент выбирает', () => {
     const decision = chooseGoal(
       situation({ needLevels: needs('critical', 'critical'), isIdle: false }),
       PROTOTYPE_GOAL_WEIGHTS,
+      NEUTRAL,
     );
     expect(decision.goal).toBe('idle');
     expect(
@@ -94,7 +108,7 @@ describe('chooseGoal — что агент выбирает', () => {
 
 describe('разбор решения объясняет и отвергнутое', () => {
   it('содержит ВСЕ цели в объявленном порядке, включая неисполнимые', () => {
-    const decision = chooseGoal(situation({ hasFood: false }), PROTOTYPE_GOAL_WEIGHTS);
+    const decision = chooseGoal(situation({ hasFood: false }), PROTOTYPE_GOAL_WEIGHTS, NEUTRAL);
     expect(decision.trace.candidates.map((line) => line.goal)).toEqual([...GOAL_KINDS]);
   });
 
@@ -102,6 +116,7 @@ describe('разбор решения объясняет и отвергнуто
     const decision = chooseGoal(
       situation({ needLevels: needs('critical', 'warning') }),
       PROTOTYPE_GOAL_WEIGHTS,
+      NEUTRAL,
     );
     for (const line of decision.trace.candidates) {
       expect(line.score).toBe(line.urgency - line.time_cost - line.switching_cost);
@@ -112,6 +127,7 @@ describe('разбор решения объясняет и отвергнуто
     const decision = chooseGoal(
       situation({ currentGoal: 'rest', needLevels: needs('warning', 'warning') }),
       PROTOTYPE_GOAL_WEIGHTS,
+      NEUTRAL,
     );
     const byGoal = Object.fromEntries(decision.trace.candidates.map((line) => [line.goal, line]));
     expect(byGoal['rest']?.switching_cost).toBe(0);
@@ -138,6 +154,7 @@ describe('порог смены цели (hysteresis §6) решает исхо�
         urgencyPermille: { normal: 0, warning: 400, critical: 900 },
         timeCostPermillePerHour: 25,
         switchMarginPermille,
+        assumedUnknownRiskPermille: 300,
       },
       'borderline',
     );
@@ -145,11 +162,11 @@ describe('порог смены цели (hysteresis §6) решает исхо�
   const tired = situation({ needLevels: needs('normal', 'warning'), restMinutes: 720 });
 
   it('с порогом агент остаётся празден', () => {
-    expect(chooseGoal(tired, borderline(100)).goal).toBe('idle');
+    expect(chooseGoal(tired, borderline(100), NEUTRAL).goal).toBe('idle');
   });
 
   it('без порога тот же агент выбирает отдых', () => {
-    expect(chooseGoal(tired, borderline(0)).goal).toBe('rest');
+    expect(chooseGoal(tired, borderline(0), NEUTRAL).goal).toBe('rest');
   });
 });
 
@@ -165,6 +182,7 @@ describe('детерминированный tie-break', () => {
       urgencyPermille: { normal: 0, warning: 400, critical: 900 },
       timeCostPermillePerHour: 0,
       switchMarginPermille: 100,
+      assumedUnknownRiskPermille: 300,
     },
     'tie',
   );
@@ -173,6 +191,7 @@ describe('детерминированный tie-break', () => {
     const decision = chooseGoal(
       situation({ needLevels: needs('critical', 'critical'), restMinutes: 60 }),
       tieWeights,
+      NEUTRAL,
     );
     const byGoal = Object.fromEntries(decision.trace.candidates.map((line) => [line.goal, line]));
     expect(byGoal['eat']?.score).toBe(byGoal['rest']?.score);
@@ -196,12 +215,14 @@ describe('цена мирового времени', () => {
         // здесь не даёт 3: направление округления проверяется числом, у которого оно видно.
         timeCostPermillePerHour: 25,
         switchMarginPermille: 100,
+        assumedUnknownRiskPermille: 300,
       },
       'rounding',
     );
     const decision = chooseGoal(
       situation({ needLevels: needs('normal', 'critical'), restMinutes: 7 }),
       weights,
+      NEUTRAL,
     );
     expect(decision.trace.candidates.find((line) => line.goal === 'rest')?.time_cost).toBe(3);
   });

@@ -23,6 +23,7 @@ import {
   requireValidGoalWeights,
   type GoalSituation,
   type GoalWeights,
+  type TravelOption,
 } from './goals.ts';
 
 const permille = fc.integer({ min: 0, max: 1000 });
@@ -36,17 +37,29 @@ const level = fc.constantFrom(...NEED_LEVELS);
  * — то есть проверяло бы функцию ровно там, где генератор оказался покладист.
  */
 const weightsArb: fc.Arbitrary<GoalWeights> = fc
-  .tuple(permille, permille, permille, permille, permille)
-  .map(([a, b, c, timeCost, margin]) => {
+  .tuple(permille, permille, permille, permille, permille, permille)
+  .map(([a, b, c, timeCost, margin, unknownRisk]) => {
     const sorted = [a, b, c].sort((x, y) => x - y);
     const urgencyPermille = Object.fromEntries(
       NEED_LEVELS.map((name, index) => [name, sorted[index] as number]),
     ) as Readonly<Record<NeedLevel, number>>;
     return requireValidGoalWeights(
-      { urgencyPermille, timeCostPermillePerHour: timeCost, switchMarginPermille: margin },
+      {
+        urgencyPermille,
+        timeCostPermillePerHour: timeCost,
+        switchMarginPermille: margin,
+        assumedUnknownRiskPermille: unknownRisk,
+      },
       'property',
     );
   });
+
+/** Дорога глазами агента: известная (с любым риском) либо неизвестная вовсе. */
+const optionArb: fc.Arbitrary<TravelOption> = fc.record({
+  routeId: fc.constantFrom('route:a', 'route:b', 'route:c'),
+  travelMinutes: fc.integer({ min: 1, max: MAX_GOAL_DURATION_MINUTES }),
+  perceivedRisk: fc.option(permille, { nil: null }),
+});
 
 const situationArb: fc.Arbitrary<GoalSituation> = fc.record({
   currentGoal: fc.constantFrom(...GOAL_KINDS),
@@ -54,13 +67,18 @@ const situationArb: fc.Arbitrary<GoalSituation> = fc.record({
   hasFood: fc.boolean(),
   isIdle: fc.boolean(),
   restMinutes: fc.integer({ min: 1, max: MAX_GOAL_DURATION_MINUTES }),
+  locationRisk: permille,
+  travelOptions: fc.array(optionArb, { maxLength: 4 }),
 });
+
+/** Осторожность в тех же пределах, что разыгрывает генезис, плюс запас. */
+const cautionArb = fc.integer({ min: 0, max: 2000 });
 
 describe('bounded finite scores', () => {
   it('оценка конечна и лежит в объявленном диапазоне при любых коэффициентах и любой ситуации', () => {
     fc.assert(
-      fc.property(situationArb, weightsArb, (situation, weights) => {
-        for (const line of chooseGoal(situation, weights).trace.candidates) {
+      fc.property(situationArb, weightsArb, cautionArb, (situation, weights, caution) => {
+        for (const line of chooseGoal(situation, weights, caution).trace.candidates) {
           expect(Number.isFinite(line.score)).toBe(true);
           expect(Number.isInteger(line.score)).toBe(true);
           expect(line.score).toBeGreaterThanOrEqual(GOAL_SCORE_BOUNDS.min);
@@ -74,8 +92,8 @@ describe('bounded finite scores', () => {
 describe('выбранная цель исполнима всегда', () => {
   it('и её строка в разборе помечена исполнимой', () => {
     fc.assert(
-      fc.property(situationArb, weightsArb, (situation, weights) => {
-        const decision = chooseGoal(situation, weights);
+      fc.property(situationArb, weightsArb, cautionArb, (situation, weights, caution) => {
+        const decision = chooseGoal(situation, weights, caution);
         const chosen = decision.trace.candidates.find((line) => line.goal === decision.goal);
         expect(chosen?.feasible).toBe(true);
       }),
@@ -86,8 +104,10 @@ describe('выбранная цель исполнима всегда', () => {
 describe('разбор решения полон', () => {
   it('содержит каждую цель ровно один раз и в объявленном порядке', () => {
     fc.assert(
-      fc.property(situationArb, weightsArb, (situation, weights) => {
-        const goals = chooseGoal(situation, weights).trace.candidates.map((line) => line.goal);
+      fc.property(situationArb, weightsArb, cautionArb, (situation, weights, caution) => {
+        const goals = chooseGoal(situation, weights, caution).trace.candidates.map(
+          (line) => line.goal,
+        );
         expect(goals).toEqual([...GOAL_KINDS]);
       }),
     );
@@ -97,8 +117,8 @@ describe('разбор решения полон', () => {
 describe('правило отбора: максимум, ничья — по рангу', () => {
   it('ни один исполнимый кандидат не лучше выбранного, а равный — не объявлен раньше', () => {
     fc.assert(
-      fc.property(situationArb, weightsArb, (situation, weights) => {
-        const decision = chooseGoal(situation, weights);
+      fc.property(situationArb, weightsArb, cautionArb, (situation, weights, caution) => {
+        const decision = chooseGoal(situation, weights, caution);
         const chosen = decision.trace.candidates.find((line) => line.goal === decision.goal);
         for (const line of decision.trace.candidates) {
           if (!line.feasible || line.goal === decision.goal) continue;

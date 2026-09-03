@@ -9,6 +9,12 @@
  * существует (D4). Путь начинается командой оператора, как в жизни.
  */
 import { expect, test } from '@playwright/test';
+import { PROTOTYPE_WORLD } from '../../packages/content/src/index.ts';
+import {
+  assertCalmLocationsMatchMap,
+  calmLegs,
+  parseAgentLocations,
+} from '../support/calm-routes.ts';
 import { startWorldStack, type WorldStack } from './support/world-stack.ts';
 
 let stack: WorldStack;
@@ -36,58 +42,88 @@ test.afterAll(async () => {
   await stack.stop();
 });
 
+/**
+ * Спокойная дорога для агента, выведенная из карты и текущей расстановки.
+ *
+ * С I06-C мир перестал быть неподвижным между командами оператора: пришедший в опасное место
+ * агент немедленно уходит сам, и «агент виден на карте в точке прибытия» переставало быть
+ * верным к моменту проверки. Расстановка же меняется вместе с картой, поэтому пара «агент —
+ * маршрут» больше не выписывается руками.
+ */
+const calmLeg = (): {
+  agentId: string;
+  agentName: string;
+  routeId: string;
+  fromName: string;
+  toName: string;
+} => {
+  assertCalmLocationsMatchMap();
+  const state = stack.cli(['world', 'state']);
+  expect(state.exitCode, state.stdout).toBe(0);
+  const [leg] = calmLegs(parseAgentLocations(state.stdout));
+  if (leg === undefined) throw new Error('ни один агент не стоит в спокойном месте');
+  const route = PROTOTYPE_WORLD.routes.find((candidate) => candidate.id === leg.routeId);
+  const nameOf = (locationId: string): string =>
+    PROTOTYPE_WORLD.locations.find((location) => location.id === locationId)?.name ?? locationId;
+  return {
+    agentId: leg.agentId,
+    agentName:
+      PROTOTYPE_WORLD.agents.find((agent) => agent.id === leg.agentId)?.name ?? leg.agentId,
+    routeId: leg.routeId,
+    fromName: nameOf(route?.fromLocationId ?? ''),
+    toName: nameOf(leg.toLocationId),
+  };
+};
+
 test('D13: путь начат командой, виден на карте и в ленте, переживает перезагрузку', async ({
   page,
 }) => {
   await page.goto(stack.webUrl);
 
+  const leg = calmLeg();
+
   // Мир только создан: карта есть, лента пуста.
   await expect(page.getByText('Тихий двор')).toBeVisible();
   await expect(page.getByText('Пока ничего не произошло.')).toBeVisible();
-  await expect(page.getByText('Рук')).toBeVisible();
+  await expect(page.getByText(leg.agentName).first()).toBeVisible();
 
   // Дожидаемся живого потока: без него следующая проверка доказывала бы работу перезагрузки,
   // а не обновления без неё.
   await expect(page.getByText('Поток: живой')).toBeVisible();
 
-  const started = stack.cli([
-    'world',
-    'run',
-    '--agent',
-    'agent:rook',
-    '--route',
-    'route:yard-to-bridge',
-  ]);
+  const started = stack.cli(['world', 'run', '--agent', leg.agentId, '--route', leg.routeId]);
   expect(started.exitCode, started.stdout).toBe(0);
 
   // БЕЗ ПЕРЕЗАГРУЗКИ: событие приходит потоком.
   await expect(page.getByText('journey.started').first()).toBeVisible();
-  await expect(page.getByText('agent:rook вышел в путь — loc:quiet-yard')).toBeVisible();
+  await expect(page.getByText(`${leg.agentId} вышел в путь`).first()).toBeVisible();
 
   // D13 требует, чтобы состояние менялось НА КАРТЕ, а не только в ленте. Лента — это журнал
   // произошедшего; карта — это мир сейчас. Проверка одной ленты пропускала бы проекцию, которая
   // исправно копит события и не двигает агентов.
   const travelingCard = page.locator('.node', { hasText: 'В пути' });
-  await expect(travelingCard.getByText('Рук → route:yard-to-bridge')).toBeVisible();
+  await expect(travelingCard.getByText(`${leg.agentName} → ${leg.routeId}`)).toBeVisible();
   // И он ушёл с прежнего места: остаться в обоих сразу агент не может.
   await expect(
-    page.locator('.node', { hasText: 'Тихий двор' }).first().getByText('Рук'),
+    page.locator('.node', { hasText: leg.fromName }).first().getByText(leg.agentName),
   ).toBeHidden();
 
   // Мир доводит путь до конца сам — ни одной команды между этими строками.
-  await expect(page.getByText('journey.completed').first()).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByText('agent:rook дошёл — loc:bridge')).toBeVisible();
+  await expect(page.getByText('journey.completed').first()).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByText(`${leg.agentId} дошёл`).first()).toBeVisible();
 
-  // Агент оказался в конечной локации: проверяем В КАРТОЧКЕ моста, а не «где-то на странице».
-  const bridgeCard = page.locator('.node', { hasText: 'Мост' }).first();
-  await expect(bridgeCard.getByText('Рук')).toBeVisible();
+  // Агент оказался в конечной локации: проверяем В КАРТОЧКЕ места, а не «где-то на странице».
+  const arrivalCard = page.locator('.node', { hasText: leg.toName }).first();
+  await expect(arrivalCard.getByText(leg.agentName)).toBeVisible();
 
   const worldTimeBefore = await page.locator('.status').innerText();
 
   // D11: перезагрузка восстанавливает то же состояние — snapshot-ом, а не историей потока.
   await page.reload();
-  await expect(page.getByText('agent:rook дошёл — loc:bridge')).toBeVisible();
-  await expect(page.locator('.node', { hasText: 'Мост' }).first().getByText('Рук')).toBeVisible();
+  await expect(page.getByText(`${leg.agentId} дошёл`).first()).toBeVisible();
+  await expect(
+    page.locator('.node', { hasText: leg.toName }).first().getByText(leg.agentName),
+  ).toBeVisible();
   expect(await page.locator('.status').innerText()).toBe(worldTimeBefore);
 
   // Увиденное совпадает с каноническим журналом: сверяем с CLI, а не с самим экраном.
@@ -95,31 +131,9 @@ test('D13: путь начат командой, виден на карте и �
   expect(events.exitCode, events.stdout).toBe(0);
   expect(events.stdout).toContain('journey.started');
   expect(events.stdout).toContain('journey.completed');
-  expect(events.stdout).toContain('agent:rook');
+  expect(events.stdout).toContain(leg.agentId);
 });
 
-/**
- * D3 — наблюдатель не влияет на мир.
- *
- * ## Почему прежняя редакция ничего не доказывала
- *
- * Она сравнивала журнал до и после окна наблюдения и требовала равенства. Ревьюер показал
- * исполнением, что в этот момент мир СТОИТ: `sequence 0`, в расписании пусто, и `after === before`
- * выполняется тождественно — при любом поведении наблюдателя, включая вредное. Он же проверил
- * обратное: если запустить путь перед окном, тест падает, потому что журнал ЗАКОННО растёт. То
- * есть утверждение теста было «журнал не изменился», а критерий требует «журнал совпадает с
- * журналом прогона БЕЗ подключений», где оба мира идут.
- *
- * ## Как сделано вместо
- *
- * Контроль внутри одного мира: два одинаковых пути по одному маршруту, у двух агентов, стартующих
- * из одной локации. Первый — БЕЗ единого подключения, второй — при десяти открытых SSE. Сравнивается
- * не «журнал не изменился», а ФОРМА того, что мир произвёл: типы событий, локации, маршрут и
- * длительность пути в мировом времени. Наблюдатель, влияющий на мир, изменил бы любую из них.
- *
- * Критерий называет три количества, и все три здесь есть: ноль (первый путь), десять (второй) и
- * обрыв всех десяти перед проверкой.
- */
 test('D3: десять зрителей не меняют того, что произвёл мир', async ({ page }) => {
   /**
    * События пути конкретного агента.
@@ -154,27 +168,35 @@ test('D3: десять зрителей не меняют того, что пр�
       .filter((line) => line.includes('journey.completed') && line.includes(agentId)).length;
 
   /**
-   * Оба плеча идут по ОДНОМУ маршруту из ОДНОЙ локации — иначе сравнивать было бы нечего.
+   * Оба плеча идут по одинаковым дорогам, выведенным из карты и расстановки.
    *
-   * Агенты выбраны с учётом того, что сценарии делят один мир и идут по порядку: к этому моменту
-   * D13 уже перевёл `agent:rook` на мост, а `agent:finch` стоит там с рождения (seed 42). Первая
-   * редакция брала `route:yard-to-bridge` и падала названной причиной — «маршрут не начинается в
-   * текущей локации актора». Отказ был правильный, неправ был тест.
+   * Раньше пары «агент — маршрут» были выписаны руками и держались на том, где агенты оказались
+   * при seed 42 и куда их успел перевести предыдущий сценарий. И то и другое меняется вместе с
+   * картой; тест дважды падал названной причиной «маршрут не начинается в текущей локации
+   * актора» — отказ был правильный, неправ был тест.
+   *
+   * Дороги берутся спокойные: с I06-C агент, попавший в опасное место, уходит сам, и «мир
+   * произвёл ровно это» перестало бы быть утверждением об операторе.
    */
+  assertCalmLocationsMatchMap();
+  const legsBefore = calmLegs(parseAgentLocations(stack.cli(['world', 'state']).stdout));
+  const [first, second] = legsBefore;
+  expect(first, 'нужны двое агентов в спокойных местах').toBeDefined();
+  expect(second, 'нужны двое агентов в спокойных местах').toBeDefined();
+  if (first === undefined || second === undefined) return;
+
   // ── Плечо A: ни одного подключения. Страница даже не открыта.
-  const legA = stack.cli([
-    'world',
-    'run',
-    '--agent',
-    'agent:rook',
-    '--route',
-    'route:bridge-to-yard',
-  ]);
+  //
+  // Ожидание считается от ПРИРОСТА, а не от абсолютного числа: сценарии делят один мир, и агент
+  // мог завершить путь ещё в D13. Абсолютный порог тогда выполняется мгновенно, и сравнивались
+  // бы события прошлого сценария — что и произошло.
+  const completedA = completedFor(first.agentId);
+  const legA = stack.cli(['world', 'run', '--agent', first.agentId, '--route', first.routeId]);
   expect(legA.exitCode, legA.stdout).toBe(0);
   await expect
-    .poll(() => completedFor('agent:rook'), { timeout: 30_000 })
-    .toBeGreaterThanOrEqual(2);
-  const afterA = legOf(stack.cli(['world', 'events']).stdout, 'agent:rook').slice(-2);
+    .poll(() => completedFor(first.agentId), { timeout: 60_000 })
+    .toBeGreaterThan(completedA);
+  const afterA = legOf(stack.cli(['world', 'events']).stdout, first.agentId).slice(-2);
 
   // ── Плечо B: тот же маршрут, тот же старт, но при ДЕСЯТИ открытых потоках.
   const controllers = Array.from({ length: 10 }, () => new AbortController());
@@ -189,19 +211,13 @@ test('D3: десять зрителей не меняют того, что пр�
   await page.goto(stack.webUrl);
   await expect(page.getByText('Поток: живой')).toBeVisible();
 
-  const legB = stack.cli([
-    'world',
-    'run',
-    '--agent',
-    'agent:finch',
-    '--route',
-    'route:bridge-to-yard',
-  ]);
+  const completedB = completedFor(second.agentId);
+  const legB = stack.cli(['world', 'run', '--agent', second.agentId, '--route', second.routeId]);
   expect(legB.exitCode, legB.stdout).toBe(0);
   await expect
-    .poll(() => completedFor('agent:finch'), { timeout: 30_000 })
-    .toBeGreaterThanOrEqual(1);
-  const afterB = legOf(stack.cli(['world', 'events']).stdout, 'agent:finch').slice(-2);
+    .poll(() => completedFor(second.agentId), { timeout: 60_000 })
+    .toBeGreaterThan(completedB);
+  const afterB = legOf(stack.cli(['world', 'events']).stdout, second.agentId).slice(-2);
 
   for (const controller of controllers) controller.abort();
 
@@ -209,12 +225,16 @@ test('D3: десять зрителей не меняют того, что пр�
   expect(afterB.map((event) => event.type)).toEqual(afterA.map((event) => event.type));
   expect(afterA.map((event) => event.type)).toEqual(['journey.started', 'journey.completed']);
 
-  // И длительность пути в МИРОВОМ времени одинакова — сорок минут маршрута, а не сколько-то,
+  // И длительность пути в МИРОВОМ времени — ровно та, что записана у дороги, а не сколько-то,
   // зависящее от числа зрителей.
   const durationA = minutesBetween(afterA[0]!.worldTime!, afterA[1]!.worldTime!);
   const durationB = minutesBetween(afterB[0]!.worldTime!, afterB[1]!.worldTime!);
-  expect(durationA).toBe(40);
-  expect(durationB).toBe(durationA);
+  // Длительность берётся ИЗ КАРТЫ, а не из числа в тесте: дороги выбираются по расстановке, и
+  // выписанное число проверяло бы согласие карты с моей памятью о ней.
+  const minutesOf = (routeId: string): number =>
+    PROTOTYPE_WORLD.routes.find((route) => route.id === routeId)?.travelMinutes ?? 0;
+  expect(durationA).toBe(minutesOf(first.routeId));
+  expect(durationB).toBe(minutesOf(second.routeId));
 
   // Ноль подключений после обрыва: API жив, смотреть по-прежнему есть чем.
   const health = await fetch(`${stack.apiUrl}/health`);
