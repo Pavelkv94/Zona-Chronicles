@@ -75,16 +75,29 @@ jobs:
 
       # Порядок повторяет §8 08_TDD_AND_AGENT_WORKFLOW.
       - run: pnpm format:check
+
+      # BUILD ИДЁТ ПЕРВЫМ, и это выяснено дважды на разной цене.
+      #
+      # BL-1 (независимый архитектурный аудит I02A): acceptance порождает CLI отдельным OS-
+      # процессом (`node apps/cli/src/main.ts`), на который alias-ы vitest не действуют: он
+      # резолвит `@zona/*` по `exports` пакета, то есть в `dist`. `dist` в .gitignore,
+      # lifecycle-скрипта сборки нет, поэтому на чистом checkout acceptance падал бы с
+      # ERR_MODULE_NOT_FOUND. Тогда build подняли выше acceptance.
+      #
+      # M4 (независимый архитектурный аудит I04-I06): того подъёма НЕ ХВАТИЛО. `eslint`
+      # резолвит внутренние пакеты через project references, а пакет, которого нет в
+      # references потребителя, — через `exports` в `dist/index.d.ts`. На чистом checkout типы
+      # становятся `any`, и `no-unsafe-argument` даёт три ошибки в `apps/worker/src/
+      # world-bundles.ts`. То есть CI был красным на ПЕРВОМ же шаге у любого, кто клонировал
+      # репозиторий, — и незаметен ровно потому, что у всех, кто его запускал, `dist` уже был.
+      # Сама недостающая reference на `packages/content` починена отдельно; порядок здесь
+      # закрывает КЛАСС, а не случай: ни один шаг gate не должен зависеть от того, собирал ли
+      # кто-то дерево раньше.
+      - run: pnpm build
+
       - run: pnpm lint
       - run: pnpm boundaries:check
       - run: pnpm typecheck
-
-      # BL-1 (независимый архитектурный аудит I02A): build обязан идти ДО acceptance.
-      # Acceptance порождает CLI отдельным OS-процессом (`node apps/cli/src/main.ts`), на
-      # который alias-ы vitest не действуют: он резолвит `@zona/*` по `exports` пакета, то есть
-      # в `dist`. `dist` в .gitignore, lifecycle-скрипта сборки нет, поэтому на чистом checkout
-      # шаг acceptance падал бы с ERR_MODULE_NOT_FOUND. Раньше build стоял последним.
-      - run: pnpm build
 
       - run: pnpm test:unit
       - run: pnpm test:property

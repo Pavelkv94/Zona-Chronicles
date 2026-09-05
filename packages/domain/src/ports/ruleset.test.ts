@@ -7,6 +7,7 @@ import {
   RULES_VERSION,
   rulesetFor,
   testRulesetVersions,
+  PROTOTYPE_CAUTION_RANGE,
 } from './ruleset.ts';
 
 describe('FixedRuleset', () => {
@@ -17,22 +18,25 @@ describe('FixedRuleset', () => {
       PROTOTYPE_NEEDS,
       PROTOTYPE_REST_MINUTES,
       PROTOTYPE_GOAL_WEIGHTS,
+      PROTOTYPE_CAUTION_RANGE,
     );
     expect(ruleset.versions).toStrictEqual(versions);
     expect(ruleset.needs).toStrictEqual(PROTOTYPE_NEEDS);
     expect(ruleset.restMinutes).toBe(PROTOTYPE_REST_MINUTES);
     expect(ruleset.goalWeights).toStrictEqual(PROTOTYPE_GOAL_WEIGHTS);
+    expect(ruleset.cautionRange).toStrictEqual(PROTOTYPE_CAUTION_RANGE);
   });
 
   it('testRulesetVersions() отдаёт стабильные тестовые версии', () => {
     // Версия правил растёт вместе с коэффициентами: 0.2.0 — нужды (I04), 0.3.0 — длительность
-    // отдыха (I05-A), 0.4.0 — веса выбора цели (I05-B), 0.5.0 — оценка неизвестной дороги (I06-C).
+    // отдыха (I05-A), 0.4.0 — веса выбора цели (I05-B), 0.5.0 — оценка неизвестной дороги (I06-C),
+    // 0.6.0 — диапазон осторожности переехал сюда из литералов генератора (ревью I04-I06, M1).
     // Rules bundle хешируется от СОДЕРЖИМОГО
     // ruleset, поэтому изменение коэффициентов при прежней версии дало бы два разных мира под
     // одним именем правил.
     expect(testRulesetVersions()).toStrictEqual({
       schemaVersion: 1,
-      rulesVersion: '0.5.0',
+      rulesVersion: '0.6.0',
       contentVersion: '0.1.0',
     });
   });
@@ -42,7 +46,7 @@ describe('rulesetFor отказывается собирать ruleset чужо�
   it('называет обе версии и не подставляет свои коэффициенты молча', () => {
     expect(() =>
       rulesetFor({ schemaVersion: 1, rulesVersion: '0.1.0', contentVersion: '0.1.0' }),
-    ).toThrow(/записан по правилам 0\.1\.0.*знает только 0\.5\.0/s);
+    ).toThrow(new RegExp(`записан по правилам 0\\.1\\.0.*знает только ${RULES_VERSION}`, 's'));
   });
 
   it('для своей версии отдаёт коэффициенты прототипа', () => {
@@ -53,7 +57,13 @@ describe('rulesetFor отказывается собирать ruleset чужо�
 
   it('нецелая, неположительная или неправдоподобно долгая длительность отдыха — громкий отказ', () => {
     const build = (restMinutes: number): FixedRuleset =>
-      new FixedRuleset(testRulesetVersions(), PROTOTYPE_NEEDS, restMinutes, PROTOTYPE_GOAL_WEIGHTS);
+      new FixedRuleset(
+        testRulesetVersions(),
+        PROTOTYPE_NEEDS,
+        restMinutes,
+        PROTOTYPE_GOAL_WEIGHTS,
+        PROTOTYPE_CAUTION_RANGE,
+      );
     expect(() => build(0)).toThrow(/restMinutes/);
     expect(() => build(90.5)).toThrow(/restMinutes/);
     // Верхняя граница появилась вместе с оценкой целей: цена времени пропорциональна
@@ -64,7 +74,13 @@ describe('rulesetFor отказывается собирать ruleset чужо�
 
   it('коэффициенты выбора цели проверяются, а не принимаются на веру', () => {
     const build = (weights: typeof PROTOTYPE_GOAL_WEIGHTS): FixedRuleset =>
-      new FixedRuleset(testRulesetVersions(), PROTOTYPE_NEEDS, PROTOTYPE_REST_MINUTES, weights);
+      new FixedRuleset(
+        testRulesetVersions(),
+        PROTOTYPE_NEEDS,
+        PROTOTYPE_REST_MINUTES,
+        weights,
+        PROTOTYPE_CAUTION_RANGE,
+      );
     expect(() => build({ ...PROTOTYPE_GOAL_WEIGHTS, switchMarginPermille: 1001 })).toThrow(
       /goalWeights/,
     );

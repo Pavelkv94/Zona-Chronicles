@@ -40,11 +40,7 @@
       "//": "Независимая проверка тестов и кода I04-I06: ложноположительные тесты, пропущенные отказы, идемпотентность, детерминизм, доказывает ли доказательство заявленное.",
       "write_paths": [],
       "allow_protected_paths": [],
-      "agent_types": [
-        "i06-test-reviewer",
-        "test-reviewer",
-        "reviewer"
-      ]
+      "agent_types": ["i06-test-reviewer", "test-reviewer", "reviewer"]
     },
     {
       "task_id": "I06-VERIFY-ARCH",
@@ -52,11 +48,7 @@
       "//": "Независимый аудит границ, событийной семантики, миграций, детерминизма и replay в I04-I06.",
       "write_paths": [],
       "allow_protected_paths": [],
-      "agent_types": [
-        "i06-arch-reviewer",
-        "architecture-reviewer",
-        "reviewer"
-      ]
+      "agent_types": ["i06-arch-reviewer", "architecture-reviewer", "reviewer"]
     }
   ]
 }

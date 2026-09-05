@@ -7,22 +7,14 @@
       "owner_role": "reviewer",
       "write_paths": [],
       "allow_protected_paths": [],
-      "agent_types": [
-        "i06-arch-reviewer",
-        "architecture-reviewer",
-        "reviewer"
-      ]
+      "agent_types": ["i06-arch-reviewer", "architecture-reviewer", "reviewer"]
     },
     {
       "task_id": "I06-VERIFY-TESTS",
       "owner_role": "reviewer",
       "write_paths": [],
       "allow_protected_paths": [],
-      "agent_types": [
-        "i06-test-reviewer",
-        "test-reviewer",
-        "reviewer"
-      ]
+      "agent_types": ["i06-test-reviewer", "test-reviewer", "reviewer"]
     }
   ]
 }

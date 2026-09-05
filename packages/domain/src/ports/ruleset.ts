@@ -41,6 +41,21 @@ export interface Ruleset {
   readonly restMinutes: number;
   /** Коэффициенты выбора цели §6 (I05): срочность по уровням, цена времени, порог смены. */
   readonly goalWeights: GoalWeights;
+  /**
+   * Границы осторожности, которые генезис разыгрывает агенту (I06).
+   *
+   * Живут ЗДЕСЬ, а не литералами в генераторе мира. Пока они были литералами в
+   * `packages/simulation`, их правка меняла мир при том же seed, не двигая ни `rulesVersion`,
+   * ни `contentVersion`, — то есть нарушала «replay детерминирован для одинаковых snapshot/seed
+   * и immutable rules bundle». Найдено независимым test-review I04-I06 (M1).
+   */
+  readonly cautionRange: CautionRange;
+}
+
+/** Отрезок, из которого генезис берёт черту характера. Тысячные, как и сама осторожность. */
+export interface CautionRange {
+  readonly minPermille: number;
+  readonly maxPermille: number;
 }
 
 /**
@@ -49,7 +64,7 @@ export interface Ruleset {
  * надеждой — content не имеет права импортировать domain, поэтому общего литерала быть не может,
  * а расхождение двух литералов уже стоило проекту неработающего worker-а (m13 аудита I03).
  */
-export const RULES_VERSION = '0.5.0';
+export const RULES_VERSION = '0.6.0';
 
 /**
  * Коэффициенты нужд прототипа.
@@ -67,6 +82,14 @@ export const RULES_VERSION = '0.5.0';
  * что отдыхать приходится примерно половину времени бодрствования.
  */
 export const PROTOTYPE_REST_MINUTES = 480;
+
+/**
+ * Диапазон осторожности прототипа. Тысяча — нейтрально; ниже — беспечнее, выше — пугливее.
+ *
+ * Разброс намеренно широк: при узком различие между агентами тонуло бы в округлении, и «разные
+ * агенты выбирают разное» проверялось бы на различии, которого почти нет.
+ */
+export const PROTOTYPE_CAUTION_RANGE: CautionRange = { minPermille: 500, maxPermille: 1500 };
 
 /**
  * Коэффициенты выбора цели прототипа.
@@ -119,12 +142,14 @@ export class FixedRuleset implements Ruleset {
   readonly needs: Readonly<Record<NeedKind, NeedConfig>>;
   readonly restMinutes: number;
   readonly goalWeights: GoalWeights;
+  readonly cautionRange: CautionRange;
 
   constructor(
     versions: RulesetVersions,
     needs: Readonly<Record<NeedKind, NeedConfig>>,
     restMinutes: number,
     goalWeights: GoalWeights,
+    cautionRange: CautionRange,
   ) {
     // Верхняя граница появилась вместе с оценкой целей: цена времени пропорциональна
     // длительности, поэтому неограниченная длительность делает неограниченной и оценку — а
@@ -143,6 +168,21 @@ export class FixedRuleset implements Ruleset {
     this.needs = needs;
     this.restMinutes = restMinutes;
     this.goalWeights = requireValidGoalWeights(goalWeights, 'goalWeights');
+    // Отрезок обязан быть отрезком: перевёрнутые границы дали бы генезису пустой выбор, а
+    // дробные — нецелую черту в каноне, где дробей нет вовсе.
+    const { minPermille, maxPermille } = cautionRange;
+    if (
+      !Number.isSafeInteger(minPermille) ||
+      !Number.isSafeInteger(maxPermille) ||
+      minPermille < 0 ||
+      maxPermille < minPermille
+    ) {
+      throw new Error(
+        'ruleset: cautionRange обязан быть целым отрезком 0 <= min <= max, получено ' +
+          `${String(minPermille)}..${String(maxPermille)}`,
+      );
+    }
+    this.cautionRange = cautionRange;
   }
 }
 
@@ -163,6 +203,7 @@ export function rulesetFor(versions: RulesetVersions): Ruleset {
     PROTOTYPE_NEEDS,
     PROTOTYPE_REST_MINUTES,
     PROTOTYPE_GOAL_WEIGHTS,
+    PROTOTYPE_CAUTION_RANGE,
   );
 }
 
@@ -178,5 +219,6 @@ export function testRuleset(): Ruleset {
     PROTOTYPE_NEEDS,
     PROTOTYPE_REST_MINUTES,
     PROTOTYPE_GOAL_WEIGHTS,
+    PROTOTYPE_CAUTION_RANGE,
   );
 }

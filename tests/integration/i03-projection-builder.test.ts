@@ -6,6 +6,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  NEED_KINDS,
+  ObserverAgentSchema,
+  ObserverEventSchema,
+  ObserverMapEdgeSchema,
+  ObserverMapNodeSchema,
+  ObserverWorldSnapshotSchema,
   RUNTIME_ID_PREFIXES,
   decodeObserverWorldSnapshot,
   isValidationFailure,
@@ -248,15 +254,56 @@ describe('D6/D7 — сборка observer projection', () => {
     // редакция проверки этого не различала и падала на собственном же новом факте.
     expect(serialized).not.toMatch(/"risk"\s*:/);
     expect(serialized).not.toMatch(/"caution"\s*:/);
-    // И числа опасности из канона в выдаче нет ни под каким именем: 600 у моста, 400 у дороги.
-    expect(serialized).not.toContain('600');
-    expect(serialized).not.toContain('400');
-    // Проверка имеет смысл только если в КАНОНЕ опасность есть: иначе она проходила бы на пустом
-    // множестве, а фикстура однажды перестала бы её содержать незаметно.
+
+    /**
+     * Предпосылка утверждается ДО чисел и для ОБОИХ носителей опасности.
+     *
+     * Ревью I04-I06 (m2) назвало разрыв: предпосылка «в каноне опасность есть» проверялась
+     * только для мест, а числа искались и за дороги тоже. Обнулись риск маршрута в фикстуре —
+     * и половина проверки молча стала бы тавтологией.
+     */
     const canonicalState = await loadWorldState(canonical, FIXTURE_WORLD_ID);
+    const canonicalRisks = [
+      ...Object.values(canonicalState?.locations ?? {}).map((location) => location.risk),
+      ...Object.values(canonicalState?.routes ?? {}).map((route) => route.risk),
+    ].filter((risk) => risk > 0);
     expect(
-      Object.values(canonicalState?.locations ?? {}).some((location) => location.risk > 0),
-    ).toBe(true);
+      canonicalRisks.length,
+      'в каноне не осталось опасности — проверять нечего',
+    ).toBeGreaterThan(1);
+
+    /**
+     * Утечка под ЛЮБЫМ именем: состав ключей выдачи сверяется с контрактом наблюдателя.
+     *
+     * Первая редакция искала канонические числа подстрокой, и это было хрупко в обе стороны:
+     * значение перестало бы что-либо значить при правке фикстуры и совпало бы по случайности с
+     * `travel_minutes`, `projection_sequence` или куском ISO-времени. Ревью I04-I06 (m2)
+     * назвало это прямо.
+     *
+     * Проверка ключей строго сильнее: она ловит опасность, приехавшую к зрителю под ЧУЖИМ
+     * именем (`hazard`, `danger_level`, что угодно), независимо от её значения. А проверка
+     * поля `"risk":` выше остаётся — она ловит тот же леток под своим именем.
+     */
+    const allowedKeys = new Set([
+      ...Object.keys(ObserverWorldSnapshotSchema.properties),
+      ...Object.keys(ObserverMapNodeSchema.properties),
+      ...Object.keys(ObserverMapEdgeSchema.properties),
+      ...Object.keys(ObserverAgentSchema.properties),
+      ...Object.keys(ObserverEventSchema.properties),
+      ...NEED_KINDS,
+    ]);
+    const keysOf = (value: unknown): string[] =>
+      Array.isArray(value)
+        ? value.flatMap(keysOf)
+        : typeof value === 'object' && value !== null
+          ? Object.entries(value).flatMap(([key, nested]) => [key, ...keysOf(nested)])
+          : [];
+    const unexpected = [
+      ...new Set(
+        [...keysOf(snapshot), ...keysOf(page.events)].filter((key) => !allowedKeys.has(key)),
+      ),
+    ];
+    expect(unexpected, 'в наблюдаемой выдаче появились поля вне контракта').toEqual([]);
   });
 
   /**

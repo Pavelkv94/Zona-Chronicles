@@ -15,6 +15,7 @@ import {
   PROJECTION_SEQUENCE_UNIT,
   SCHEMA_VERSION_UNIT,
   SEQUENCE_UNIT,
+  RISK_UNIT,
   TRAVEL_MINUTES_UNIT,
   WORLD_VERSION_UNIT,
 } from './numeric.ts';
@@ -114,6 +115,24 @@ export const TravelMinutesSchema = UnitIntegerSchema(
   TRAVEL_MINUTES_UNIT,
   'Длительность перехода по маршруту в минутах мирового времени.',
 );
+
+/**
+ * Опасность места или дороги в тысячных.
+ *
+ * Границы берутся ИЗ ЕДИНИЦЫ, а не выписаны числами в схеме. Ревью I04-I06 (m4) нашло, что
+ * `RISK_UNIT` был объявлен, экспортирован и не использован нигде: диапазон держали
+ * check-constraint миграции и два литерала 0..1000 в схеме события. Три источника одной величины
+ * расходятся молча — и первым же расхождением станет то, которое никто не проверяет.
+ *
+ * `UnitIntegerSchema` здесь неприменим намеренно: он существует для единиц, у которых minor unit
+ * совпадает с major (`minorUnitsPerMajor === 1`), и падает на дробных. Опасность — тысячные, как
+ * оценка цели: величина хранится целой В MINOR UNITS, а её границы единица уже выражает в них же.
+ */
+export const RiskSchema = Type.Integer({
+  minimum: RISK_UNIT.min,
+  maximum: RISK_UNIT.max,
+  description: `Опасность места или дороги в тысячных. Единица: ${RISK_UNIT.id}.`,
+});
 
 export const DrawIndexSchema = UnitIntegerSchema(
   DRAW_INDEX_UNIT,

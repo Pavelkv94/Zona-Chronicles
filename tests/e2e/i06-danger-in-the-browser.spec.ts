@@ -12,6 +12,7 @@
 import { expect, test } from '@playwright/test';
 import { PROTOTYPE_WORLD } from '../../packages/content/src/index.ts';
 import { RESTLESS_LOCATION, assertCalmLocationsMatchMap } from '../support/calm-routes.ts';
+import { expectNoCanonicalLeak, visibleText } from './support/leak.ts';
 import { startWorldStack, type WorldStack } from './support/world-stack.ts';
 
 let stack: WorldStack;
@@ -62,18 +63,30 @@ test('агент уходит от опасности, зритель видит
   /**
    * STOP-условие итерации в его экранной части: canonical risk не протекает к зрителю.
    *
-   * Проверяется словами, которые могли бы прийти ТОЛЬКО из канона: ни поля, ни его перевода на
-   * экране нет. Числа опасности здесь не перечисляются — их отсутствие уже доказано контрактом
-   * и сверкой сериализованной проекции; экран проверяет, что оно не обошлось текстом.
+   * Проверяется СНИМКОМ текста в момент, когда утечка была бы видна, — а не ожиданием, что
+   * запретное слово исчезнет. Первая редакция делала второе и не проверяла ничего: негативное
+   * утверждение Playwright повторяется, пока текст не пропадёт, а лента прокручивается за доли
+   * секунды при темпе сценария. Независимое ревью (B1) провело мутацию «решил уйти отсюда,
+   * здесь опасно» — слово стояло на экране, и все восемь проверок прошли.
+   *
+   * Числа опасности здесь не перечисляются: их отсутствие доказано контрактом и сверкой
+   * сериализованной проекции, а на странице живут посторонние числа (мировое время, минуты
+   * дорог, курсор проекции), с которыми они совпали бы по случайности.
    */
-  await expect(page.locator('body')).not.toContainText('risk');
-  await expect(page.locator('body')).not.toContainText('caution');
-  await expect(page.locator('body')).not.toContainText('опасн');
+  const atScouting = await visibleText(page);
+  expectNoCanonicalLeak(atScouting, 'момент разведки');
+
+  // Строка разведки отдельно: именно она — то место, где агент узнаёт число, а зритель не
+  // должен. Кроме мирового времени цифр в ней быть не может.
+  const scoutLine = await page
+    .locator('.feed li', { hasText: 'разведал дорогу' })
+    .first()
+    .innerText();
+  expect(scoutLine.replace(/^\s*[\d-]+ [\d:]+/, '')).not.toMatch(/\d/);
 
   // Чужая память — тоже не то, что видно со стороны: субъективной карты на экране нет.
-  await expect(page.locator('body')).not.toContainText('знает');
+  expect(atScouting).not.toContain('знает');
 
-  // Разбора оценок нет и не будет (§7 `03_TECHNICAL_DESIGN`, ADR-005).
-  await expect(page.locator('body')).not.toContainText('switching_cost');
-  await expect(page.locator('body')).not.toContainText('urgency');
+  // И в конце сценария — второй снимок: утечка могла бы появиться позже первого.
+  expectNoCanonicalLeak(await visibleText(page), 'конец сценария');
 });

@@ -317,3 +317,45 @@ describe('evolve: need.threshold.crossed (I04)', () => {
     );
   });
 });
+
+describe('evolve: risk.observed', () => {
+  const ROUTE = 'route:yard-to-bridge';
+
+  const observed = (risk: number, overrides: Partial<WorldEvent> = {}): WorldEvent =>
+    journeyStartedEvent({
+      type: 'risk.observed',
+      payload: { route_id: ROUTE, risk },
+      ...overrides,
+    } as Partial<WorldEvent>);
+
+  it('незнакомая дорога становится известной вместе с провенансом', () => {
+    const next = evolve(fixtureWorldState(), observed(700));
+    expect(next.agents['agent:rook']?.knownRoutes[ROUTE]).toStrictEqual({
+      risk: 700,
+      at: '2034-05-17T18:20:00.000Z',
+      sourceEventId: 'evt_01ARZ3NDEKTSV4RRFFQ69G5FAV',
+    });
+  });
+
+  it('повторное наблюдение известной дороги НЕ переписывает знание', () => {
+    /**
+     * Утверждение о согласии двух слоёв, а не о вкусе.
+     *
+     * Путь записи умеет только INSERT, и гранты на `agent_route_knowledge` — `SELECT`/`INSERT`.
+     * Пока `evolve` перезаписывал запись, два слоя реализовывали разные правила применения
+     * одного события, а согласие держала третья сторона — подавление повтора в `decide`. Убери
+     * подавление, и расхождение вылезло бы стражем checksum, то есть по симптому.
+     *
+     * Обновление знания — вопрос устаревания, он решается в I10A. До тех пор ответ должен быть
+     * ОДИН на оба слоя.
+     */
+    const first = evolve(fixtureWorldState(), observed(700));
+    const second = evolve(
+      first,
+      observed(100, { event_id: 'evt_01ARZ3NDEKTSV4RRFFQ69G5FBW', sequence: 2 }),
+    );
+    expect(second.agents['agent:rook']?.knownRoutes[ROUTE]).toStrictEqual(
+      first.agents['agent:rook']?.knownRoutes[ROUTE],
+    );
+  });
+});

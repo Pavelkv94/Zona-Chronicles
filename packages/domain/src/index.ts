@@ -13,9 +13,10 @@ export { DeterministicRandomSource } from './ports/random-source.ts';
 export type { IdFactory } from './ports/id-factory.ts';
 export { DerivedIdFactory, SequentialIdFactory } from './ports/id-factory.ts';
 
-export type { Ruleset, RulesetVersions } from './ports/ruleset.ts';
+export type { CautionRange, Ruleset, RulesetVersions } from './ports/ruleset.ts';
 export {
   FixedRuleset,
+  PROTOTYPE_CAUTION_RANGE,
   PROTOTYPE_GOAL_WEIGHTS,
   PROTOTYPE_NEEDS,
   PROTOTYPE_REST_MINUTES,

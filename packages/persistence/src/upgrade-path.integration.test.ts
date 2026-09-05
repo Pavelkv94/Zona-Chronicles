@@ -17,7 +17,7 @@
  * Обещание теста («данные предыдущей поставки переживают обновление») не изменилось и не
  * ослаблено — изменилось только то, чем эти данные создаются.
  */
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from 'pg';
 import { sql } from 'kysely';
 import { createDatabase, parseDatabaseConnectionUrl, type DatabaseConnection } from './database.ts';
@@ -129,58 +129,119 @@ const writePreviousReleaseWorld = async (
   }
 };
 
-describe('N-1 — обновление с предыдущей поставки', () => {
+describe('обновление с предыдущих поставок', () => {
+  let testDb: TestDatabase;
+  let db: DatabaseConnection;
+
+  /**
+   * База СВОЯ у каждой поставки, а не общая на describe.
+   *
+   * Проверок стало три, и каждая начинает с состояния «схема поставки N». На общей базе вторая
+   * начинала бы с уже обновлённой схемы и проверяла бы пустое множество миграций — зелёная
+   * ровно потому, что применять нечего.
+   */
+  beforeEach(async () => {
+    testDb = await createTestDatabase('upgrade_path');
+    db = createDatabase(parseDatabaseConnectionUrl(testDb.url));
+  });
+
+  afterEach(async () => {
+    await db.destroy();
+    await testDb.drop();
+  });
+
+  /**
+   * Поставка — это НАБОР миграций, а не последняя из них.
+   *
+   * Первая редакция резала реестр как `migrations.slice(0, -1)` и называла остаток «предыдущей
+   * поставкой». Ревью I04-I06 (m7) показало цену этого сокращения: I04-I06 добавили шесть
+   * миграций (0018-0023), и пять из них на НЕПУСТОЙ базе не прогонялись ни разу — тест
+   * проверял ровно последнюю.
+   *
+   * Границы названы явно и по имени последней миграции поставки. Фикстура умеет писать мир
+   * трёх возрастов, и флаги описывают, какие колонки в ту пору существовали; неверный флаг
+   * роняет тест на ВСТАВКЕ, а не на сравнении, — это уже проверено исполнением (см. 0014).
+   */
+  const RELEASES = [
+    { last: '0017', shape: { needBaselines: true, goal: false, risk: false } },
+    { last: '0018', shape: { needBaselines: true, goal: false, risk: false } },
+    { last: '0022', shape: { needBaselines: true, goal: true, risk: true } },
+  ] as const;
+
+  it.each(RELEASES)(
+    'журнал поставки $last доводится до текущей схемы без потери данных',
+    async (release) => {
+      const cut = migrations.findIndex((migration) => migration.id === release.last);
+      expect(
+        cut,
+        `миграция ${release.last} исчезла из реестра — список поставок устарел`,
+      ).toBeGreaterThanOrEqual(0);
+      const previous = migrations.slice(0, cut + 1);
+      expect(previous.length).toBeGreaterThan(0);
+      expect(previous.length).toBeLessThan(migrations.length);
+
+      // 1. Состояние «предыдущей поставки».
+      await runMigrations({ db, migrations: previous, logger: SILENT });
+      await ensureApplicationRoles(db, TEST_ROLE_PASSWORD);
+      // Гранты здесь НЕ применяются намеренно: матрица описывает текущую схему и упоминает
+      // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
+      // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
+      // а не изобретать свой (найдено исполнением при написании теста).
+      await writePreviousReleaseWorld(db, release.shape);
+
+      const appliedBefore = await db
+        .selectFrom('schema_migrations')
+        .select('id')
+        .orderBy('id')
+        .execute();
+      expect(appliedBefore.map((row) => row.id)).toEqual(previous.map((m) => m.id));
+
+      // 2. Обновление до текущего реестра.
+      const report = await runMigrations({ db, migrations, logger: SILENT });
+      expect(report.applied.map((entry) => entry.id)).toEqual(
+        migrations.slice(cut + 1).map((migration) => migration.id),
+      );
+
+      // 3. Схема текущая, данные целы, гранты переприменяются без сбоя.
+      await applyGrants(db);
+      const state = await loadWorldState(db, FIXTURE_WORLD_ID);
+      expect(state?.worldId).toBe(FIXTURE_WORLD_ID);
+      expect(Object.keys(state?.agents ?? {})).toHaveLength(2);
+
+      const appliedAfter = await db
+        .selectFrom('schema_migrations')
+        .select('id')
+        .orderBy('id')
+        .execute();
+      expect(appliedAfter.map((row) => row.id)).toEqual(migrations.map((m) => m.id));
+    },
+  );
+});
+
+/**
+ * Неизменность ВЫПУЩЕННОЙ миграции — утверждение про журнал схемы, а не про обновление.
+ *
+ * Своя база и свой describe: проверки выше теперь идут по трём поставкам и убирают базу за
+ * каждой (иначе вторая начинала бы с уже обновлённой схемы). Этим двум нужна ровно обратная
+ * предпосылка — база, доведённая до текущей схемы и с записанным миром, — и брать её из
+ * состояния, оставленного соседом, значило бы держаться на порядке файлов.
+ */
+describe('выпущенная миграция неизменна', () => {
   let testDb: TestDatabase;
   let db: DatabaseConnection;
 
   beforeAll(async () => {
-    testDb = await createTestDatabase('upgrade_path');
+    testDb = await createTestDatabase('upgrade_path_immutable');
     db = createDatabase(parseDatabaseConnectionUrl(testDb.url));
+    await runMigrations({ db, migrations, logger: SILENT });
+    await ensureApplicationRoles(db, TEST_ROLE_PASSWORD);
+    await writePreviousReleaseWorld(db, { needBaselines: true, goal: true, risk: true });
+    await applyGrants(db);
   });
 
   afterAll(async () => {
     await db.destroy();
     await testDb.drop();
-  });
-
-  it('журнал предыдущей поставки доводится до текущей схемы без потери данных', async () => {
-    const previous = migrations.slice(0, -1);
-    expect(previous.length).toBeGreaterThan(0);
-
-    // 1. Состояние «предыдущей поставки».
-    await runMigrations({ db, migrations: previous, logger: SILENT });
-    await ensureApplicationRoles(db, TEST_ROLE_PASSWORD);
-    // Гранты здесь НЕ применяются намеренно: матрица описывает текущую схему и упоминает
-    // таблицу, которой в предыдущей поставке ещё нет. Это не дефект, а порядок: `world migrate`
-    // применяет гранты ПОСЛЕ миграций, и модель обновления обязана повторять этот порядок,
-    // а не изобретать свой (найдено исполнением при написании теста).
-    await writePreviousReleaseWorld(db, { needBaselines: true, goal: true, risk: true });
-
-    const appliedBefore = await db
-      .selectFrom('schema_migrations')
-      .select('id')
-      .orderBy('id')
-      .execute();
-    expect(appliedBefore.map((row) => row.id)).toEqual(previous.map((m) => m.id));
-
-    // 2. Обновление до текущего реестра.
-    const report = await runMigrations({ db, migrations, logger: SILENT });
-    expect(report.applied.map((entry) => entry.id)).toEqual([
-      migrations[migrations.length - 1]!.id,
-    ]);
-
-    // 3. Схема текущая, данные целы, гранты переприменяются без сбоя.
-    await applyGrants(db);
-    const state = await loadWorldState(db, FIXTURE_WORLD_ID);
-    expect(state?.worldId).toBe(FIXTURE_WORLD_ID);
-    expect(Object.keys(state?.agents ?? {})).toHaveLength(2);
-
-    const appliedAfter = await db
-      .selectFrom('schema_migrations')
-      .select('id')
-      .orderBy('id')
-      .execute();
-    expect(appliedAfter.map((row) => row.id)).toEqual(migrations.map((m) => m.id));
   });
 
   it('отредактированная выпущенная миграция даёт названный отказ, а не порчу схемы', async () => {

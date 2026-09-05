@@ -9,6 +9,7 @@
  * необходимость действовать», и необходимость эта НАБЛЮДАЕМА, а не спрятана в состоянии.
  */
 import { expect, test } from '@playwright/test';
+import { expectNoCanonicalLeak, visibleText } from './support/leak.ts';
 import { startWorldStack, type WorldStack } from './support/world-stack.ts';
 
 let stack: WorldStack;
@@ -65,7 +66,8 @@ test('голод наступает, агент ест, и зритель вид
   await expect(page.getByText(/изголодался/).first()).toBeVisible({ timeout: 60_000 });
 
   // Разбора оценок на экране НЕТ и быть не может: §7 `03_TECHNICAL_DESIGN` запрещает публичному
-  // слою decision trace. Проверяется отсутствием слов, которые могли бы прийти только оттуда.
-  await expect(page.locator('body')).not.toContainText('switching_cost');
-  await expect(page.locator('body')).not.toContainText('urgency');
+  // слою decision trace. Проверяется СНИМКОМ текста, а не ожиданием исчезновения слова: лента
+  // прокручивается, и негативное web-first утверждение зеленело бы на прокрутке (B1 ревью
+  // I04-I06 — там ровно эта конструкция пропустила слово, стоявшее на экране).
+  expectNoCanonicalLeak(await visibleText(page), 'конец сценария');
 });

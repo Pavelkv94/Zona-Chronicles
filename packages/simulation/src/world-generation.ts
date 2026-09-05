@@ -27,9 +27,12 @@ import {
   type Snapshot,
   CANONICAL_SERIALIZATION_VERSION,
   CANONICAL_TRANSACTION_ISOLATION_LEVEL,
+  RISK_UNIT,
   SNAPSHOT_CHECKSUM_SCOPE_VERSION,
   bundleRefFor,
+  checkMinorUnits,
   isInstantError,
+  isNumericError,
   parseCanonicalInstant,
   schemaBundleRef,
   snapshotChecksum,
@@ -45,6 +48,7 @@ import {
   type LocationState,
   type NeedThresholdAction,
   type RouteDefinition as DomainRouteDefinition,
+  type CautionRange,
   type Ruleset,
   type ScheduledAction,
   type WorldState,
@@ -107,10 +111,29 @@ export interface HostRuntimeProfile {
  * как не применённый вовсе.
  */
 export function rulesBundleContent(ruleset: Ruleset): Record<string, unknown> {
-  // Коэффициенты хешируются ВМЕСТЕ с версиями, а не отдельно: иначе изменение порога при
-  // неизменной версии осталось бы необнаружимым, и checksum лгал бы о содержимом правил — тот
-  // самый дефект M3, из-за которого сюда вообще перестали передавать заглушку `{}`.
-  return { versions: { ...ruleset.versions }, needs: { ...ruleset.needs } };
+  /**
+   * Хешируются ВСЕ коэффициенты, а не одни нужды.
+   *
+   * Довод прежний (дефект M3 аудита I02B): изменение коэффициента при неизменной версии обязано
+   * быть обнаружимым, иначе checksum лжёт о содержимом правил. Но применён он был к одному
+   * полю, а правил с тех пор прибавилось: I05 завёл `restMinutes` и `goalWeights`, I06 —
+   * диапазон осторожности, и ни одно из трёх в хеш не входило. Изменение веса выбора цели
+   * молча давало другой мир под тем же именем правил — ровно то, что M3 запрещал.
+   *
+   * Найдено при переносе диапазона осторожности в ruleset (ревью I04-I06, M1): починка,
+   * применённая наполовину, работает как не применённая вовсе — это уже было сказано строкой
+   * выше про умолчание и не было услышано про состав.
+   *
+   * Перечисление ЯВНОЕ, а не `{ ...ruleset }`: разложение объекта втянуло бы в хеш всё, что
+   * когда-нибудь появится на интерфейсе, включая нехешируемое, и падало бы не здесь.
+   */
+  return {
+    versions: { ...ruleset.versions },
+    needs: { ...ruleset.needs },
+    restMinutes: ruleset.restMinutes,
+    goalWeights: { ...ruleset.goalWeights },
+    cautionRange: { ...ruleset.cautionRange },
+  };
 }
 
 function canonicalInstant(iso: string, label: string): string {
@@ -120,15 +143,6 @@ function canonicalInstant(iso: string, label: string): string {
   }
   return parsed.iso;
 }
-
-/**
- * Границы осторожности в тысячных. Тысяча — нейтрально; ниже — беспечнее, выше — пугливее.
- *
- * Диапазон намеренно широк: при узком разбросе различие между агентами тонуло бы в округлении, и
- * «разные агенты выбирают разное» проверялось бы на различии, которого почти нет.
- */
-const MIN_CAUTION_PERMILLE = 500;
-const MAX_CAUTION_PERMILLE = 1500;
 
 interface SeededAgents {
   readonly agents: Readonly<Record<string, AgentState>>;
@@ -141,7 +155,20 @@ interface SeededAgents {
  * минимально: I01 не моделирует ничего сверх "какой мир получился при этом seed" (PLAN §5, out
  * of scope: Utility AI, планы, экономика).
  */
-function seedAgents(content: GeneratorContent, seed: number, worldTime: string): SeededAgents {
+function seedAgents(
+  content: GeneratorContent,
+  seed: number,
+  worldTime: string,
+  /**
+   * Диапазон осторожности приходит ИЗ ПРАВИЛ, а не из литералов этого файла.
+   *
+   * Пока он был локальными константами, его правка меняла мир при том же seed, не двигая ни
+   * `rulesVersion`, ни `contentVersion`: снимок оставался «тем же», а агенты получались другими.
+   * Это прямо противоречит «replay детерминирован для одинаковых snapshot/seed и immutable
+   * rules bundle». Найдено независимым test-review I04-I06 (M1).
+   */
+  cautionRange: CautionRange,
+): SeededAgents {
   const random = new DeterministicRandomSource(seed);
   const agents: Record<string, AgentState> = {};
   const prngStreamPositions: Record<string, number> = {};
@@ -170,12 +197,9 @@ function seedAgents(content: GeneratorContent, seed: number, worldTime: string):
      * состояние, а дробь `canonicalize` отвергает.
      */
     const cautionDraw = random.draw(streamKey);
+    const span = cautionRange.maxPermille - cautionRange.minPermille;
     const caution =
-      MIN_CAUTION_PERMILLE +
-      Math.min(
-        Math.floor(cautionDraw.value * (MAX_CAUTION_PERMILLE - MIN_CAUTION_PERMILLE + 1)),
-        MAX_CAUTION_PERMILLE - MIN_CAUTION_PERMILLE,
-      );
+      cautionRange.minPermille + Math.min(Math.floor(cautionDraw.value * (span + 1)), span);
     agents[agentDef.id] = {
       id: agentDef.id,
       locationId: location.id,
@@ -216,6 +240,26 @@ function buildItems(content: GeneratorContent): Readonly<Record<string, ItemStat
   return items;
 }
 
+/**
+ * Опасность из контента, проверенная ЕДИНИЦЕЙ, а не доверием.
+ *
+ * Путь без базы (`world seed`, `world inspect`) не проходит ни через одну схему и ни через один
+ * check-constraint: контент попадает в состояние как есть. Ревью I04-I06 (m4) назвало это прямо
+ * — диапазон опасности держали миграция и литералы в схеме события, то есть ровно те два места,
+ * мимо которых этот путь идёт. Опечатка `risk: 6000` дала бы мир, из которого уходят отовсюду,
+ * и обнаружилась бы поведением, а не отказом.
+ */
+function requireRisk(value: number, what: string): number {
+  const checked = checkMinorUnits(value, RISK_UNIT);
+  if (isNumericError(checked)) {
+    throw new Error(
+      `world: опасность ${what} = ${String(value)} вне единицы ${RISK_UNIT.id} ` +
+        `(${String(RISK_UNIT.min)}..${String(RISK_UNIT.max)}): ${checked.error}`,
+    );
+  }
+  return checked;
+}
+
 function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainRouteDefinition>> {
   const routes: Record<string, DomainRouteDefinition> = {};
   for (const route of content.routes) {
@@ -224,7 +268,7 @@ function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainR
       fromLocationId: route.fromLocationId,
       toLocationId: route.toLocationId,
       travelMinutes: route.travelMinutes,
-      risk: route.risk,
+      risk: requireRisk(route.risk, `дороги ${route.id}`),
     };
   }
   return routes;
@@ -240,7 +284,10 @@ function buildRoutes(content: GeneratorContent): Readonly<Record<string, DomainR
 function buildLocations(content: GeneratorContent): Readonly<Record<string, LocationState>> {
   const locations: Record<string, LocationState> = {};
   for (const location of content.locations) {
-    locations[location.id] = { id: location.id, risk: location.risk };
+    locations[location.id] = {
+      id: location.id,
+      risk: requireRisk(location.risk, `места ${location.id}`),
+    };
   }
   return locations;
 }
@@ -321,7 +368,12 @@ export function seedWorld(
   const clock = new FixedClock(content.initialWorldTime);
   const worldTime = canonicalInstant(clock.now().iso, 'initialWorldTime контента');
 
-  const { agents, prngStreamPositions } = seedAgents(content, seed, worldTime);
+  const { agents, prngStreamPositions } = seedAgents(
+    content,
+    seed,
+    worldTime,
+    ruleset.cautionRange,
+  );
   const routes = buildRoutes(content);
 
   const state: WorldState = {
