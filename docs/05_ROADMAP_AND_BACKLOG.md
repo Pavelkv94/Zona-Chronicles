@@ -1,9 +1,11 @@
 # Roadmap и backlog
 
 Статус: derived overview; нормативный порядок находится в [[10_ITERATION_MASTER_PLAN]]  
-Дата: 2026-08-20
+Дата: 2026-08-20 (структура), отметки о выполнении сверены 2026-09-06
 
 Этот файл — укрупнённый обзор фаз и backlog. Обязательный рабочий порядок, размеры итераций, demo и stop/go gates определены в [[10_ITERATION_MASTER_PLAN]]. При расхождении приоритет имеет master-plan.
+
+> **Где проект сейчас — в [[14_PROJECT_STATE]], а не здесь.** Этот файл описывает ЗАМЫСЕЛ фаз и остаётся стабильным; снимок состояния меняется каждой итерацией. Отметки `[x]` в backlog ниже сверены с репозиторием на дату в шапке; сроки в заголовках этапов — исходная оценка, а не факт.
 
 ## Этап 0. Режим прототипирования и рамки — 1 неделя
 
@@ -128,20 +130,20 @@
 - [x] Зафиксировать различие между Utility AI, runtime LLM и coding agents.
 - [x] Зафиксировать original visual/content direction, atmospheric pillars и asset provenance.
 - [ ] Создать одностраничную product vision для будущего concept deck.
-- [ ] Создать code repository и executable skeleton.
-- [ ] Реализовать tested permissions/sandbox/hooks для protected paths, write sets, network/dependency install и secret access; критичные правила не оставлять только в `CLAUDE.md`.
-- [ ] Добавить frozen install, secret/dependency/license/static scans и versioned exception format с owner/expiry.
-- [ ] Реализовать и dry-run проверить persisted Claude usage checkpoint + automatic wake/resume при остатке пятичасового окна `<= 1%`.
+- [x] Создать code repository и executable skeleton.
+- [~] Реализовать tested permissions/sandbox/hooks для protected paths, write sets, network/dependency install и secret access; критичные правила не оставлять только в `CLAUDE.md`. **Частично.** Hooks есть и покрыты тестами (`tools/agent-harness`), protected paths и запрет установки зависимостей работают. Но **write sets запись не удерживают**: ревью I04–I06 проверило это действием — запись через Bash проходит при объявленных `"write_paths": []`, потому что роль read-only держится отключённым инструментом `Write`, а не контролем владения. Пункт нельзя закрывать, пока это так ([[14_PROJECT_STATE]] §4).
+- [x] Добавить frozen install, secret/dependency/license/static scans и versioned exception format с owner/expiry.
+- ~~Реализовать и dry-run проверить persisted Claude usage checkpoint + automatic wake/resume.~~ **ОТМЕНЕНО** 2026-08-21 решением владельца (ADR-009, требование DEV-01 снято): адаптеров usage telemetry в этой среде нет, а их разработка — инфраструктура без отношения к продукту.
 - [x] Draft v1 схем команд, `world_event`, scheduler и observer signals.
-- [ ] Перенести draft contracts в исполняемые TypeBox schemas и SQL migrations.
-- [ ] Десять инвариантов как executable tests.
-- [ ] Headless deterministic loop.
-- [ ] Snapshot/replay.
-- [ ] Три локации и маршруты.
-- [ ] Нужды, цели и Utility AI.
-- [ ] Смерть и пополнение населения.
-- [ ] Минимальная карта и event feed.
-- [ ] Создать content manifest skeleton и placeholder-only asset pipeline.
+- [x] Перенести draft contracts в исполняемые TypeBox schemas и SQL migrations.
+- [ ] Десять инвариантов как executable tests. **Формулировка неточна:** перечень «десяти» нигде не зафиксирован, и сверить пункт не с чем. Исполняемых инвариантов в репозитории заметно больше десяти (property-тесты домена, планировщика и маршрутов), но это не то же самое, что закрытый пункт. Требует нормативного списка либо снятия.
+- [x] Headless deterministic loop.
+- [x] Snapshot/replay.
+- [x] Три локации и маршруты. Сейчас пять локаций; овраг добавлен в I06, чтобы выбор дороги стал выразим.
+- [x] Нужды, цели и Utility AI (I04, I05).
+- [ ] Смерть и пополнение населения. Не начато: агент не умирает ни от чего, включая голод.
+- [x] Минимальная карта и event feed.
+- [ ] Создать content manifest skeleton и placeholder-only asset pipeline. `packages/content` существует как ДАННЫЕ мира; manifest и asset pipeline не заводились.
 
 ### P1
 
@@ -156,10 +158,10 @@
 - [ ] Три anomaly field family, extraction lifecycle и provenance ценных находок.
 - [ ] Territory storm, shelters и детерминированный post-storm spawn.
 - [ ] Отношения и обязательства.
-- [ ] Наблюдения, знания, слухи.
+- [~] Наблюдения, знания, слухи. **Частично (I06-B):** есть наблюдение опасности дороги и знание о ней с провенансом, принадлежащее агенту. Слухов, пересказа и доверия к источнику нет — это I10A, и поле `source_type` намеренно не заведено, чтобы не заморозить форму пересказа раньше решения.
 - [ ] Сцены разговора и торговли.
-- [ ] Причинные рёбра событий.
-- [ ] Карточка агента.
+- [~] Причинные рёбра событий. **Частично:** `caused_by` есть в конверте события и заполняется у производных команд — на живом мире 54 события из 224. Зрителю причинные рёбра не показываются вовсе.
+- [~] Карточка агента. **Минимальная версия есть (I03–I06):** имя, место, состояние нужд, запас еды и намерение. Ни истории, ни отношений, ни причин на ней нет.
 - [ ] Летопись дня.
 - [ ] Fact/signal/claim validation для template representations.
 - [ ] Оригинальные logo/wordmark, 36–48 SVG icons и style tokens.
@@ -243,16 +245,10 @@ CPU, storage, LLM calls, контент, поддержка.
 
 ## Ближайшее конкретное действие
 
-Создать **I00 — Repository и agent harness** из [[10_ITERATION_MASTER_PLAN]]:
+> Предыдущая редакция этого раздела предлагала «создать I00 — Repository и agent harness». I00 закрыт 2026-08-22, и раздел пролежал устаревшим до 2026-09-06. Указатель, ведущий не туда, хуже отсутствующего: он отвечает уверенно и неверно.
 
-- pnpm/Turborepo workspace;
-- strict TypeScript и import boundaries;
-- Vitest/fast-check/Testcontainers;
-- Fastify health endpoint, PostgreSQL migration runner и CLI `--help`;
-- `CLAUDE.md`, `.claude/agents`, iteration/task templates и worktree protocol;
-- Docker Compose smoke;
-- CI с format, lint, typecheck и tests;
-- deny-by-default permissions/sandbox/hooks и security scan skeleton из ADR-008;
-- deterministic runtime/serialization profile и immutable rules/content/schema bundle checksums.
+Закрыты I00–I06. Ближайшее — **решение владельца по I04–I06**: ревью проведено, блокеров не осталось, но исполнитель собственную работу не принимает. Список открытых решений и названных долгов — [[14_PROJECT_STATE]] §3–4.
 
-После demo и GO по I00 автоматически не начинать следующую работу: создать `REPORT.md`, показать gate человеку и только затем открыть I01. Полная последовательность I00–I18 находится в master-plan.
+После решения по master-plan идёт I06B (встречи) → I06C (движение угроз) → I07 (рана, помощь, обязательство) → **Gate B**.
+
+Правило, которое остаётся в силе с I00: после demo и GO не начинать следующую работу автоматически — создать `REPORT.md`, показать gate человеку и только затем открыть следующую итерацию.
