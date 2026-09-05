@@ -66,6 +66,8 @@ describe('кредит темпа: тишина не сокращает путь
   let elapsedMs = 0;
   /** Сколько реального времени должна занять выбранная дорога при этом темпе. */
   let travelRealMs = 0;
+  /** Длительность выбранной дороги из карты: ожидание считается от неё, а не от числа в тесте. */
+  let legTravelMinutes = 0;
 
   const journal = async () => {
     const connection = createDatabase(parseDatabaseConnectionUrl(db.url));
@@ -126,6 +128,7 @@ describe('кредит темпа: тишина не сокращает путь
     }
     elapsedMs = Date.now() - startedAt;
     travelRealMs = (leg.travelMinutes / TEMPO) * 1000;
+    legTravelMinutes = leg.travelMinutes;
   }, 300_000);
 
   afterAll(async () => {
@@ -152,9 +155,32 @@ describe('кредит темпа: тишина не сокращает путь
     /**
      * Нижняя граница с запасом на команду CLI и опрос: важно отличить «десять секунд» от «ноль»,
      * а не измерить их точно. При дефекте здесь была одна секунда.
+     *
+     * Нижняя граница безопасна под нагрузкой по своей природе: занятая машина делает путь
+     * ДОЛЬШЕ, а утверждение — что он не оказался мгновенным.
      */
     expect(elapsedMs).toBeGreaterThanOrEqual(travelRealMs * 0.8);
-    // Верхняя граница: тишина не имеет права и ЗАМЕДЛИТЬ путь.
-    expect(elapsedMs).toBeLessThanOrEqual(travelRealMs * 2);
+  });
+
+  it('и занял РОВНО столько мирового времени, сколько объявлено у дороги', async () => {
+    /**
+     * Здесь стояла верхняя граница по НАСТОЯЩИМ часам — `elapsedMs <= travelRealMs * 2`, — и она
+     * утверждала не то, что написано в её комментарии («тишина не имеет права замедлить путь»).
+     * По реальным часам нельзя отличить «мир замедлился» от «машина была занята»: под нагрузкой
+     * граница ломается без единого дефекта продукта. Найдено независимым test-review I04-I06
+     * (группа A), подтверждено двумя падениями в цепочке gate.
+     *
+     * Утверждение переведено в единицы, в которых оно живёт. Мировое время дискретно и его
+     * двигают события: длительность пути в нём не зависит ни от темпа, ни от загрузки машины, и
+     * равенство здесь строже прежнего неравенства.
+     */
+    const events = await journal();
+    const started = events.find((event) => event.type === 'journey.started');
+    const completed = events.find((event) => event.type === 'journey.completed');
+    expect(started, 'путь не начинался').toBeDefined();
+    expect(completed, 'путь не завершился').toBeDefined();
+    const worldMinutes =
+      (Date.parse(completed?.world_time ?? '') - Date.parse(started?.world_time ?? '')) / 60_000;
+    expect(worldMinutes).toBe(legTravelMinutes);
   });
 });

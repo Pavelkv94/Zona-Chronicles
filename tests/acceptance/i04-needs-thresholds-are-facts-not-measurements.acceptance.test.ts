@@ -81,7 +81,15 @@ const tickUntilQuiet = (until: string, databaseUrl: string): number => {
     // необъяснимый ненулевой код: так этот тест и упал впервые.
     const tick = spawnWorldCliDirect(['world', 'tick', '--until', until], {
       env: { DATABASE_URL: databaseUrl },
-      timeoutMs: 300_000,
+      /**
+       * Десять минут, а не пять.
+       *
+       * Пять были не запасом, а пределом: независимое test-review I04-I06 измерило прогон,
+       * сжигавший 300 022 мс, — то есть запас исчислялся долями процента, и под нагрузкой тест
+       * падал бы не по своему утверждению, а по бюджету. Это не ослабление проверки: таймаут
+       * здесь ловит ЗАВИСАНИЕ, а ни одно утверждение теста не говорит о скорости машины.
+       */
+      timeoutMs: 600_000,
     });
     if (tick.exitCode !== 0) throw new Error(`world tick упал: ${tick.stdout}${tick.stderr}`);
     if (tick.stdout.includes('Нечего обрабатывать')) return step;
