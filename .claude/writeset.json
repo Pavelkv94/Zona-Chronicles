@@ -1,20 +1,28 @@
 {
-  "//": "Авторитетный write set: hook читает ИМЕННО ЭТОТ файл (projectRoot из input.cwd), а копия в worktree задачи не читается никогда. Обновляется скриптом task:worktree. I03, раунд верификации. ЧЕТЫРЕ сессии, две роли: первый набор (полный аудит) и второй (узкие задания). Все read-only: пустой write_paths запрещает любую запись, и это ровно то, что задумано ADR-008 — нулевые права выражаются явно, а не отсутствием записи в файле.\n\nПОЧЕМУ ФАЙЛ ЛЕЖИТ ЗДЕСЬ, А НЕ ТОЛЬКО В WORKTREE РЕВЬЮЕРА. Hook берёт projectRoot из input.cwd (pre-tool-use-bash.ts:29-30), а in-process subagent наследует cwd родительской сессии — то есть ЭТО дерево. Write set, который скрипт task:worktree аккуратно кладёт в дерево задачи, не читается никогда. В I03 здесь оставался файл I02B с чужими agent_types, и все четыре ревьюера получили fail-closed на любой Bash, включая pwd: раунд верификации был потерян целиком. Это BLOCKER 1-1 в REVIEW.md итерации; сам механизм чинится отдельно, этот файл — восстановление прав, а не починка причины.\n\nagent_types перечисляет ИМЕНА СЕССИЙ: платформа кладёт в payload имя, а не роль. Имя неподделываемо со стороны сессии, поэтому список имён и есть декларация прав.",
-  "iteration_id": "I03",
+  "//": "Авторитетный write set: hook читает ИМЕННО ЭТОТ файл (projectRoot из input.cwd). Обновляется скриптом task:worktree; править вручную можно, но тогда легко забыть — именно так был потерян раунд верификации I03.",
+  "iteration_id": "I06",
   "tasks": [
     {
-      "task_id": "I03-VERIFY-TESTS",
+      "task_id": "I06-VERIFY-ARCH",
       "owner_role": "reviewer",
-      "agent_types": ["i03-test-reviewer", "i03-r2-projections", "test-reviewer"],
       "write_paths": [],
-      "allow_protected_paths": []
+      "allow_protected_paths": [],
+      "agent_types": [
+        "i06-arch-reviewer",
+        "architecture-reviewer",
+        "reviewer"
+      ]
     },
     {
-      "task_id": "I03-VERIFY-ARCH",
+      "task_id": "I06-VERIFY-TESTS",
       "owner_role": "reviewer",
-      "agent_types": ["i03-arch-reviewer", "i03-r2-boundaries", "architecture-reviewer"],
       "write_paths": [],
-      "allow_protected_paths": []
+      "allow_protected_paths": [],
+      "agent_types": [
+        "i06-test-reviewer",
+        "test-reviewer",
+        "reviewer"
+      ]
     }
   ]
 }

@@ -1,0 +1,62 @@
+{
+  "iteration_id": "I06",
+  "base_commit": "f88fe2e",
+  "//": "Раунд независимого review итераций I04, I05 и I06 (срезы A-D). Ревью не было ни разу: lead не принимает собственную работу. Обе роли read-only — пустой write_paths запрещает любую запись, и это объявлено явно, а не отсутствием записи (ADR-008).\n\nagent_types перечисляет ИМЕНА СЕССИЙ: платформа кладёт в payload имя, а не роль. Права объявляются в дереве lead-а, а не в worktree задачи: hook берёт projectRoot из input.cwd, а in-process subagent наследует cwd родителя.",
+  "lead_paths": [
+    ".claude/**",
+    ".github/**",
+    "docs/**",
+    "ops/**",
+    "tests/**",
+    "scripts/**",
+    "package.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "turbo.json",
+    "tsconfig.json",
+    "tsconfig.base.json",
+    "tsconfig.depcruise.json",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    ".prettierrc.json",
+    ".prettierignore",
+    ".gitignore",
+    ".nvmrc",
+    ".tool-versions",
+    ".dockerignore",
+    "docker-compose.yml",
+    "eslint.config.mjs",
+    ".dependency-cruiser.cjs",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md",
+    "tools/**",
+    "security/**"
+  ],
+  "tasks": [
+    {
+      "task_id": "I06-VERIFY-TESTS",
+      "owner_role": "reviewer",
+      "//": "Независимая проверка тестов и кода I04-I06: ложноположительные тесты, пропущенные отказы, идемпотентность, детерминизм, доказывает ли доказательство заявленное.",
+      "write_paths": [],
+      "allow_protected_paths": [],
+      "agent_types": [
+        "i06-test-reviewer",
+        "test-reviewer",
+        "reviewer"
+      ]
+    },
+    {
+      "task_id": "I06-VERIFY-ARCH",
+      "owner_role": "reviewer",
+      "//": "Независимый аудит границ, событийной семантики, миграций, детерминизма и replay в I04-I06.",
+      "write_paths": [],
+      "allow_protected_paths": [],
+      "agent_types": [
+        "i06-arch-reviewer",
+        "architecture-reviewer",
+        "reviewer"
+      ]
+    }
+  ]
+}
