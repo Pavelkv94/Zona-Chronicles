@@ -154,7 +154,9 @@ hook-ами, lint-ом и CI в каждом прогоне (ADR-008).
 
 ## Что читать перед изменением scope
 
-`docs/00_README.md` (приоритет документов), `docs/07_MVP_MECHANICS_SPEC.md`,
+`docs/14_PROJECT_STATE.md` (где проект сейчас: что мир умеет, что открыто, какие долги названы —
+самый короткий путь к контексту), `docs/00_README.md` (приоритет документов),
+`docs/07_MVP_MECHANICS_SPEC.md`,
 `docs/09_EVENT_AND_COMMAND_CONTRACTS.md`, `docs/06_ARCHITECTURE_DECISIONS.md`,
 `docs/10_ITERATION_MASTER_PLAN.md`, `docs/11_REQUIREMENTS_TRACEABILITY.md`,
 `docs/13_WORLD_SYSTEMS_SPEC.md`. При конфликте действует приоритет из `00_README.md`.
