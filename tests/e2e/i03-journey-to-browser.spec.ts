@@ -83,7 +83,10 @@ test('D13: путь начат командой, виден на карте и �
   const leg = calmLeg();
 
   // Мир только создан: карта есть, лента пуста.
-  await expect(page.getByText('Тихий двор')).toBeVisible();
+  // Место ищется в ЗАГОЛОВКЕ узла, а не в любом тексте страницы: с I06-D карта называет дороги
+  // именами мест, и «Тихий двор» встречается на экране пять раз. Утверждение при этом стало
+  // точнее — двор есть на карте как МЕСТО, а не просто упомянут где-то.
+  await expect(page.locator('.node-name', { hasText: 'Тихий двор' })).toBeVisible();
   await expect(page.getByText('Пока ничего не произошло.')).toBeVisible();
   await expect(page.getByText(leg.agentName).first()).toBeVisible();
 
@@ -96,13 +99,15 @@ test('D13: путь начат командой, виден на карте и �
 
   // БЕЗ ПЕРЕЗАГРУЗКИ: событие приходит потоком.
   await expect(page.getByText('journey.started').first()).toBeVisible();
-  await expect(page.getByText(`${leg.agentId} вышел в путь`).first()).toBeVisible();
+  await expect(page.getByText(`${leg.agentName} вышел в путь`).first()).toBeVisible();
 
   // D13 требует, чтобы состояние менялось НА КАРТЕ, а не только в ленте. Лента — это журнал
   // произошедшего; карта — это мир сейчас. Проверка одной ленты пропускала бы проекцию, которая
   // исправно копит события и не двигает агентов.
   const travelingCard = page.locator('.node', { hasText: 'В пути' });
-  await expect(travelingCard.getByText(`${leg.agentName} → ${leg.routeId}`)).toBeVisible();
+  await expect(
+    travelingCard.getByText(`${leg.agentName} → ${leg.fromName} → ${leg.toName}`),
+  ).toBeVisible();
   // И он ушёл с прежнего места: остаться в обоих сразу агент не может.
   await expect(
     page.locator('.node', { hasText: leg.fromName }).first().getByText(leg.agentName),
@@ -110,7 +115,7 @@ test('D13: путь начат командой, виден на карте и �
 
   // Мир доводит путь до конца сам — ни одной команды между этими строками.
   await expect(page.getByText('journey.completed').first()).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByText(`${leg.agentId} дошёл`).first()).toBeVisible();
+  await expect(page.getByText(`${leg.agentName} дошёл`).first()).toBeVisible();
 
   // Агент оказался в конечной локации: проверяем В КАРТОЧКЕ места, а не «где-то на странице».
   const arrivalCard = page.locator('.node', { hasText: leg.toName }).first();
@@ -120,7 +125,7 @@ test('D13: путь начат командой, виден на карте и �
 
   // D11: перезагрузка восстанавливает то же состояние — snapshot-ом, а не историей потока.
   await page.reload();
-  await expect(page.getByText(`${leg.agentId} дошёл`).first()).toBeVisible();
+  await expect(page.getByText(`${leg.agentName} дошёл`).first()).toBeVisible();
   await expect(
     page.locator('.node', { hasText: leg.toName }).first().getByText(leg.agentName),
   ).toBeVisible();

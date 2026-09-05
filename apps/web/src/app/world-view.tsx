@@ -20,90 +20,13 @@
  * существует (D4). Открытая вкладка, десять вкладок или ноль — журнал одинаков (D3).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  GoalKind,
-  NeedKind,
-  NeedLevel,
-  ObserverAgent,
-  ObserverEvent,
-  ObserverWorldSnapshot,
-} from '@zona/contracts';
+import type { ObserverEvent, ObserverWorldSnapshot } from '@zona/contracts';
 import { OBSERVER_STREAM_EVENT_NAMES } from '@zona/contracts';
 import { fetchEvents, fetchSnapshot } from './observer-client.ts';
+import { describeCondition, describeEvent, namingOf } from './observer-language.ts';
 
 /** Сколько последних событий держит лента на экране. Не окно retention — просто читаемость. */
 const FEED_LIMIT = 40;
-
-const EVENT_LABELS: Record<ObserverEvent['type'], string> = {
-  'journey.started': 'вышел в путь',
-  'journey.completed': 'дошёл',
-  'plan.invalidated': 'план отменён',
-  'need.threshold.crossed': 'изменилось состояние',
-  'agent.ate': 'поел',
-  'agent.rested': 'отдохнул',
-  'rest.started': 'лёг отдыхать',
-  'goal.chosen': 'решил',
-  'risk.observed': 'разведал дорогу',
-};
-
-/**
- * Цель словами. `idle` читается как отказ от дела, а не как пустая строка: факт «перестал
- * что-либо затевать» произошёл, и лента, показавшая на его месте пробел, соврала бы молчанием.
- */
-const GOAL_LABELS: Record<GoalKind, string> = {
-  idle: 'ничего не делать',
-  eat: 'поесть',
-  rest: 'отдохнуть',
-  flee: 'уйти отсюда',
-};
-
-/**
- * Состояние агента словами. `normal` не имеет подписи намеренно: «Грач спокоен» — это не
- * событие, а отсутствие события, и в ленте оно означало бы, что произошло что-то, чего не было.
- * Восстановление читается по паре «нужда + уровень», а не по отдельному слову.
- */
-const NEED_LEVEL_LABELS: Record<NeedKind, Record<NeedLevel, string>> = {
-  hunger: { normal: 'сыт', warning: 'голоден', critical: 'изголодался' },
-  fatigue: { normal: 'бодр', warning: 'устал', critical: 'вымотан' },
-};
-
-/**
- * Подпись события собирается ЗДЕСЬ, на экране, из полей факта — и это не деталь реализации.
- * ADR-005: текст никогда не является источником факта, поэтому лента отдаёт `type`/`actor_ids`,
- * а не готовую фразу. Пока фраза строится в UI, расхождение фразы с фактом невозможно: фраза и
- * есть прочтение факта. Настоящий слой representation появится в I11B.
- */
-const describe = (event: ObserverEvent): string => {
-  const who = event.actor_ids.join(', ');
-  const where = event.location_id === null ? '' : ` — ${event.location_id}`;
-  // Событие о нужде читается своим состоянием, а не общей подписью: «Грач голоден» говорит
-  // зрителю то же, что факт, а «Грач изменилось состояние» не говорит ничего.
-  if (event.need !== null && event.need_level !== null) {
-    return `${who}: ${NEED_LEVEL_LABELS[event.need][event.need_level]}${where}`;
-  }
-  // Решение читается своей целью. Разбора оценок в ленте нет и не будет: зритель видит, ЧТО
-  // агент решил, а не как считал (§7 `03_TECHNICAL_DESIGN`, ADR-005).
-  if (event.goal !== null) {
-    return `${who} решил ${GOAL_LABELS[event.goal]}${where}`;
-  }
-  return `${who} ${EVENT_LABELS[event.type]}${where}`;
-};
-
-/**
- * Состояние агента одной строкой: что с ним не так и есть ли чем это поправить.
- *
- * `normal` не показывается: «Грач сыт и бодр» — это отсутствие новости, и на карте, где стоят
- * четыре человека, такие строки скрыли бы единственную важную. Показывается только отклонение.
- */
-const agentCondition = (agent: ObserverAgent): string => {
-  const troubles = (['hunger', 'fatigue'] as const)
-    .filter((need) => agent.needs[need] !== 'normal')
-    .map((need) => NEED_LEVEL_LABELS[need][agent.needs[need]]);
-  const food = agent.food_carried === 0 ? 'еды нет' : `еды: ${String(agent.food_carried)}`;
-  // Цель показывается только когда она есть: «намерен ничего не делать» — это не намерение.
-  const goal = agent.goal === 'idle' ? [] : [`намерен ${GOAL_LABELS[agent.goal]}`];
-  return [...troubles, food, ...goal].join(' · ');
-};
 
 const worldClock = (iso: string): string => iso.replace('T', ' ').replace('.000Z', '');
 
@@ -203,6 +126,8 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
     );
   }
 
+  const naming = namingOf(snapshot);
+
   const agentsAt = (locationId: string) =>
     (snapshot?.agents ?? []).filter((agent) => agent.location_id === locationId);
   const traveling = (snapshot?.agents ?? []).filter((agent) => agent.status === 'traveling');
@@ -231,7 +156,7 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
             <div className="node-agents">
               {agentsAt(node.location_id).map((agent) => (
                 <span className="agent" key={agent.agent_id}>
-                  {agent.name} <span className="agent-condition">{agentCondition(agent)}</span>
+                  {agent.name} <span className="agent-condition">{describeCondition(agent)}</span>
                 </span>
               ))}
               {agentsAt(node.location_id).length === 0 && <span className="node-desc">пусто</span>}
@@ -245,8 +170,8 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
             <div className="node-agents">
               {traveling.map((agent) => (
                 <span className="agent agent-traveling" key={agent.agent_id}>
-                  {agent.name} → {agent.route_id}{' '}
-                  <span className="agent-condition">{agentCondition(agent)}</span>
+                  {agent.name} → {agent.route_id === null ? '—' : naming.route(agent.route_id)}{' '}
+                  <span className="agent-condition">{describeCondition(agent)}</span>
                 </span>
               ))}
             </div>
@@ -257,7 +182,8 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
           Маршруты:
           {(snapshot?.edges ?? []).map((edge) => (
             <div key={edge.route_id}>
-              {edge.from_location_id} → {edge.to_location_id} ({edge.travel_minutes} мин)
+              {naming.location(edge.from_location_id)} → {naming.location(edge.to_location_id)} (
+              {edge.travel_minutes} мин)
             </div>
           ))}
         </div>
@@ -270,7 +196,7 @@ export function WorldView({ apiBaseUrl }: WorldViewProps) {
             <li key={event.event_id}>
               <span className="feed-time">{worldClock(event.world_time)}</span>{' '}
               <span className="feed-type">{event.type}</span>
-              <div>{describe(event)}</div>
+              <div>{describeEvent(event, naming)}</div>
             </li>
           ))}
           {feed.length === 0 && <li className="node-desc">Пока ничего не произошло.</li>}
